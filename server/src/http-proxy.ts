@@ -104,12 +104,16 @@ export function configureHttpProxy(env: NodeJS.ProcessEnv = process.env): HttpPr
 
   // Values are passed explicitly rather than left to undici's own process.env
   // read, so the `env` argument is authoritative (and tests are deterministic).
+  // proxyTunnel must be set explicitly: undici 8 stopped tunnelling plain-http
+  // proxy requests with CONNECT by default, which breaks middleboxes (and our
+  // tests) that only implement CONNECT.
   const dispatcher = withErrorListener(
     new undici.EnvHttpProxyAgent({
       httpProxy,
       httpsProxy,
       noProxy,
       allowH2: false,
+      proxyTunnel: true,
       clientFactory: createClient,
       factory: createOriginDispatcher,
     } as undici.EnvHttpProxyAgent.Options),

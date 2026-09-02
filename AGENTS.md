@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Git / PR policy
 
-This repo is a fork: `kgforais1/k-dense-byok-mcp`. Never open PRs against, or push to, the upstream repo. Always pass `--repo kgforais1/k-dense-byok-mcp` to `gh pr create` (the `gh` default repo is set to the fork, but pass it explicitly anyway). A pre-push hook (`.githooks/pre-push`, enabled via `git config core.hooksPath .githooks`) blocks pushes to any remote that is not the fork. Never use `git push --no-verify` (or any other hook-bypass flag) without explicitly asking the user first and getting confirmation.
+This repo is a fork: `kgforais1/k-dense-byok-mcp`. Never open PRs against, or push to, the upstream repo. Always pass `--repo kgforais1/k-dense-byok-mcp` to `gh pr create` (the `gh` default repo is set to the fork, but pass it explicitly anyway). A pre-push hook (`.githooks/pre-push`) blocks pushes to any remote that is not the fork; `start.mjs` activates it automatically via `git config core.hooksPath .githooks` on every launch (run that command manually if you haven't launched the app). Never use `git push --no-verify` (or any other hook-bypass flag) without explicitly asking the user first and getting confirmation.
 
 ## Project overview
 

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Guard: only allow pushes to the fork, never to the upstream repo.
+# pre-push receives: $1 = remote name, $2 = remote URL
+
+FORK="kgforais1/k-dense-byok-mcp"
+url="$2"
+
+case "$url" in
+  *"github.com:kgforais1/"*|*"github.com/kgforais1/"*|*"kgforais1"*) exit 0 ;;
+esac
+
+echo >&2 ""
+echo >&2 "BLOCKED: refusing to push to non-fork remote:"
+echo >&2 "  remote: $1"
+echo >&2 "  url:    $url"
+echo >&2 ""
+echo >&2 "This repository must only push to the fork ($FORK)."
+echo >&2 "PRs must also target the fork: gh pr create --repo $FORK"
+echo >&2 ""
+echo >&2 "To override deliberately (not recommended): git push --no-verify"
+exit 1

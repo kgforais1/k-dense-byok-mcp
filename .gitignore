@@ -59,6 +59,8 @@ coverage/
 benchmarking/
 
 # Project
+tmp/
+temp/
 /projects
 /graphify-out
 TODO.md

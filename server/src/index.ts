@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyCors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyRequest } from "fastify";
 import { DEFAULT_PROJECT_ID, HOST, PORT, modalConfigured } from "./config.ts";
@@ -115,12 +116,28 @@ export async function buildApp() {
     withActiveProject(projectId, () => done());
   });
 
+  // Rate limiting scoped to the sandbox routes only (the filesystem-touching
+  // surface). Registering it globally would put every request from the single
+  // localhost browser IP — UI polling, SSE reconnects, /health — into one
+  // shared bucket and could 429 the UI with several tabs open. Kady is a
+  // localhost single-user app, so the sandbox ceiling is deliberately
+  // generous; the point is bounded work per client, not throttling the UI.
+  // Registered after the content-type parser and project-scoping hook above
+  // so the encapsulated sandbox routes inherit both.
+  await app.register(async function sandboxRateLimitedScope(scope) {
+    await scope.register(rateLimit, {
+      global: true,
+      max: 600,
+      timeWindow: "1 minute",
+    });
+    await registerSandboxRoutes(scope);
+  });
+
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/config", async () => ({ modal_configured: modalConfigured() }));
 
   await registerProjectRoutes(app);
   await registerSessionRoutes(app);
-  await registerSandboxRoutes(app);
   await registerSkillRoutes(app);
   await registerSystemRoutes(app);
   await registerMcpRoutes(app);

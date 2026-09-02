@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyCors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyRequest } from "fastify";
 import { DEFAULT_PROJECT_ID, HOST, PORT, modalConfigured } from "./config.ts";
@@ -78,6 +79,15 @@ export async function buildApp() {
   });
 
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
+
+  // Global rate limit. Kady is a localhost single-user app, so the ceiling is
+  // deliberately generous — the point is bounded work per client for the
+  // filesystem-touching routes, not throttling the UI's polling.
+  await app.register(rateLimit, {
+    global: true,
+    max: 600,
+    timeWindow: "1 minute",
+  });
 
   // Binary/unknown request bodies (e.g. PUT /sandbox/file) → raw Buffer.
   // JSON and text/plain keep their built-in parsers; multipart is handled above.

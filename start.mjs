@@ -130,6 +130,19 @@ function checkGit() {
   }
 }
 
+/** Point core.hooksPath at .githooks/ so the fork push guard is active in
+ * every clone, not just ones where it was configured manually. Non-fatal. */
+function configureGitHooks() {
+  if (!has("git")) return;
+  const res = spawnSync("git", ["config", "core.hooksPath", ".githooks"], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+  });
+  if (res.status === 0) {
+    log(`  ${sym.ok} git hooks enabled (.githooks/pre-push guards pushes to non-fork remotes)`);
+  }
+}
+
 function checkPython() {
   // Only used for scientific file-preview helpers; everything else goes
   // through uv. No `python3` alias exists on Windows, and uv covers it there.
@@ -485,6 +498,7 @@ log("Checking dependencies...");
 checkNode();
 ensureUv();
 checkGit();
+configureGitHooks();
 checkPython();
 // Pi itself needs no separate install: it's an npm dependency of server/, and
 // the backend install below keeps Pi and the harness extension packages

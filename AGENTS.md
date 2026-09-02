@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git / PR policy
+
+This repo is a fork: `kgforais1/k-dense-byok-mcp`. Never open PRs against, or push to, the upstream repo. Always pass `--repo kgforais1/k-dense-byok-mcp` to `gh pr create` (the `gh` default repo is set to the fork, but pass it explicitly anyway). A pre-push hook (`.githooks/pre-push`) blocks pushes to any remote that is not the fork; `start.mjs` activates it automatically via `git config core.hooksPath .githooks` on every launch (run that command manually if you haven't launched the app). Never use `git push --no-verify` (or any other hook-bypass flag) without explicitly asking the user first and getting confirmation.
+
 ## Project overview
 
 K-Dense BYOK is a local AI research-assistant app ("Kady") that brings the user's own model credentials (API keys or supported subscriptions). It runs natively on macOS, Linux, and Windows. It is one repo with **two** runtime services started together by the cross-platform launcher `start.mjs` (wrapped by `./start.sh` on macOS/Linux and `start.cmd` on Windows):

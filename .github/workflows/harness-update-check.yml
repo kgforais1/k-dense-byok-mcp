@@ -1,0 +1,62 @@
+name: Harness update check
+
+# The Pi harness is pinned to exact versions (see AGENTS.md) and Dependabot is
+# told to ignore it, so nothing automatic would surface newer releases. This
+# workflow checks npm weekly and reports via a labeled issue (watchers get
+# GitHub notifications) — it never upgrades anything itself.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1" # Mondays 13:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Compare pinned harness versions against npm
+        id: check
+        run: node scripts/harness-update-check.mjs harness-check-result.md "$GITHUB_OUTPUT"
+
+      - name: Ensure notification label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh label create harness-update --force --color 1d76db --description "Pinned Pi harness has newer releases"
+
+      - name: Report via issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_UPDATES: ${{ steps.check.outputs.has_updates }}
+          SIGNATURE: ${{ steps.check.outputs.signature }}
+        run: |
+          set -eu
+          NUMBER=$(gh issue list --label harness-update --state open --json number --jq '.[0].number // ""')
+          TODAY=$(date -u +%Y-%m-%d)
+          if [ "$HAS_UPDATES" = "true" ]; then
+            if [ -n "$NUMBER" ]; then
+              # Re-comment (which notifies) only when the set of available
+              # versions actually changed since the last report.
+              if ! gh issue view "$NUMBER" --json body --jq .body | grep -qF "<!-- harness-update signature: $SIGNATURE -->"; then
+                gh issue edit "$NUMBER" --body-file harness-check-result.md
+                gh issue comment "$NUMBER" --body "Harness versions changed — re-checked $TODAY."
+              fi
+            else
+              gh issue create \
+                --title "Pi harness updates available" \
+                --label harness-update \
+                --body-file harness-check-result.md
+            fi
+          elif [ -n "$NUMBER" ]; then
+            gh issue close "$NUMBER" --comment "All pinned harness packages are current as of $TODAY."
+          else
+            echo "Harness is current; no issue needed."
+          fi

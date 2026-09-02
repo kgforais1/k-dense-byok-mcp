@@ -41,9 +41,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HAS_UPDATES: ${{ steps.check.outputs.has_updates }}
+          CHECK_COMPLETE: ${{ steps.check.outputs.check_complete }}
           SIGNATURE: ${{ steps.check.outputs.signature }}
         run: |
           set -euo pipefail
+          if [ "$CHECK_COMPLETE" != "true" ]; then
+            # Partial data (some npm view calls failed) must not drive issue
+            # changes — in particular it must not close an open notification
+            # issue just because the package with updates went unchecked.
+            echo "Check incomplete (npm registry errors) — leaving issues unchanged."
+            exit 0
+          fi
           NUMBER=$(gh issue list --label harness-update --state open --json number --repo "$GITHUB_REPOSITORY" --jq '.[0].number // ""')
           TODAY=$(date -u +%Y-%m-%d)
           if [ "$HAS_UPDATES" = "true" ]; then

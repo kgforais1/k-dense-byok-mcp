@@ -61,6 +61,11 @@ const errorNote =
     ? `\n> ⚠️ Could not check: ${errors.map((e) => `\`${e}\``).join(", ")} (npm registry error). Re-run the workflow to retry.\n`
     : "";
 
+// Partial data must not drive issue changes: if any package could not be
+// checked, the workflow leaves any existing notification issue untouched
+// (a registry blip on exactly the package with updates must not close it).
+const checkComplete = errors.length === 0 ? "true" : "false";
+
 const signature = updates.map((u) => `${u.name}@${u.latest}`).sort().join("|");
 
 if (updates.length === 0) {
@@ -68,7 +73,7 @@ if (updates.length === 0) {
     markdownOut,
     `<!-- harness-update signature: none -->\nAll pinned harness packages are current as of ${new Date().toISOString().slice(0, 10)}.${errorNote}`,
   );
-  fs.appendFileSync(ghaOut, "has_updates=false\n");
+  fs.appendFileSync(ghaOut, `has_updates=false\ncheck_complete=${checkComplete}\n`);
   process.exit(0);
 }
 
@@ -87,4 +92,4 @@ ${rows}
 **To upgrade:** bump the pins in \`server/package.json\`, run \`npm install\` in \`server/\`, then \`npm run typecheck && npm test\`. Read the upstream release notes first for tool-surface changes (notably the \`subagent\` tool and builtin specialist allowlists).`;
 
 fs.writeFileSync(markdownOut, body);
-fs.appendFileSync(ghaOut, `has_updates=true\nsignature=${signature}\n`);
+fs.appendFileSync(ghaOut, `has_updates=true\ncheck_complete=${checkComplete}\nsignature=${signature}\n`);

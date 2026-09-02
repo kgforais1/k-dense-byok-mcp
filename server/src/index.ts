@@ -80,21 +80,6 @@ export async function buildApp() {
 
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
 
-  // Rate limiting scoped to the sandbox routes only (the filesystem-touching
-  // surface). Registering it globally would put every request from the single
-  // localhost browser IP — UI polling, SSE reconnects, /health — into one
-  // shared bucket and could 429 the UI with several tabs open. Kady is a
-  // localhost single-user app, so the sandbox ceiling is deliberately
-  // generous; the point is bounded work per client, not throttling the UI.
-  await app.register(async function sandboxRateLimitedScope(scope) {
-    await scope.register(rateLimit, {
-      global: true,
-      max: 600,
-      timeWindow: "1 minute",
-    });
-    await registerSandboxRoutes(scope);
-  });
-
   // Binary/unknown request bodies (e.g. PUT /sandbox/file) → raw Buffer.
   // JSON and text/plain keep their built-in parsers; multipart is handled above.
   app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
@@ -129,6 +114,23 @@ export async function buildApp() {
       ensureProjectExists(projectId);
     }
     withActiveProject(projectId, () => done());
+  });
+
+  // Rate limiting scoped to the sandbox routes only (the filesystem-touching
+  // surface). Registering it globally would put every request from the single
+  // localhost browser IP — UI polling, SSE reconnects, /health — into one
+  // shared bucket and could 429 the UI with several tabs open. Kady is a
+  // localhost single-user app, so the sandbox ceiling is deliberately
+  // generous; the point is bounded work per client, not throttling the UI.
+  // Registered after the content-type parser and project-scoping hook above
+  // so the encapsulated sandbox routes inherit both.
+  await app.register(async function sandboxRateLimitedScope(scope) {
+    await scope.register(rateLimit, {
+      global: true,
+      max: 600,
+      timeWindow: "1 minute",
+    });
+    await registerSandboxRoutes(scope);
   });
 
   app.get("/health", async () => ({ status: "ok" }));

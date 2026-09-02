@@ -80,13 +80,19 @@ export async function buildApp() {
 
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
 
-  // Global rate limit. Kady is a localhost single-user app, so the ceiling is
-  // deliberately generous — the point is bounded work per client for the
-  // filesystem-touching routes, not throttling the UI's polling.
-  await app.register(rateLimit, {
-    global: true,
-    max: 600,
-    timeWindow: "1 minute",
+  // Rate limiting scoped to the sandbox routes only (the filesystem-touching
+  // surface). Registering it globally would put every request from the single
+  // localhost browser IP — UI polling, SSE reconnects, /health — into one
+  // shared bucket and could 429 the UI with several tabs open. Kady is a
+  // localhost single-user app, so the sandbox ceiling is deliberately
+  // generous; the point is bounded work per client, not throttling the UI.
+  await app.register(async function sandboxRateLimitedScope(scope) {
+    await scope.register(rateLimit, {
+      global: true,
+      max: 600,
+      timeWindow: "1 minute",
+    });
+    await registerSandboxRoutes(scope);
   });
 
   // Binary/unknown request bodies (e.g. PUT /sandbox/file) → raw Buffer.
@@ -130,7 +136,6 @@ export async function buildApp() {
 
   await registerProjectRoutes(app);
   await registerSessionRoutes(app);
-  await registerSandboxRoutes(app);
   await registerSkillRoutes(app);
   await registerSystemRoutes(app);
   await registerMcpRoutes(app);

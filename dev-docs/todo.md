@@ -18,6 +18,9 @@ Ideas:
 - agent guidance (AGENTS.md sections, contributor docs)
 - policies (contribution rules, security posture)
 - workflows (GitHub Actions beyond CI)
+- Semantic Versioning (SemVer) release policy and single source-of-truth guidelines (`server/package.json`)
+- Implementation plan lifecycle procedures (authoring in `dev-docs/plans/`, archiving to `dev-docs/plans/completed/` post-merge)
+- Changelog (`CHANGELOG.md`) and maintenance log (`dev-docs/maintenance-log.md`) maintenance procedures
 
 ## 2. CI and hooks
 

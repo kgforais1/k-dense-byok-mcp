@@ -3,12 +3,24 @@ name: Tests
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "dev-docs/**"
+      - "*.md"
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
     name: backend (vitest, ${{ matrix.os }})
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +46,7 @@ jobs:
 
   frontend:
     name: frontend (vitest, ${{ matrix.os }})
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -50,12 +63,29 @@ jobs:
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
+      - name: Typecheck
+        working-directory: web
+        run: npm run typecheck
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+      - name: Build Next.js
+        working-directory: web
+        run: npm run build
+      - name: Upload build artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-build-failure-${{ matrix.os }}
+          path: web/.next/
+          retention-days: 7
       - name: Run tests
         working-directory: web
         run: npm run test
 
   launcher-smoke:
     name: launcher --check (${{ matrix.os }})
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

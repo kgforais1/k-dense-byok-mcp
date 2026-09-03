@@ -9,7 +9,7 @@ let createViewerImpl: () => { addModel(): void; setStyle(): void; zoomTo(): void
   addModel() {}, setStyle() {}, zoomTo() {}, render() {}, resize() {}, clear() {},
 });
 vi.mock("3dmol", () => ({
-  createViewer: (...args: unknown[]) => createViewerImpl.apply(null, args as []),
+  createViewer: () => createViewerImpl(),
 }));
 
 const summary = {

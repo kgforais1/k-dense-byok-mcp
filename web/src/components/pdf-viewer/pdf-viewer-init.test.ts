@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   installMapUpsertPolyfill,
   buildWorkerUrl,
@@ -12,17 +12,32 @@ type UpsertMapProto = typeof Map.prototype & {
 
 describe("pdf-viewer initialization", () => {
   const proto = Map.prototype as UpsertMapProto;
-  const originalGetOrInsertComputed = proto.getOrInsertComputed;
-  const originalGetOrInsert = proto.getOrInsert;
+  let originalGetOrInsertComputed: typeof proto.getOrInsertComputed;
+  let originalGetOrInsert: typeof proto.getOrInsert;
+
+  beforeEach(() => {
+    originalGetOrInsertComputed = proto.getOrInsertComputed;
+    originalGetOrInsert = proto.getOrInsert;
+  });
 
   afterEach(() => {
-    proto.getOrInsertComputed = originalGetOrInsertComputed;
-    proto.getOrInsert = originalGetOrInsert;
+    if (originalGetOrInsertComputed === undefined) {
+      delete proto.getOrInsertComputed;
+    } else {
+      proto.getOrInsertComputed = originalGetOrInsertComputed;
+    }
+
+    if (originalGetOrInsert === undefined) {
+      delete proto.getOrInsert;
+    } else {
+      proto.getOrInsert = originalGetOrInsert;
+    }
+
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("installs Map.prototype.getOrInsertComputed correctly when absent", () => {
+  it("installs Map.prototype.getOrInsertComputed correctly when absent and avoids recomputation", () => {
     delete proto.getOrInsertComputed;
     delete proto.getOrInsert;
 
@@ -37,13 +52,17 @@ describe("pdf-viewer initialization", () => {
     expect(typeof map.getOrInsertComputed).toBe("function");
     expect(typeof map.getOrInsert).toBe("function");
 
-    const val1 = map.getOrInsertComputed("k1", () => 100);
+    const computeFn = vi.fn(() => 100);
+    const val1 = map.getOrInsertComputed("k1", computeFn);
     expect(val1).toBe(100);
     expect(map.get("k1")).toBe(100);
+    expect(computeFn).toHaveBeenCalledTimes(1);
 
-    // Subsequent calls return existing cached value
-    const val2 = map.getOrInsertComputed("k1", () => 200);
+    // Subsequent calls return existing cached value without calling computeFn
+    const secondComputeFn = vi.fn(() => 200);
+    const val2 = map.getOrInsertComputed("k1", secondComputeFn);
     expect(val2).toBe(100);
+    expect(secondComputeFn).not.toHaveBeenCalled();
 
     const val3 = map.getOrInsert("k2", 300);
     expect(val3).toBe(300);
@@ -75,10 +94,12 @@ describe("pdf-viewer initialization", () => {
     expect(passedBlob).toBeInstanceOf(Blob);
     expect(passedBlob.type).toBe("text/javascript");
 
-    // Verify blob content contains prepended MAP_UPSERT_POLYFILL_SRC
+    // Verify blob content contains prepended MAP_UPSERT_POLYFILL_SRC before worker source
     const textContent = await passedBlob.text();
-    expect(textContent).toContain(MAP_UPSERT_POLYFILL_SRC);
-    expect(textContent).toContain(mockWorkerSrc);
+    const polyfillIdx = textContent.indexOf(MAP_UPSERT_POLYFILL_SRC);
+    const workerIdx = textContent.indexOf(mockWorkerSrc);
+    expect(polyfillIdx).toBeGreaterThanOrEqual(0);
+    expect(workerIdx).toBeGreaterThan(polyfillIdx);
   });
 
   it("falls back to real asset URL if fetch fails", async () => {

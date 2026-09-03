@@ -189,4 +189,33 @@ describe("pdf-viewer initialization and helpers", () => {
     render(<PdfViewer path="test-document.pdf" projectId="default" hideAnnotationUi={true} />);
     expect(screen.getByText(/loading pdf/i)).toBeInTheDocument();
   });
+
+  it("tracks observed elements and triggers visibility callbacks via IntersectionObserverStub", () => {
+    const callback = vi.fn();
+    const observer = new window.IntersectionObserver(callback, {
+      rootMargin: "10px",
+      threshold: [0.5, 1.0],
+    }) as IntersectionObserver & {
+      elements: Set<Element>;
+      trigger: (entries: Partial<IntersectionObserverEntry>[]) => void;
+    };
+
+    expect(observer.rootMargin).toBe("10px");
+    expect(observer.thresholds).toEqual([0.5, 1.0]);
+
+    const targetEl = document.createElement("div");
+    observer.observe(targetEl);
+    expect(observer.elements.has(targetEl)).toBe(true);
+
+    observer.trigger([{ target: targetEl, isIntersecting: true, intersectionRatio: 0.8 }]);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback.mock.calls[0][0][0].target).toBe(targetEl);
+    expect(callback.mock.calls[0][0][0].isIntersecting).toBe(true);
+
+    observer.unobserve(targetEl);
+    expect(observer.elements.has(targetEl)).toBe(false);
+
+    observer.disconnect();
+    expect(observer.elements.size).toBe(0);
+  });
 });

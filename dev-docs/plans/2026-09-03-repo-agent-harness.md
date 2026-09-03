@@ -251,9 +251,10 @@ files are moved or deleted in this phase.
 
 - [ ] Refactor the existing root `AGENTS.md` into an index plus universal
   constraints, preserving all existing fork, hook, release, version, platform,
-  and harness invariants through links or scoped files. Keep `AGENTS.md` at
-  the root; add compatibility pointers only after their native discovery is
-  verified.
+  and harness invariants through links or scoped files. Replace its legacy
+  `# CLAUDE.md` heading with a neutral repository-instructions title before
+  adding the separate `CLAUDE.md` pointer. Keep `AGENTS.md` at the root; add
+  compatibility pointers only after their native discovery is verified.
 - [ ] Add `server/AGENTS.md`, `web/AGENTS.md`, and `.github/AGENTS.md` with
   only scope-specific deltas and links to their primary docs/tests.
 - [ ] Add root `CLAUDE.md` and `GEMINI.md` compatibility pointers, then assess

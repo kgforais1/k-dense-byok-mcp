@@ -25,6 +25,21 @@ This plan follows three useful external references:
   progress records, and git history as continuation context.
 - [AGENTS.md](https://agents.md/), for a portable, predictable instruction
   location and narrowly scoped nested instructions.
+- [GitHub Spec Kit](https://github.com/github/spec-kit), as a repository-first
+  example of making a specification → plan → task → implementation workflow
+  repeatable with templates and commands. This plan adopts the useful
+  standardization ideas, not Spec Kit as a mandatory dependency or process.
+- [Claude Code project memory](https://code.claude.com/docs/en/memory) and
+  [Gemini CLI `GEMINI.md` guidance](https://geminicli.com/docs/cli/gemini-md/),
+  which confirm that both tools have their own project-instruction filenames.
+- [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+  [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html), for a
+  release record that serves users as well as maintainers.
+
+The relevant common lesson is not to build a generic agent-control system. It
+is to make repository state cheap to recover: give work a stable home, provide
+small templates for recurrent artifacts, expose a short command path to the
+right check, and retain git history as the verified account of what changed.
 
 ## Design decisions
 
@@ -46,6 +61,23 @@ Add nested instructions only where their rules genuinely differ:
 
 Do not add a nested file merely to mirror parent text. Closest-scope guidance
 must link upward for inherited constraints and state only its delta.
+
+### 1a. Support agent-specific filenames without creating competing policies
+
+`AGENTS.md` is the canonical repository instruction source. Add small regular
+files, not symlinks, at the root for tools that do not automatically read it:
+
+| File | Contents | Reason |
+|---|---|---|
+| `CLAUDE.md` | A short compatibility pointer: read and follow `AGENTS.md`; it is canonical. | Claude Code project memory discovers `CLAUDE.md`. |
+| `GEMINI.md` | The same short pointer. | Gemini CLI discovers `GEMINI.md`. |
+
+Where a scoped `server/AGENTS.md`, `web/AGENTS.md`, or `.github/AGENTS.md` is
+introduced, add matching scoped compatibility pointers only if testing shows
+the corresponding tool needs automatic closest-directory discovery. A pointer
+must say to read the sibling `AGENTS.md` and then root `AGENTS.md`; it must not
+copy rules. `docs:check` will validate the exact pointer template and prevent
+the alias files from accreting a second policy.
 
 ### 2. Establish explicit sources of truth
 
@@ -108,11 +140,44 @@ review; changing scripts or CI requires command/verification doc review).
 scheduled audit catch semantic drift. It must report rather than rewrite
 documentation or open automated code changes.
 
+### 6. Separate change, maintenance, plan, and handoff records
+
+The repository will make the following records distinct and link them when a
+change needs more than one:
+
+| Record | Purpose and timing | Required content | Not for |
+|---|---|---|---|
+| `CHANGELOG.md` | User-facing release notes. Update the `Unreleased` section in the implementing PR when shipped behavior changes; move entries under `[version] - YYYY-MM-DD` as part of release preparation. | Keep-a-Changelog categories (`Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`) and PR link where useful. | Internal cleanup narratives, exhaustive implementation detail, or every documentation typo. |
+| `dev-docs/maintenance-log.md` | Internal, append-only record after merge for security triage, dependency work, CI/tooling, operational decisions, and non-obvious verification. | Date, PR/commit, category, summary, evidence, and follow-up if needed. | A substitute for the changelog or active state. |
+| `dev-docs/plans/` | Proposed/accepted intent before substantial implementation. Archive only after merge. | Goal, constraints, interfaces, phases, acceptance checks, and decisions. | A live task board or a release note. |
+| `dev-docs/handoffs/active/` | Short-lived continuation state for work crossing a session or agent boundary. | Scope, decisions, changed files, verification outcomes, blockers, and one next action. | Long-term history, a lock, or a replacement for commits/PRs. |
+
+SemVer remains anchored to the existing single source of truth:
+`server/package.json` version. A compatible bug fix is a PATCH increment, a
+backward-compatible capability is a MINOR increment, and a breaking public
+behavior/configuration/API change is a MAJOR increment. The web package must
+not gain a second version. The existing release workflow creates `v<version>`
+and release notes after `main` receives the version bump, so contributors must
+not manually tag a release. A release-readiness script should check the version
+policy and changelog shape, but never publish, tag, or alter the version.
+
+### 7. Standardize repeated work with small templates and checked generators
+
+Add templates under `dev-docs/templates/` for a plan, active handoff,
+maintenance-log entry, and release-readiness checklist. A portable Node helper
+may create a new artifact from these templates with branch/date/slug fields,
+for example `npm run work:plan -- --slug repo-harness` and
+`npm run work:handoff -- --plan <path>`. The helper must refuse to overwrite,
+show the target path before writing, and leave all substantive fields for the
+author to complete. The templates and `docs:check` make structure consistent;
+they do not generate decisions or prose by model.
+
 ## Proposed information architecture
 
 ```text
 README.md                         Human product overview and local quick start
 AGENTS.md                         Cross-agent entry point and hard constraints
+CLAUDE.md, GEMINI.md              Small compatibility pointers to AGENTS.md
 CONTRIBUTING.md                   Human contributor workflow; links into docs/development
 SECURITY.md                       Disclosure route and security expectations
 
@@ -122,6 +187,7 @@ docs/
     architecture-map.md           Package/module entry points and data-flow map
     verification.md               Verification ladder and CI/local mapping
     workflow.md                   Branch, plan, handoff, PR, release, and archive lifecycle
+    release-policy.md             SemVer decisions, changelog and release-readiness rules
 
 dev-docs/
   todo.md                         Prioritized, non-authoritative roadmap
@@ -129,6 +195,7 @@ dev-docs/
   plans/completed/                Merged plan archive
   handoffs/active/                Short-lived, branch-scoped continuation records
   handoffs/completed/             Closed records retained only when useful for audit
+  templates/                      Checked skeletons for repeatable work records
   maintenance-log.md              Completed maintenance/security/infrastructure record
 
 scripts/
@@ -163,6 +230,10 @@ files are moved or deleted in this phase.
   invariants through links or scoped files.
 - [ ] Add `server/AGENTS.md`, `web/AGENTS.md`, and `.github/AGENTS.md` with
   only scope-specific deltas and links to their primary docs/tests.
+- [ ] Add root `CLAUDE.md` and `GEMINI.md` compatibility pointers, then assess
+  scoped pointers with their native tools. Add only the pointers required for
+  closest-directory discovery and test that every pointer names its canonical
+  sibling/root `AGENTS.md` correctly.
 - [ ] Add `docs/development/README.md` and `architecture-map.md`; link them
   from `README.md`, `AGENTS.md`, and each package instruction file.
 - [ ] Validate that links work when opened from their owning directory and that
@@ -198,6 +269,13 @@ checks; a failed command says where to look next without hiding the failure.
 - [ ] Decide whether `CODEOWNERS` is useful for this fork. If no stable human
   owners exist, document the decision and defer it rather than adding a
   misleading file.
+- [ ] Add `docs/development/release-policy.md`: `server/package.json` is the
+  sole version, SemVer decision table, `CHANGELOG.md` versus maintenance-log
+  criteria, release workflow behavior, and no-manual-tag rule.
+- [ ] Add a deterministic release-readiness check for changelog structure,
+  version-source consistency, and the presence of an Unreleased entry when a
+  release-relevant PR declares one. It is advisory until it has survived the
+  pilot; it must never tag, publish, or rewrite history.
 
 **Exit criteria:** A contributor can make a safe PR without knowing local
 folk knowledge, and policy documents have named owners/review cadence.
@@ -213,6 +291,9 @@ folk knowledge, and policy documents have named owners/review cadence.
   check before changing code.
 - [ ] Add a PR closing checklist that requires handoff archival/removal and
   plan/maintenance/changelog updates when applicable.
+- [ ] Add templates and guarded generators for plans, handoffs, maintenance
+  records, and release-readiness checks. Test missing-field, stale-date,
+  mismatch, and overwrite-refusal paths.
 
 **Exit criteria:** An agent can resume a nontrivial branch from repository
 state alone, while parallel branches do not contend over one mutable file.

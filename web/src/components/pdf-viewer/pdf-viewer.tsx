@@ -55,11 +55,12 @@ type PdfPage = import("pdfjs-dist").PDFPageProxy;
 
 let pdfjsPromise: Promise<PdfjsModule> | null = null;
 
-// pdfjs-dist 5.6+ uses `Map.prototype.getOrInsertComputed`, a TC39 stage-2
-// proposal (`upsert`) not yet shipped in Chrome/Electron versions we target.
-// Polyfill before loading the library to avoid "is not a function" at
-// document open time.
-function installMapUpsertPolyfill(): void {
+/**
+ * Installs the TC39 stage-2 Map upsert proposal polyfills (`getOrInsertComputed`
+ * and `getOrInsert`) on `Map.prototype` if not natively supported.
+ * Required before loading `pdfjs-dist` 5.6+ to avoid runtime errors at document open time.
+ */
+export function installMapUpsertPolyfill(): void {
   type UpsertMap = Map<unknown, unknown> & {
     getOrInsertComputed?: (k: unknown, fn: (k: unknown) => unknown) => unknown;
     getOrInsert?: (k: unknown, v: unknown) => unknown;
@@ -90,9 +91,11 @@ function installMapUpsertPolyfill(): void {
   }
 }
 
-// Polyfill source as a string so we can prepend it to the worker before
-// it evaluates the bundled pdfjs code.
-const MAP_UPSERT_POLYFILL_SRC = `
+/**
+ * Polyfill source as a standalone JavaScript string prepended to the PDF worker script
+ * before evaluation, ensuring the web worker runtime also has Map upsert methods.
+ */
+export const MAP_UPSERT_POLYFILL_SRC = `
 (function(){
   var p = Map.prototype;
   if (typeof p.getOrInsertComputed !== 'function') {
@@ -110,14 +113,23 @@ const MAP_UPSERT_POLYFILL_SRC = `
 })();
 `;
 
-async function buildWorkerUrl(): Promise<string> {
+/**
+ * Resolves the bundled PDF.js worker script URL, prepends the Map upsert polyfill
+ * into a patched Blob URL, or falls back to the unpatched asset URL if network fetching fails.
+ *
+ * @returns A promise resolving to the object URL (or asset URL) for PDF.js GlobalWorkerOptions.workerSrc.
+ */
+export async function buildWorkerUrl(): Promise<string> {
   // Resolve bundled worker asset URL. Works with both Webpack and Turbopack.
   const realUrl = new URL(
     "pdfjs-dist/build/pdf.worker.min.mjs",
     import.meta.url,
   ).toString();
   try {
-    const src = await fetch(realUrl).then((r) => r.text());
+    const src = await fetch(realUrl).then((r) => {
+      if (!r.ok) throw new Error(`Failed to fetch worker: ${r.status}`);
+      return r.text();
+    });
     const patched = `${MAP_UPSERT_POLYFILL_SRC}\n${src}`;
     const blob = new Blob([patched], { type: "text/javascript" });
     return URL.createObjectURL(blob);
@@ -1107,7 +1119,7 @@ function readViewport(el: HTMLElement): PdfjsViewport | null {
   // The React PageView stores the viewport via ref; the annotation layer
   // passes it through. For the highlight-from-selection path we dig it
   // off the element by walking the React fiber — too fragile. Instead we
-  // stash it on the DOM node via a React effect (see AnnotationLayer).
+  // stash it on the DOM node via a React effect (see PageView).
   const stashed = (el as WithViewport).__pdfViewport;
   return stashed ?? null;
 }

@@ -5,11 +5,11 @@ import StructureViewer from "./structure-viewer";
 // 3Dmol touches WebGL which jsdom lacks — stub the dynamic import.
 // `createViewer` is mutable per-test so we can simulate a failing load
 // followed by a recovering one (see the self-healing test below).
-let createViewerImpl: () => { addModel(): void; setStyle(): void; zoomTo(): void; render(): void; resize(): void; clear(): void } = () => ({
+let createViewerImpl: (...args: unknown[]) => { addModel(): void; setStyle(): void; zoomTo(): void; render(): void; resize(): void; clear(): void } = () => ({
   addModel() {}, setStyle() {}, zoomTo() {}, render() {}, resize() {}, clear() {},
 });
 vi.mock("3dmol", () => ({
-  createViewer: (...args: unknown[]) => createViewerImpl.apply(null, args as []),
+  createViewer: (...args: unknown[]) => createViewerImpl(...args),
 }));
 
 const summary = {

@@ -65,3 +65,70 @@ if (typeof window !== "undefined" && typeof window.matchMedia === "undefined") {
     }),
   });
 }
+
+if (typeof globalThis !== "undefined" && typeof globalThis.IntersectionObserver === "undefined") {
+  class IntersectionObserverStub implements IntersectionObserver {
+    readonly root: Element | Document | null = null;
+    readonly rootMargin: string = "";
+    readonly thresholds: ReadonlyArray<number> = [];
+    readonly callback?: IntersectionObserverCallback;
+    readonly elements = new Set<Element>();
+
+    constructor(
+      callback?: IntersectionObserverCallback,
+      options?: IntersectionObserverInit,
+    ) {
+      this.callback = callback;
+      if (options?.root) this.root = options.root;
+      if (options?.rootMargin) this.rootMargin = options.rootMargin;
+      if (options?.threshold != null) {
+        this.thresholds = Array.isArray(options.threshold)
+          ? [...options.threshold].sort((a, b) => a - b)
+          : [options.threshold];
+      } else {
+        this.thresholds = [0];
+      }
+    }
+
+    observe(target: Element): void {
+      this.elements.add(target);
+    }
+
+    unobserve(target: Element): void {
+      this.elements.delete(target);
+    }
+
+    disconnect(): void {
+      this.elements.clear();
+    }
+
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+
+    /** Helper for tests to simulate intersection events */
+    trigger(entries: Partial<IntersectionObserverEntry>[]): void {
+      if (this.callback) {
+        const fullEntries = entries.map((entry) => ({
+          boundingClientRect: entry.boundingClientRect ?? ({} as DOMRectReadOnly),
+          intersectionRatio: entry.intersectionRatio ?? (entry.isIntersecting === false ? 0 : 1),
+          intersectionRect: entry.intersectionRect ?? ({} as DOMRectReadOnly),
+          isIntersecting: entry.isIntersecting ?? true,
+          rootBounds: entry.rootBounds ?? null,
+          target: entry.target ?? (this.elements.values().next().value as Element),
+          time: entry.time ?? Date.now(),
+        })) as IntersectionObserverEntry[];
+        this.callback(fullEntries, this);
+      }
+    }
+  }
+
+  Object.defineProperty(globalThis, "IntersectionObserver", {
+    writable: true,
+    configurable: true,
+    value: IntersectionObserverStub,
+  });
+  if (typeof window !== "undefined" && !window.IntersectionObserver) {
+    (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = IntersectionObserverStub;
+  }
+}

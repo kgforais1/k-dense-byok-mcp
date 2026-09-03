@@ -81,10 +81,12 @@ if (typeof globalThis !== "undefined" && typeof globalThis.IntersectionObserver 
       this.callback = callback;
       if (options?.root) this.root = options.root;
       if (options?.rootMargin) this.rootMargin = options.rootMargin;
-      if (options?.threshold) {
+      if (options?.threshold != null) {
         this.thresholds = Array.isArray(options.threshold)
-          ? options.threshold
+          ? [...options.threshold].sort((a, b) => a - b)
           : [options.threshold];
+      } else {
+        this.thresholds = [0];
       }
     }
 

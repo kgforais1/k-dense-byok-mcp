@@ -218,4 +218,12 @@ describe("pdf-viewer initialization and helpers", () => {
     observer.disconnect();
     expect(observer.elements.size).toBe(0);
   });
+
+  it("handles threshold 0 and default threshold [0] per W3C specification", () => {
+    const observerZero = new window.IntersectionObserver(() => {}, { threshold: 0 });
+    expect(observerZero.thresholds).toEqual([0]);
+
+    const observerDefault = new window.IntersectionObserver(() => {});
+    expect(observerDefault.thresholds).toEqual([0]);
+  });
 });

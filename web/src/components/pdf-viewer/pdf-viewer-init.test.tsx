@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen } from "@testing-library/react";
+import React from "react";
 import {
   installMapUpsertPolyfill,
   buildWorkerUrl,
   MAP_UPSERT_POLYFILL_SRC,
+  PdfViewer,
 } from "./pdf-viewer";
 
 type UpsertMapProto = typeof Map.prototype & {
@@ -10,7 +13,7 @@ type UpsertMapProto = typeof Map.prototype & {
   getOrInsert?: (k: unknown, v: unknown) => unknown;
 };
 
-describe("pdf-viewer initialization", () => {
+describe("pdf-viewer initialization and helpers", () => {
   const proto = Map.prototype as UpsertMapProto;
   let originalGetOrInsertComputed: typeof proto.getOrInsertComputed;
   let originalGetOrInsert: typeof proto.getOrInsert;
@@ -35,11 +38,7 @@ describe("pdf-viewer initialization", () => {
       proto.getOrInsert = originalGetOrInsert;
     }
 
-    if (originalCreateObjectURL === undefined) {
-      delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
-    } else {
-      URL.createObjectURL = originalCreateObjectURL;
-    }
+    URL.createObjectURL = originalCreateObjectURL!;
 
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -131,29 +130,50 @@ describe("pdf-viewer initialization", () => {
     expect(workerIdx).toBeGreaterThan(polyfillIdx);
   });
 
-  it("falls back to real asset URL if fetch fails with network error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockRejectedValue(new Error("Network / CORS error")),
-    );
+  it("falls back to real asset URL if fetch fails with network error without creating blob", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("Network / CORS error"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    if (typeof URL.createObjectURL === "undefined") {
+      URL.createObjectURL = () => "";
+    }
+    const createObjectURLSpy = vi.spyOn(URL, "createObjectURL");
 
     const url = await buildWorkerUrl();
     expect(url).toContain("pdfjs-dist");
     expect(url).toContain("pdf.worker.min.mjs");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(createObjectURLSpy).not.toHaveBeenCalled();
   });
 
-  it("falls back to real asset URL if fetch returns non-OK HTTP status", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        text: () => Promise.resolve("<!DOCTYPE html>404 Not Found"),
-      }),
-    );
+  it("falls back to real asset URL if fetch returns non-OK HTTP status without creating blob", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve("<!DOCTYPE html>404 Not Found"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    if (typeof URL.createObjectURL === "undefined") {
+      URL.createObjectURL = () => "";
+    }
+    const createObjectURLSpy = vi.spyOn(URL, "createObjectURL");
 
     const url = await buildWorkerUrl();
     expect(url).toContain("pdfjs-dist");
     expect(url).toContain("pdf.worker.min.mjs");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(createObjectURLSpy).not.toHaveBeenCalled();
+  });
+
+  it("mounts PdfViewer without throwing thanks to IntersectionObserver stub", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ version: 1, annotations: [] }),
+    }));
+
+    render(<PdfViewer path="test-document.pdf" projectId="default" hideAnnotationUi={true} />);
+    expect(screen.getByText(/loading pdf/i)).toBeInTheDocument();
   });
 });

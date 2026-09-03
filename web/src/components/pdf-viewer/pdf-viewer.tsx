@@ -1110,7 +1110,7 @@ function readViewport(el: HTMLElement): PdfjsViewport | null {
   // The React PageView stores the viewport via ref; the annotation layer
   // passes it through. For the highlight-from-selection path we dig it
   // off the element by walking the React fiber — too fragile. Instead we
-  // stash it on the DOM node via a React effect (see AnnotationLayer).
+  // stash it on the DOM node via a React effect (see PageView).
   const stashed = (el as WithViewport).__pdfViewport;
   return stashed ?? null;
 }

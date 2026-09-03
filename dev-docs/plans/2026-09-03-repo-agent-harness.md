@@ -99,13 +99,16 @@ Create a small, dependency-free command hub rather than asking agents to
 infer the correct package and command. Root scripts should delegate to the
 existing server/web scripts; they must not change CI policy or mask failures.
 
-Initial commands:
+Initial commands, added as explicit aliases to the existing root
+`package.json`, are:
 
-- `npm run status` — branch, worktree, and active-plan/handoff discovery.
+- `npm run status` — current branch, recent commits, and active-plan/handoff
+  discovery.
 - `npm run verify` — documented local verification ladder, with explicit
   component commands and an opt-in full suite.
 - `npm run docs:check` — validate internal Markdown links, required indexes,
-  plan metadata, and handoff schema; no network access.
+  manifest targets, standard-template headings, and the active-handoff schema;
+  no network access.
 - `npm run repo:map` — print the concise architectural map and document entry
   points generated from a maintained manifest, not a fragile filesystem dump.
 - `npm run handoff:check` — reject malformed or expired active handoffs.
@@ -114,6 +117,13 @@ The implementation should choose one portable Node script or small set of
 Node scripts under `scripts/`; no shell-only task runner. The commands will be
 documented as a navigation aid, not as authorization to run expensive or
 state-changing operations automatically.
+
+`repo-manifest.json` is a deliberately small, reviewed source: the author who
+adds, removes, or relocates a manifest-listed entry point updates it in the
+same PR. `docs:check` verifies that every listed target exists and that each
+required category has an entry; it does not attempt to infer architecture from
+the filesystem. `docs/development/README.md` owns the category definitions and
+the manifest update rule.
 
 ### 4. Use durable handoffs, but never a global mutable coordination file
 
@@ -126,9 +136,20 @@ known failures, blockers, and the one recommended next action.
 Handoffs are required only when work will continue after the current session
 or another agent is explicitly asked to take over. They are summaries, not
 locks: git branches, commits, and PRs remain the coordination mechanism.
-Archive/remove a handoff when the work merges, is abandoned, or has been
-superseded. This avoids a shared `current-state.md` becoming both stale and a
-merge-conflict hotspot.
+Remove a handoff when the work merges, is abandoned, or has been superseded.
+If it records an incident or enduring operational decision, distill that fact
+into the maintenance log instead of retaining a second state record. This
+avoids a shared `current-state.md` becoming both stale and a merge-conflict
+hotspot.
+
+### 4a. Keep contributor guidance separate from runtime Pi-agent policy
+
+This harness governs humans and coding agents changing this repository. It
+does not automatically become a prompt or policy source for the Pi runtime
+agent, whose project skills, agent definitions, and settings live under each
+project sandbox. Phase 1 must document that boundary and link the relevant
+runtime locations from `server/AGENTS.md`; any change to seeded runtime
+instructions remains a separately reviewed product behavior change.
 
 ### 5. Give documentation a maintenance system
 
@@ -153,13 +174,17 @@ change needs more than one:
 | `dev-docs/handoffs/active/` | Short-lived continuation state for work crossing a session or agent boundary. | Scope, decisions, changed files, verification outcomes, blockers, and one next action. | Long-term history, a lock, or a replacement for commits/PRs. |
 
 SemVer remains anchored to the existing single source of truth:
-`server/package.json` version. A compatible bug fix is a PATCH increment, a
-backward-compatible capability is a MINOR increment, and a breaking public
-behavior/configuration/API change is a MAJOR increment. The web package must
-not gain a second version. The existing release workflow creates `v<version>`
-and release notes after `main` receives the version bump, so contributors must
-not manually tag a release. A release-readiness script should check the version
-policy and changelog shape, but never publish, tag, or alter the version.
+`server/package.json` version. For this local desktop app, "public contract"
+means user-visible behavior, persisted project data, documented configuration
+or environment variables, and supported local HTTP/API integrations; internal
+refactors and undocumented implementation details are not contracts. A
+compatible bug fix is a PATCH increment, a backward-compatible capability is a
+MINOR increment, and a breaking public-contract change is a MAJOR increment.
+The web package must not gain a second version. The existing release workflow
+creates `v<version>` and release notes after `main` receives the version bump,
+so contributors must not manually tag a release. A release-readiness script
+should check the version policy and changelog shape, but never publish, tag, or
+alter the version.
 
 ### 7. Standardize repeated work with small templates and checked generators
 
@@ -194,7 +219,6 @@ dev-docs/
   plans/                          Accepted/proposed implementation plans
   plans/completed/                Merged plan archive
   handoffs/active/                Short-lived, branch-scoped continuation records
-  handoffs/completed/             Closed records retained only when useful for audit
   templates/                      Checked skeletons for repeatable work records
   maintenance-log.md              Completed maintenance/security/infrastructure record
 
@@ -225,9 +249,11 @@ files are moved or deleted in this phase.
 
 ### Phase 1 — Navigation and scoped guidance
 
-- [ ] Refactor root `AGENTS.md` into an index plus universal constraints,
-  preserving all existing fork, hook, release, version, platform, and harness
-  invariants through links or scoped files.
+- [ ] Refactor the existing root `AGENTS.md` into an index plus universal
+  constraints, preserving all existing fork, hook, release, version, platform,
+  and harness invariants through links or scoped files. Keep `AGENTS.md` at
+  the root; add compatibility pointers only after their native discovery is
+  verified.
 - [ ] Add `server/AGENTS.md`, `web/AGENTS.md`, and `.github/AGENTS.md` with
   only scope-specific deltas and links to their primary docs/tests.
 - [ ] Add root `CLAUDE.md` and `GEMINI.md` compatibility pointers, then assess
@@ -245,7 +271,8 @@ and “what do I run?” from the nearest instruction file in under five minutes
 
 ### Phase 2 — Command hub and verification contract
 
-- [ ] Implement the portable Node command hub and root script aliases.
+- [ ] Implement the portable Node command hub and add its explicit aliases to
+  the existing root `package.json`.
 - [ ] Write `docs/development/verification.md`: fast targeted checks, package
   checks, full local checks, CI-only matrix coverage, and expected runtime.
 - [ ] Ensure commands fail loudly, preserve original exit codes, avoid network
@@ -282,10 +309,13 @@ folk knowledge, and policy documents have named owners/review cadence.
 
 ### Phase 4 — State coordination and handoff
 
-- [ ] Add the handoff schema, examples for code/docs/infrastructure work, and
-  an archive/removal rule to `docs/development/workflow.md`.
+- [ ] Define the active-handoff frontmatter schema (branch, plan/issue, status,
+  updated ISO date) and required body headings; add examples for
+  code/docs/infrastructure work and the removal rule to
+  `docs/development/workflow.md`.
 - [ ] Implement `handoff:check` for branch-name match, required fields, ISO
-  dates, referenced-plan existence, and closed-state placement.
+  dates, referenced-plan existence, and removal of closed handoffs from the
+  active directory.
 - [ ] Add a short “resume protocol” to root guidance: inspect status, recent
   commits, active handoff, plan/issue, then run the smallest relevant health
   check before changing code.
@@ -300,11 +330,13 @@ state alone, while parallel branches do not contend over one mutable file.
 
 ### Phase 5 — Documentation gardening and regression protection
 
-- [ ] Implement `docs:check` for local links, required headings/frontmatter,
-  manifest coverage, orphaned active handoffs, and plan/archive placement.
-- [ ] Add a CI job that runs documentation checks on every PR, including
-  documentation-only PRs (the existing test workflow intentionally skips many
-  doc-only pushes, so this must be separate or its path filters adjusted).
+- [ ] Implement `docs:check` for local links, required standard-template
+  headings, manifest target/category coverage, orphaned active handoffs, and
+  plan/archive placement.
+- [ ] Add a CI job that runs documentation checks on every PR. The current
+  test workflow already runs on documentation-only pull requests; this is a
+  focused additional check, not a path-filter change or a replacement for the
+  test matrix.
 - [ ] Add a scheduled, report-only workflow that opens or updates a labeled
   maintenance issue when docs checks or stale-date thresholds fail; it must
   not edit docs or close issues on partial failures.
@@ -358,9 +390,7 @@ proportionate.
 
 1. Who receives private security reports and owns triage for this fork?
 2. Which people or teams, if any, should be represented in `CODEOWNERS`?
-3. Should active handoffs be retained in git after merge, or deleted except
-   when they document an incident/long-running operational decision?
-4. What duration should distinguish a quick task (no handoff) from
+3. What duration should distinguish a quick task (no handoff) from
    cross-session work (handoff required)?
-5. Which full local verification command is acceptable as the default before a
+4. Which full local verification command is acceptable as the default before a
    PR, given the current backend/frontend suite duration?

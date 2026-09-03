@@ -23,13 +23,12 @@ Ideas:
 
 Set up continuous integration and git hooks for the fork.
 
-Ideas:
+Implemented:
+- GitHub Actions CI hardened in PR #8 (`.github/workflows/tests.yml`): `permissions: contents: read`, `cancel-in-progress` on PRs, 15m timeouts, deterministic `npm ci`, full frontend gates (`typecheck`, `lint`, `build`, `test`), failure artifact capture, and PDF viewer initialization unit tests.
 
-- GitHub Actions for typecheck/tests on the server and web packages
+Remaining Ideas:
 - pre-commit / pre-push hook coverage beyond the fork push guard (`.githooks/`)
 - status checks required before merge
-- type checking
-- linting
 - test coverage
 - complexity
 - file line count

@@ -63,7 +63,6 @@ tmp/
 temp/
 /projects
 /graphify-out
-TODO.md
 .agents/
 .claude/
 skills-lock.json

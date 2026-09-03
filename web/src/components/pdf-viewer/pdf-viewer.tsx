@@ -59,7 +59,7 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
 // proposal (`upsert`) not yet shipped in Chrome/Electron versions we target.
 // Polyfill before loading the library to avoid "is not a function" at
 // document open time.
-function installMapUpsertPolyfill(): void {
+export function installMapUpsertPolyfill(): void {
   type UpsertMap = Map<unknown, unknown> & {
     getOrInsertComputed?: (k: unknown, fn: (k: unknown) => unknown) => unknown;
     getOrInsert?: (k: unknown, v: unknown) => unknown;
@@ -92,7 +92,7 @@ function installMapUpsertPolyfill(): void {
 
 // Polyfill source as a string so we can prepend it to the worker before
 // it evaluates the bundled pdfjs code.
-const MAP_UPSERT_POLYFILL_SRC = `
+export const MAP_UPSERT_POLYFILL_SRC = `
 (function(){
   var p = Map.prototype;
   if (typeof p.getOrInsertComputed !== 'function') {
@@ -110,7 +110,7 @@ const MAP_UPSERT_POLYFILL_SRC = `
 })();
 `;
 
-async function buildWorkerUrl(): Promise<string> {
+export async function buildWorkerUrl(): Promise<string> {
   // Resolve bundled worker asset URL. Works with both Webpack and Turbopack.
   const realUrl = new URL(
     "pdfjs-dist/build/pdf.worker.min.mjs",

@@ -170,6 +170,7 @@ describe("pdf-viewer initialization and helpers", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
+      text: () => Promise.resolve("/* worker source */"),
       json: () => Promise.resolve({ version: 1, annotations: [] }),
     }));
 

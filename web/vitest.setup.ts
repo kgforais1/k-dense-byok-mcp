@@ -85,8 +85,12 @@ if (typeof globalThis !== "undefined" && typeof globalThis.IntersectionObserver 
       }
     }
 
-    observe(_target: Element): void {}
-    unobserve(_target: Element): void {}
+    observe(_target: Element): void {
+      void _target;
+    }
+    unobserve(_target: Element): void {
+      void _target;
+    }
     disconnect(): void {}
     takeRecords(): IntersectionObserverEntry[] {
       return [];

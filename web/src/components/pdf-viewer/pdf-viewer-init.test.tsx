@@ -35,6 +35,9 @@ describe("pdf-viewer initialization and helpers", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+
     if (originalGetOrInsertComputed === undefined) {
       delete proto.getOrInsertComputed;
     } else {
@@ -52,9 +55,6 @@ describe("pdf-viewer initialization and helpers", () => {
     } else {
       delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
     }
-
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   it("installs Map.prototype.getOrInsertComputed correctly when absent and avoids recomputation", () => {

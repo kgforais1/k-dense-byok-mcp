@@ -28,6 +28,14 @@ Ideas:
 - GitHub Actions for typecheck/tests on the server and web packages
 - pre-commit / pre-push hook coverage beyond the fork push guard (`.githooks/`)
 - status checks required before merge
+- type checking
+- linting
+- test coverage
+- complexity
+- file line count
+- broken links
+- absolute paths
+- privacy protection
 
 ## 3. Code scanning, security alerts, and Dependabot
 

@@ -1,3 +1,12 @@
+/**
+ * Unit tests for PDF Viewer initialization, Map upsert polyfill safety,
+ * worker URL construction with prepended polyfills, and fallback error handling.
+ *
+ * Lifecycle Isolation:
+ * - beforeEach captures native Map.prototype and URL.createObjectURL states.
+ * - afterEach restores all modified prototypes, globals, and mocks.
+ */
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import React from "react";
@@ -38,7 +47,11 @@ describe("pdf-viewer initialization and helpers", () => {
       proto.getOrInsert = originalGetOrInsert;
     }
 
-    URL.createObjectURL = originalCreateObjectURL!;
+    if (originalCreateObjectURL !== undefined) {
+      URL.createObjectURL = originalCreateObjectURL;
+    } else {
+      delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    }
 
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -171,7 +184,6 @@ describe("pdf-viewer initialization and helpers", () => {
       ok: true,
       status: 200,
       text: () => Promise.resolve("/* worker source */"),
-      json: () => Promise.resolve({ version: 1, annotations: [] }),
     }));
 
     render(<PdfViewer path="test-document.pdf" projectId="default" hideAnnotationUi={true} />);

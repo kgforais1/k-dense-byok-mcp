@@ -4,14 +4,14 @@
 
 **Goal:** Build out robust CI verification gates in GitHub Actions for the Next.js frontend (typecheck, lint, production build), harden workflow permissions, add concurrency and timeouts, and establish unit tests for viewer initialization and polyfill safety.
 
-**Architecture:** Extend `.github/workflows/tests.yml` with top-level least-privilege permissions (`contents: read`), workflow-level `concurrency` cancellation, per-job `timeout-minutes`, `paths-ignore` for doc-only pushes, and full frontend `typecheck`, `lint`, and `build` (`next build`) gates with build artifact upload on failure. Standardize the `typecheck` script in `web/package.json`, export and unit-test `pdf-viewer` worker URL resolution and polyfills with clean spy/lifecycle isolation (avoiding `global.URL` prototype disruption), and stub missing browser globals (`IntersectionObserver`, `CanvasRenderingContext2D`) in `vitest.setup.ts`.
+**Architecture:** Extend `.github/workflows/tests.yml` with top-level least-privilege permissions (`contents: read`), workflow-level `concurrency` cancellation, per-job `timeout-minutes`, `paths-ignore` for doc-only pushes, and full frontend `typecheck`, `lint`, and `build` (`next build`) gates with build artifact upload on failure. Standardize the `typecheck` script in `web/package.json`, export and unit-test `pdf-viewer` worker URL resolution and polyfills with clean spy/lifecycle isolation (avoiding `global.URL` prototype disruption), and stub missing browser globals (`IntersectionObserver`) in `vitest.setup.ts`.
 
 **Tech Stack:** GitHub Actions, Next.js 16 (Turbopack), TypeScript 5, React 19, Vitest, Node 22.
 
 ## Global Constraints
 
 - Never open PRs against or push to the upstream repo; all work targets `kgforais1/k-dense-byok-mcp`.
-- Maintain cross-platform CI matrix support (Ubuntu, Windows, macOS).
+- Maintain cross-platform CI matrix support (Ubuntu and Windows for unit tests, plus macOS for launcher-smoke).
 - Do not bypass pre-push hooks.
 - Pi harness dependencies (`@earendil-works/*`, `pi-subagents`, `pi-web-access`, `skills`) must remain pinned and ignored by automatic Dependabot upgrades.
 
@@ -20,7 +20,7 @@
 ### Task 1: Standardize Frontend Typecheck Script in `web/package.json`
 
 **Files:**
-- Modify: `web/package.json:4-13`
+- Modify: `web/package.json`
 
 **Interfaces:**
 - Consumes: TypeScript compiler in `web/node_modules/.bin/tsc`.
@@ -54,9 +54,9 @@
 ### Task 3: Unit Tests for PDF Viewer Initialization and Polyfills
 
 **Files:**
-- Modify: `web/src/components/pdf-viewer/pdf-viewer.tsx:62-138` (export `installMapUpsertPolyfill`, `buildWorkerUrl`, and `MAP_UPSERT_POLYFILL_SRC` for testing)
+- Modify: `web/src/components/pdf-viewer/pdf-viewer.tsx` (export `installMapUpsertPolyfill`, `buildWorkerUrl`, and `MAP_UPSERT_POLYFILL_SRC` for testing)
 - Modify: `web/vitest.setup.ts` (add typed `IntersectionObserver` stub)
-- Create: `web/src/components/pdf-viewer/pdf-viewer-init.test.ts`
+- Create: `web/src/components/pdf-viewer/pdf-viewer-init.test.tsx`
 
 **Interfaces:**
 - Consumes: `web/src/components/pdf-viewer/pdf-viewer.tsx` functions (`installMapUpsertPolyfill`, `buildWorkerUrl`, `MAP_UPSERT_POLYFILL_SRC`).

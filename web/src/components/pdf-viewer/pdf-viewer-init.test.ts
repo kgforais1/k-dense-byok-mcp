@@ -14,10 +14,12 @@ describe("pdf-viewer initialization", () => {
   const proto = Map.prototype as UpsertMapProto;
   let originalGetOrInsertComputed: typeof proto.getOrInsertComputed;
   let originalGetOrInsert: typeof proto.getOrInsert;
+  let originalCreateObjectURL: typeof URL.createObjectURL | undefined;
 
   beforeEach(() => {
     originalGetOrInsertComputed = proto.getOrInsertComputed;
     originalGetOrInsert = proto.getOrInsert;
+    originalCreateObjectURL = URL.createObjectURL;
   });
 
   afterEach(() => {
@@ -33,6 +35,12 @@ describe("pdf-viewer initialization", () => {
       proto.getOrInsert = originalGetOrInsert;
     }
 
+    if (originalCreateObjectURL === undefined) {
+      delete (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+    } else {
+      URL.createObjectURL = originalCreateObjectURL;
+    }
+
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -43,41 +51,60 @@ describe("pdf-viewer initialization", () => {
 
     installMapUpsertPolyfill();
 
-    const map = new Map<string, number>() as unknown as {
-      getOrInsertComputed: (k: string, fn: (k: string) => number) => number;
-      getOrInsert: (k: string, v: number) => number;
-      get: (k: string) => number | undefined;
+    const map = new Map<string, string>() as unknown as {
+      getOrInsertComputed: (k: string, fn: (k: string) => string) => string;
+      getOrInsert: (k: string, v: string) => string;
+      get: (k: string) => string | undefined;
     };
 
     expect(typeof map.getOrInsertComputed).toBe("function");
     expect(typeof map.getOrInsert).toBe("function");
 
-    const computeFn = vi.fn(() => 100);
-    const val1 = map.getOrInsertComputed("k1", computeFn);
-    expect(val1).toBe(100);
-    expect(map.get("k1")).toBe(100);
+    // Verify compute function receives key argument
+    const computeFn = vi.fn((key: string) => `computed-${key}`);
+    const val1 = map.getOrInsertComputed("itemA", computeFn);
+    expect(val1).toBe("computed-itemA");
+    expect(map.get("itemA")).toBe("computed-itemA");
+    expect(computeFn).toHaveBeenCalledWith("itemA");
     expect(computeFn).toHaveBeenCalledTimes(1);
 
-    // Subsequent calls return existing cached value without calling computeFn
-    const secondComputeFn = vi.fn(() => 200);
-    const val2 = map.getOrInsertComputed("k1", secondComputeFn);
-    expect(val2).toBe(100);
+    // Subsequent call returns existing cached value without calling computeFn
+    const secondComputeFn = vi.fn(() => "new-val");
+    const val2 = map.getOrInsertComputed("itemA", secondComputeFn);
+    expect(val2).toBe("computed-itemA");
     expect(secondComputeFn).not.toHaveBeenCalled();
 
-    const val3 = map.getOrInsert("k2", 300);
-    expect(val3).toBe(300);
-    expect(map.get("k2")).toBe(300);
+    // getOrInsert behavior
+    const val3 = map.getOrInsert("itemB", "valB");
+    expect(val3).toBe("valB");
+    expect(map.get("itemB")).toBe("valB");
+
+    const val4 = map.getOrInsert("itemB", "ignored");
+    expect(val4).toBe("valB");
+  });
+
+  it("preserves existing native implementations without overwriting", () => {
+    const existingComputed = vi.fn(() => "native");
+    const existingGetOrInsert = vi.fn(() => "native-insert");
+
+    proto.getOrInsertComputed = existingComputed as unknown as typeof proto.getOrInsertComputed;
+    proto.getOrInsert = existingGetOrInsert as unknown as typeof proto.getOrInsert;
+
+    installMapUpsertPolyfill();
+
+    expect(proto.getOrInsertComputed).toBe(existingComputed);
+    expect(proto.getOrInsert).toBe(existingGetOrInsert);
   });
 
   it("builds a patched blob worker URL with prepended polyfill on successful fetch", async () => {
     const mockWorkerSrc = "console.log('worker code');";
 
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        text: () => Promise.resolve(mockWorkerSrc),
-      }),
-    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(mockWorkerSrc),
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     if (typeof URL.createObjectURL === "undefined") {
       URL.createObjectURL = () => "";
@@ -88,6 +115,8 @@ describe("pdf-viewer initialization", () => {
 
     const url = await buildWorkerUrl();
     expect(url).toBe("blob:http://localhost/mock-worker-blob");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("pdf.worker.min.mjs");
     expect(createObjectURLSpy).toHaveBeenCalledTimes(1);
 
     const passedBlob = createObjectURLSpy.mock.calls[0][0] as Blob;
@@ -102,10 +131,25 @@ describe("pdf-viewer initialization", () => {
     expect(workerIdx).toBeGreaterThan(polyfillIdx);
   });
 
-  it("falls back to real asset URL if fetch fails", async () => {
+  it("falls back to real asset URL if fetch fails with network error", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockRejectedValue(new Error("Network / CORS error")),
+    );
+
+    const url = await buildWorkerUrl();
+    expect(url).toContain("pdfjs-dist");
+    expect(url).toContain("pdf.worker.min.mjs");
+  });
+
+  it("falls back to real asset URL if fetch returns non-OK HTTP status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve("<!DOCTYPE html>404 Not Found"),
+      }),
     );
 
     const url = await buildWorkerUrl();

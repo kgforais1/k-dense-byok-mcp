@@ -66,21 +66,39 @@ if (typeof window !== "undefined" && typeof window.matchMedia === "undefined") {
   });
 }
 
-if (typeof window !== "undefined" && typeof window.IntersectionObserver === "undefined") {
+if (typeof globalThis !== "undefined" && typeof globalThis.IntersectionObserver === "undefined") {
   class IntersectionObserverStub implements IntersectionObserver {
     readonly root: Element | Document | null = null;
     readonly rootMargin: string = "";
     readonly thresholds: ReadonlyArray<number> = [];
-    observe(): void {}
-    unobserve(): void {}
+
+    constructor(
+      _callback?: IntersectionObserverCallback,
+      options?: IntersectionObserverInit,
+    ) {
+      if (options?.root) this.root = options.root;
+      if (options?.rootMargin) this.rootMargin = options.rootMargin;
+      if (options?.threshold) {
+        this.thresholds = Array.isArray(options.threshold)
+          ? options.threshold
+          : [options.threshold];
+      }
+    }
+
+    observe(_target: Element): void {}
+    unobserve(_target: Element): void {}
     disconnect(): void {}
     takeRecords(): IntersectionObserverEntry[] {
       return [];
     }
   }
-  Object.defineProperty(window, "IntersectionObserver", {
+
+  Object.defineProperty(globalThis, "IntersectionObserver", {
     writable: true,
     configurable: true,
     value: IntersectionObserverStub,
   });
+  if (typeof window !== "undefined" && !window.IntersectionObserver) {
+    (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = IntersectionObserverStub;
+  }
 }

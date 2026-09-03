@@ -117,7 +117,10 @@ export async function buildWorkerUrl(): Promise<string> {
     import.meta.url,
   ).toString();
   try {
-    const src = await fetch(realUrl).then((r) => r.text());
+    const src = await fetch(realUrl).then((r) => {
+      if (!r.ok) throw new Error(`Failed to fetch worker: ${r.status}`);
+      return r.text();
+    });
     const patched = `${MAP_UPSERT_POLYFILL_SRC}\n${src}`;
     const blob = new Blob([patched], { type: "text/javascript" });
     return URL.createObjectURL(blob);

@@ -433,13 +433,16 @@ VERIFY_LADDERS.all = {
 function runNpmScript(args) {
   // Returns the captured stdout. Throws on non-zero exit (preserves code).
   // On Windows the `npm` command is a shim (`npm.cmd`) that spawnSync cannot
-  // resolve without a shell; use the .cmd name there.
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  // resolve without a shell; use the .cmd name plus `shell: true` there. The
+  // args are fixed internal constants (no user input), so shell use is safe.
+  const isWindows = process.platform === "win32";
+  const npmCmd = isWindows ? "npm.cmd" : "npm";
   const result = spawnSync(npmCmd, args, {
     cwd: REPO_ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: process.env,
+    shell: isWindows,
   });
   if (result.error) {
     const wrapped = new Error(
@@ -828,8 +831,9 @@ export function scaffoldPlan({ slug, title, branch, cwd = REPO_ROOT } = {}) {
     title: title || safe,
     branch: branch || "<branch>",
   })
-    .replace("[Feature / Task Title]", title || safe)
-    .replace(/\[YYYY-MM-DD\]/g, nowIsoDate());
+    .replace(/\[Feature \/ Task Title\]/g, title || safe)
+    .replace(/\[YYYY-MM-DD\]/g, nowIsoDate())
+    .replace(/\[branch-name\]/g, branch || "<branch>");
   fs.writeFileSync(target, content);
   return target;
 }

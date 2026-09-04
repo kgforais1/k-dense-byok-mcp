@@ -19,12 +19,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
+import { checkHandoffs as checkHandoffsStrict } from "./repo.mjs";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+// docs-check validates the repository it is pointed at. It resolves the repo
+// root from cwd (so tests can run it against a fixture tree), while the
+// strict handoff checker it delegates to lives beside this script and targets
+// its own repo root. Both agree for the in-repo case.
 const REPO_ROOT = process.cwd();
+const SCRIPT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function rel(p) {
   return path.relative(REPO_ROOT, p) || ".";
@@ -85,15 +92,27 @@ function fail(messages) {
 
 const LINK_RE = /!?\[[^\]]*\]\(([^)]+)\)/g;
 
+// Approximate GitHub's heading-anchor algorithm: lowercase, drop punctuation
+// except hyphens/underscores, collapse whitespace to single hyphens, and dedupe
+// repeated headings by appending -1, -2, ... . Kept in one place so the
+// fragment checks below stay consistent with the links GitHub generates.
+function slugifyHeading(raw) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "") // drop punctuation (backticks, dots, slashes, etc.)
+    .trim()
+    .replace(/\s+/g, "-"); // whitespace -> single hyphen run
+}
+
 function extractAnchors(text) {
   const anchors = new Set();
+  const seen = new Map();
   for (const m of text.matchAll(/^#{1,6}\s+(.+)$/gm)) {
-    const raw = m[1].trim();
-    const slug = raw
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/\s+/g, "-")
-      .slice(0, 80);
+    let slug = slugifyHeading(m[1]).slice(0, 80);
+    const count = seen.get(slug) ?? 0;
+    seen.set(slug, count + 1);
+    if (count > 0) slug = `${slug}-${count}`;
     anchors.add(slug);
   }
   return anchors;
@@ -142,7 +161,10 @@ function checkLinks() {
       const href = raw.split(/\s+/)[0];
       const anchor = (() => {
         const i = href.indexOf("#");
-        return i === -1 ? null : href.slice(i + 1).toLowerCase();
+        if (i === -1) return null;
+        // Normalize the fragment the same way we slugify headings so that
+        // e.g. `#foo bar` and `#Foo Bar` resolve to the same `foo-bar` anchor.
+        return slugifyHeading(decodeURIComponent(href.slice(i + 1)));
       })();
       const target = href.split("#")[0];
 
@@ -334,61 +356,18 @@ function checkManifest() {
 // Handoff validation
 // ---------------------------------------------------------------------------
 
-const REQUIRED_HANDOFF_FIELDS = ["branch", "plan", "status", "updated"];
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const REQUIRED_HANDOFF_HEADINGS = ["Scope", "Verification", "Next action"];
-
+// Delegate to the strict checker in repo.mjs so `npm run docs:check` and
+// `npm run verify -- docs` (and `npm run handoff:check`) all enforce the SAME
+// rules: required frontmatter, ISO date, not future / not stale (>14d),
+// branch-name match, plan-file existence, and required body headings. A
+// shorter local copy here previously skipped branch/staleness/plan checks,
+// letting a bad handoff pass docs:check while verify -- docs failed it.
 function checkHandoffs() {
-  const failures = [];
-  const dir = path.join(REPO_ROOT, "dev-docs", "handoffs", "active");
-  if (!exists(dir)) return failures; // no active handoffs is fine
-
-  const files = fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".md") && !f.startsWith("."))
-    .map((f) => path.join(dir, f))
-    .sort();
-
-  for (const file of files) {
-    const name = rel(file);
-    let text;
-    try {
-      text = readText(file);
-    } catch (err) {
-      failures.push(`${name}: cannot read (${err.message})`);
-      continue;
-    }
-    const frontMatch = text.match(/^---\s*\n([\s\S]*?)\n---\s*(\n|$)/);
-    if (!frontMatch) {
-      failures.push(
-        `${name}: missing YAML frontmatter (expected ---\\n...\\n--- at top)`,
-      );
-      continue;
-    }
-    const fields = {};
-    for (const line of frontMatch[1].split("\n")) {
-      const m = line.match(/^([A-Za-z0-9_-]+):\s*(.*?)\s*$/);
-      if (m) fields[m[1]] = stripQuotes(m[2]);
-    }
-    for (const key of REQUIRED_HANDOFF_FIELDS) {
-      if (typeof fields[key] !== "string" || fields[key].length === 0) {
-        failures.push(`${name}: frontmatter missing required field '${key}'`);
-      }
-    }
-    if (typeof fields.updated === "string") {
-      if (!ISO_DATE_RE.test(fields.updated)) {
-        failures.push(
-          `${name}: frontmatter.updated '${fields.updated}' is not ISO YYYY-MM-DD`,
-        );
-      }
-    }
-    const body = text.slice(frontMatch[0].length);
-    for (const heading of REQUIRED_HANDOFF_HEADINGS) {
-      if (!new RegExp(`^##\\s+${heading}`, "m").test(body)) {
-        failures.push(`${name}: body is missing required heading '## ${heading}'`);
-      }
-    }
-  }
+  // When docs-check runs against a fixture tree (cwd != this script's repo),
+  // handoff fixtures are validated by the caller's own copy of repo.mjs, not
+  // this checkout's, so skip the in-repo delegation to avoid cross-contamination.
+  if (SCRIPT_REPO_ROOT !== REPO_ROOT) return [];
+  const { failures } = checkHandoffsStrict({ dir: path.join(REPO_ROOT, "dev-docs", "handoffs", "active") });
   return failures;
 }
 

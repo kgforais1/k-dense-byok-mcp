@@ -1,3 +1,10 @@
+---
+title: "[Feature / Task Title]"
+status: proposed
+created: [YYYY-MM-DD]
+branch: [branch-name]
+---
+
 # [Feature / Task Title] Implementation Plan
 
 **Status:** Proposed

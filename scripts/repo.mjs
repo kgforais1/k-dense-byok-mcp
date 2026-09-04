@@ -566,11 +566,19 @@ function missingRequiredHeadings(body) {
 }
 
 // Resolve the git branch name to compare against, honoring an override (used
-// by tests to avoid depending on the checked-out branch).
+// by tests to avoid depending on the checked-out branch). Returns "" when no
+// real branch is available (detached HEAD, CI without a ref), so callers skip
+// the mismatch comparison instead of flagging a false mismatch.
 function currentBranchName(branchOverride) {
   if (branchOverride !== undefined) return branchOverride;
+  // GitHub Actions checks checks out a detached ref; fall back to the PR
+  // source branch so handoff comparison still works on CI pull-request runs.
+  const headRef = process.env.GITHUB_HEAD_REF;
+  if (typeof headRef === "string" && headRef.length > 0) return headRef;
   try {
-    return runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+    const branch = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+    // A detached HEAD resolves to the literal "HEAD"; there is no branch name.
+    return branch === "HEAD" ? "" : branch;
   } catch {
     return "";
   }

@@ -101,9 +101,12 @@ Rules:
 
 - The hub never bypasses hooks or CI and preserves the original exit code — a
   green hub run is the only pass signal.
-- CI (`.github/workflows/tests.yml`) runs the same checks; a local failure
-  should reproduce in its matching CI job. If it does not, file a maintenance
-  log entry — the disagreement is the bug.
+- CI (`.github/workflows/tests.yml`) runs the same checks for the `fast`,
+  `server`, and `web` ladders; a failure there should reproduce in its matching
+  CI job. The `docs` ladder is local-only for now (no CI docs job yet — see
+  `docs/development/verification.md`), so run it locally. If a CI-mapped
+  failure does not reproduce, file a maintenance log entry — the disagreement
+  is the bug.
 - Also run `npm run status` to surface branch, recent commits, and any active
   handoff before pushing.
 

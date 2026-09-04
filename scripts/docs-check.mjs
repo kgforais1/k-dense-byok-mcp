@@ -192,10 +192,29 @@ function checkLink(file, raw, anchorMap) {
     failures.push(`${rel(file)}: link target missing: ${href}`);
     return failures;
   }
-  if (anchor && !anchorMap.get(resolved).has(anchor)) {
+  if (anchor && !anchorsFor(resolved, anchorMap).has(anchor)) {
     failures.push(`${rel(file)}: fragment #${anchor} not found in ${rel(resolved)}`);
   }
   return failures;
+}
+
+// Return the anchor set for a link target, computing and caching it when the
+// target is a Markdown file outside the pre-scanned roots (e.g. a doc linking
+// into server/ or web/), and an empty set for non-Markdown targets. Guarding
+// here prevents `.has()` from throwing when a target exists but was never
+// scanned, while preserving missing-fragment reporting.
+function anchorsFor(resolvedPath, anchorMap) {
+  if (anchorMap.has(resolvedPath)) return anchorMap.get(resolvedPath);
+  let anchors = new Set();
+  if (resolvedPath.endsWith(".md")) {
+    try {
+      anchors = extractAnchors(readText(resolvedPath));
+    } catch {
+      anchors = new Set();
+    }
+  }
+  anchorMap.set(resolvedPath, anchors);
+  return anchors;
 }
 
 // ---------------------------------------------------------------------------

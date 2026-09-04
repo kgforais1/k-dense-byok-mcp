@@ -101,6 +101,18 @@ describe("scripts/docs-check.mjs", () => {
       expect(result.stderr).toContain("fragment #no-such-heading not found");
     });
 
+    it("flags a missing fragment anchor in a markdown file outside scanned roots", () => {
+      writeFile(
+        "README.md",
+        "# Root\n\n[server policy](server/AGENTS.md#no-such-section)\n",
+      );
+      writeFile("server/AGENTS.md", "# Server\n\n## Real Section\n");
+      const result = runInTmp();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("fragment #no-such-section not found");
+      expect(result.stderr).toContain("server/AGENTS.md");
+    });
+
     it("flags a malformed CLAUDE.md pointer (missing link)", () => {
       writeFile("CLAUDE.md", "# CLAUDE.md\nNo pointer here.\n");
       writeFile("AGENTS.md", "# AGENTS.md\n");

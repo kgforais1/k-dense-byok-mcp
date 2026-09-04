@@ -144,9 +144,10 @@ CI coverage. The mapping is:
 | `verify docs` | *(local only — no CI job yet; the plan's Phase 5 docs job is still pending)* | — |
 | `verify all` | all jobs in matrix | per-job matrix runners |
 
-A failure in any local ladder should reproduce in the corresponding
-CI step. If it does not, file a maintenance log entry; the
-disagreement is the bug.
+A failure in the `fast`, `server`, or `web` ladder should reproduce in
+the corresponding CI step. The `docs` ladder is local-only for now, so
+run it before review. If a CI-mapped failure does not reproduce, file a
+maintenance log entry; the disagreement is the bug.
 
 ## Adding a new check
 

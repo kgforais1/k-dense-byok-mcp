@@ -313,6 +313,122 @@ describe("checkHandoffs", () => {
     expect(result.failures.some((f) => f.includes("handoff is stale"))).toBe(true);
   });
 
+  it("skips branch mismatch when the current branch is unknown (empty)", () => {
+    const handoffsDir = path.join(tmp, "handoffs");
+    const plansDir = path.join(tmp, "plans");
+    fs.mkdirSync(handoffsDir, { recursive: true });
+    fs.mkdirSync(plansDir, { recursive: true });
+    const planPath = path.join(plansDir, "plan.md");
+    fs.writeFileSync(planPath, "# Test Plan");
+    const today = new Date().toISOString().slice(0, 10);
+    fs.writeFileSync(
+      path.join(handoffsDir, "detached.md"),
+      [
+        "---",
+        "branch: feat/foo",
+        `plan: ${planPath}`,
+        "status: active",
+        `updated: ${today}`,
+        "---",
+        "",
+        "## Scope",
+        "x",
+        "",
+        "## Verification",
+        "x",
+        "",
+        "## Next action",
+        "x",
+      ].join("\n"),
+    );
+
+    const result = checkHandoffs({ dir: handoffsDir, currentBranch: "", maxAgeDays: 14 });
+    expect(result.checked).toBe(1);
+    expect(result.failures.some((f) => f.includes("does not match current branch"))).toBe(false);
+  });
+
+  it("honors GITHUB_HEAD_REF for branch comparison when currentBranch is omitted", () => {
+    const handoffsDir = path.join(tmp, "handoffs");
+    const plansDir = path.join(tmp, "plans");
+    fs.mkdirSync(handoffsDir, { recursive: true });
+    fs.mkdirSync(plansDir, { recursive: true });
+    const planPath = path.join(plansDir, "plan.md");
+    fs.writeFileSync(planPath, "# Test Plan");
+    const today = new Date().toISOString().slice(0, 10);
+    fs.writeFileSync(
+      path.join(handoffsDir, "ci-handoff.md"),
+      [
+        "---",
+        "branch: feat/ci-branch",
+        `plan: ${planPath}`,
+        "status: active",
+        `updated: ${today}`,
+        "---",
+        "",
+        "## Scope",
+        "x",
+        "",
+        "## Verification",
+        "x",
+        "",
+        "## Next action",
+        "x",
+      ].join("\n"),
+    );
+
+    const prev = process.env.GITHUB_HEAD_REF;
+    process.env.GITHUB_HEAD_REF = "feat/ci-branch";
+    try {
+      const result = checkHandoffs({ dir: handoffsDir, maxAgeDays: 14 });
+      expect(result.checked).toBe(1);
+      expect(result.failures).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_HEAD_REF;
+      else process.env.GITHUB_HEAD_REF = prev;
+    }
+  });
+
+  it("flags branch mismatch against GITHUB_HEAD_REF when currentBranch is omitted", () => {
+    const handoffsDir = path.join(tmp, "handoffs");
+    const plansDir = path.join(tmp, "plans");
+    fs.mkdirSync(handoffsDir, { recursive: true });
+    fs.mkdirSync(plansDir, { recursive: true });
+    const planPath = path.join(plansDir, "plan.md");
+    fs.writeFileSync(planPath, "# Test Plan");
+    const today = new Date().toISOString().slice(0, 10);
+    fs.writeFileSync(
+      path.join(handoffsDir, "ci-mismatch.md"),
+      [
+        "---",
+        "branch: branch-a",
+        `plan: ${planPath}`,
+        "status: active",
+        `updated: ${today}`,
+        "---",
+        "",
+        "## Scope",
+        "x",
+        "",
+        "## Verification",
+        "x",
+        "",
+        "## Next action",
+        "x",
+      ].join("\n"),
+    );
+
+    const prev = process.env.GITHUB_HEAD_REF;
+    process.env.GITHUB_HEAD_REF = "branch-b";
+    try {
+      const result = checkHandoffs({ dir: handoffsDir, maxAgeDays: 14 });
+      expect(result.failures.some((f) => f.includes("does not match current branch"))).toBe(true);
+      expect(result.failures.some((f) => f.includes("branch-b"))).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.GITHUB_HEAD_REF;
+      else process.env.GITHUB_HEAD_REF = prev;
+    }
+  });
+
   it("flags branch mismatch and missing plan file", () => {
     const today = new Date().toISOString().slice(0, 10);
     fs.writeFileSync(

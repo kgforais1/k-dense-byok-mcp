@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Repository Agent Harness** ([#11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11)):
+  - Layered agent guidance: root `AGENTS.md` index + source-of-truth precedence, scoped `AGENTS.md` for `server/`/`web/`/`.github/`, and `CLAUDE.md`/`GEMINI.md` compatibility pointers.
+  - Contributor policies: `CONTRIBUTING.md`, `SECURITY.md` (GitHub-advisory route), and a five-section PR template with closing checklist.
+  - Developer documentation set under `docs/development/` (index, architecture map, verification ladder, workflow, release policy) with an ownership/freshness table.
+  - Dependency-free, offline, fail-closed command hub (`scripts/repo.mjs`) exposing `status`, `map`, `verify {fast,server,web,docs,all}`, `handoff:check`, `release:check`, and `work:{plan,handoff,maintenance}` scaffolders, plus a structural `docs-check` validator and curated `scripts/repo-manifest.json`.
 - **CI Hardening & Quality Gates** ([#8](https://github.com/kgforais1/k-dense-byok-mcp/pull/8)):
   - Top-level least-privilege token permissions (`contents: read`) in GitHub Actions workflow.
   - Workflow concurrency with PR cancellation (`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`).

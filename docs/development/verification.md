@@ -55,6 +55,8 @@ reliable enough to gate a commit:
    `git status --porcelain -- scripts/repo-manifest.json` and fails if
    the file is dirty. The manifest is the source of truth for
    navigation; leaving it out of a PR leaves reviewers guessing.
+   *(If the step reports `skipped (no .git)`, that is **not** a pass —
+   it means the hygiene check could not run; run it inside a git clone.)*
 3. **Root `package.json` exposes the hub aliases.** Confirms the
    scripts `status`, `verify`, `docs:check`, `repo:map`,
    `handoff:check`, `release:check`, `work:plan`, `work:handoff`, and
@@ -70,6 +72,12 @@ reliable enough to gate a commit:
    suite. The `KADY_PROJECTS_ROOT` is redirected to a temp dir by
    `server/vitest.config.ts`, so tests do not touch user projects.
    Pass `--reporter=default` explicitly so the hub can grep output.
+
+   **Prerequisite:** the `server` ladder (like `web` and `all`) runs
+   `npm` scripts, so `npm install` must have been run in `server/` (and
+   `web/`). On a fresh clone run `npm --prefix server install` and
+   `npm --prefix web install` first. `verify fast` and `verify docs`
+   need no dependencies.
 
 ### `web` — frontend typecheck + tests
 

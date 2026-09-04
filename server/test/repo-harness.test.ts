@@ -485,12 +485,19 @@ describe("scaffolders", () => {
   });
 
   it("scaffoldMaintenance appends a new entry without overwriting the log", () => {
-    // Provide a minimal maintenance-log.md to operate on.
+    // Copy the shipped templates so the scaffolder renders the real bytes (not
+    // the hardcoded fallback), and use a log to exercise the insert position.
+    const realTemplates = path.join(REPO_ROOT, "dev-docs", "templates");
+    const tmpTemplates = path.join(tmp, "dev-docs", "templates");
+    fs.mkdirSync(tmpTemplates, { recursive: true });
+    for (const f of fs.readdirSync(realTemplates)) {
+      fs.copyFileSync(path.join(realTemplates, f), path.join(tmpTemplates, f));
+    }
     const logPath = path.join(tmp, "dev-docs", "maintenance-log.md");
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
     const original = "# Maintenance log\n\n## 2026-01-01 — first entry\n\nPrior content.\n";
     fs.writeFileSync(logPath, original);
-    const target = scaffoldMaintenance({ pr: "#42", category: "ci", cwd: tmp });
+    const target = scaffoldMaintenance({ pr: "#42", category: "ci-tooling", cwd: tmp });
     expect(target).toBe(logPath);
     const updated = fs.readFileSync(target, "utf8");
     // The new entry is inserted between the H1 and the first H2; the H1
@@ -498,9 +505,13 @@ describe("scaffolders", () => {
     expect(updated).toContain("# Maintenance log");
     expect(updated).toContain("## 2026-01-01 — first entry");
     expect(updated).toContain("Prior content.");
-    expect(updated).toContain("date: " + new Date().toISOString().slice(0, 10));
-    expect(updated).toContain("category: ci");
-    expect(updated).toContain("pr: #42");
+    // Shipped-template substitution: real date, PR number, and category, and no
+    // leftover placeholders.
+    expect(updated).toContain("### " + new Date().toISOString().slice(0, 10) + " — [Brief Title] (PR #42)");
+    expect(updated).toContain("**Category:** ci-tooling");
+    expect(updated).not.toContain("[number]");
+    expect(updated).not.toContain("[YYYY-MM-DD]");
+    expect(updated).not.toContain("[security | dependency | ci-tooling | operational | verification]");
   });
 });
 

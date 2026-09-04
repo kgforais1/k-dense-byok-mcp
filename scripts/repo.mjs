@@ -35,7 +35,9 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
 
 function rel(p) {
-  return path.relative(REPO_ROOT, p) || ".";
+  // Normalize to forward slashes so messages are identical on every OS
+  // (matches docs-check.mjs and keeps repo-relative paths copy-pasteable).
+  return path.relative(REPO_ROOT, p).split(path.sep).join("/") || ".";
 }
 
 function nowIsoDate() {
@@ -563,6 +565,62 @@ function missingRequiredHeadings(body) {
   );
 }
 
+// Resolve the git branch name to compare against, honoring an override (used
+// by tests to avoid depending on the checked-out branch).
+function currentBranchName(branchOverride) {
+  if (branchOverride !== undefined) return branchOverride;
+  try {
+    return runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
+  } catch {
+    return "";
+  }
+}
+
+// Validate a single active handoff file. Returns a list of failure messages.
+function validateHandoffFile(file, todayIso, maxAgeDays, branchOverride) {
+  const name = rel(file);
+  let text;
+  try {
+    text = readText(file);
+  } catch (err) {
+    return [`${name}: cannot read (${err.message})`];
+  }
+  const { frontmatter, body } = parseFrontmatter(text);
+  if (!frontmatter) {
+    return [`${name}: missing YAML frontmatter (expected '---\\n...\\n---' at top)`];
+  }
+  const failures = [];
+  for (const key of REQUIRED_HANDOFF_FRONTMATTER) {
+    if (typeof frontmatter[key] !== "string" || frontmatter[key].length === 0) {
+      failures.push(`${name}: frontmatter missing required field '${key}'`);
+    }
+  }
+  if (typeof frontmatter.updated === "string") {
+    const dateFailure = handoffDateFailure(frontmatter.updated, todayIso, maxAgeDays);
+    if (dateFailure) failures.push(`${name}: ${dateFailure}`);
+  }
+  if (frontmatter.branch) {
+    const currentBranch = currentBranchName(branchOverride);
+    if (currentBranch && frontmatter.branch !== currentBranch) {
+      failures.push(
+        `${name}: frontmatter.branch '${frontmatter.branch}' does not match current branch '${currentBranch}'`,
+      );
+    }
+  }
+  if (frontmatter.plan) {
+    const planPath = path.isAbsolute(frontmatter.plan)
+      ? frontmatter.plan
+      : path.join(REPO_ROOT, frontmatter.plan);
+    if (!exists(planPath)) {
+      failures.push(`${name}: frontmatter.plan '${frontmatter.plan}' does not exist`);
+    }
+  }
+  for (const heading of missingRequiredHeadings(body)) {
+    failures.push(`${name}: body is missing required heading '## ${heading}'`);
+  }
+  return failures;
+}
+
 /**
  * Validate every active handoff.
  * Returns { checked, failures }. Never throws — the caller renders the list.
@@ -575,60 +633,13 @@ export function checkHandoffs({ dir, currentBranch: branchOverride, maxAgeDays =
         .filter((f) => f.endsWith(".md") && !f.startsWith("."))
         .map((f) => path.join(handoffsDir, f))
     : [];
-  const failures = [];
   // Compare calendar dates (YYYY-MM-DD strings), not timestamps, so that a
   // handoff dated today is never misclassified as future or stale across time
   // zones, and a tomorrow/impossible date is always rejected.
   const todayIso = new Date().toISOString().slice(0, 10);
+  const failures = [];
   for (const file of files) {
-    const name = rel(file);
-    let text;
-    try {
-      text = readText(file);
-    } catch (err) {
-      failures.push(`${name}: cannot read (${err.message})`);
-      continue;
-    }
-    const { frontmatter, body } = parseFrontmatter(text);
-    if (!frontmatter) {
-      failures.push(`${name}: missing YAML frontmatter (expected '---\\n...\\n---' at top)`);
-      continue;
-    }
-    for (const key of REQUIRED_HANDOFF_FRONTMATTER) {
-      if (typeof frontmatter[key] !== "string" || frontmatter[key].length === 0) {
-        failures.push(`${name}: frontmatter missing required field '${key}'`);
-      }
-    }
-    if (typeof frontmatter.updated === "string") {
-      const dateFailure = handoffDateFailure(frontmatter.updated, todayIso, maxAgeDays);
-      if (dateFailure) failures.push(`${name}: ${dateFailure}`);
-    }
-    if (frontmatter.branch) {
-      let currentBranch = branchOverride;
-      if (currentBranch === undefined) {
-        try {
-          currentBranch = runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
-        } catch {
-          currentBranch = "";
-        }
-      }
-      if (currentBranch && frontmatter.branch !== currentBranch) {
-        failures.push(
-          `${name}: frontmatter.branch '${frontmatter.branch}' does not match current branch '${currentBranch}'`,
-        );
-      }
-    }
-    if (frontmatter.plan) {
-      const planPath = path.isAbsolute(frontmatter.plan)
-        ? frontmatter.plan
-        : path.join(REPO_ROOT, frontmatter.plan);
-      if (!exists(planPath)) {
-        failures.push(`${name}: frontmatter.plan '${frontmatter.plan}' does not exist`);
-      }
-    }
-    for (const heading of missingRequiredHeadings(body)) {
-      failures.push(`${name}: body is missing required heading '## ${heading}'`);
-    }
+    failures.push(...validateHandoffFile(file, todayIso, maxAgeDays, branchOverride));
   }
   return { checked: files.length, failures };
 }
@@ -643,66 +654,78 @@ const CHANGELOG_REQUIRED_HEADINGS = [
   /^##\s+\[Unreleased\]/m,
 ];
 
+// Read and validate server/package.json's version (the single source of truth
+// for the app). Returns { version } on success or { error } on failure.
+function readServerVersion(serverPkgPath) {
+  if (!exists(serverPkgPath)) return { error: "server/package.json is missing" };
+  try {
+    const pkg = JSON.parse(readText(serverPkgPath));
+    if (typeof pkg.version !== "string" || pkg.version.length === 0) {
+      return { error: "server/package.json is missing 'version'" };
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) {
+      return { error: `server/package.json version '${pkg.version}' is not SemVer (x.y.z...)` };
+    }
+    return { version: pkg.version };
+  } catch (err) {
+    return { error: `server/package.json is not valid JSON: ${err.message}` };
+  }
+}
+
+// Confirm web/package.json carries no version field (server is the sole source).
+function webVersionIssues(webPkgPath) {
+  if (!exists(webPkgPath)) return [];
+  try {
+    const pkg = JSON.parse(readText(webPkgPath));
+    if (pkg.version !== undefined) {
+      return [
+        "web/package.json must not carry a 'version' field; server/package.json is the single source of truth",
+      ];
+    }
+    return [];
+  } catch (err) {
+    return [`web/package.json is not valid JSON: ${err.message}`];
+  }
+}
+
+// Validate CHANGELOG.md structure and version-source consistency.
+function changelogIssues(changelogPath, serverVersion) {
+  if (!exists(changelogPath)) return ["CHANGELOG.md is missing at the repository root"];
+  const text = readText(changelogPath);
+  const errors = [];
+  for (const re of CHANGELOG_REQUIRED_HEADINGS) {
+    if (!re.test(text)) errors.push(`CHANGELOG.md is missing required pattern ${re}`);
+  }
+  if (serverVersion) {
+    const versionRe = new RegExp(
+      `^##\\s+\\[${serverVersion.replace(/[.+*?^$()|[\\]\\\\]/g, "\\$&")}\\]`,
+      "m",
+    );
+    const unreleasedRe = /^##\s+\[Unreleased\]/m;
+    if (!versionRe.test(text) && !unreleasedRe.test(text)) {
+      // Not a hard error: the current version may not be released yet.
+      // Mention it so the user can decide.
+      errors.push(
+        `CHANGELOG.md has no entry for current version ${serverVersion} and no Unreleased section`,
+      );
+    }
+  }
+  return errors;
+}
+
 /**
  * Validate the changelog structure and version-source consistency.
  * Returns { errors }. Never throws.
  */
 export function checkRelease() {
-  const errors = [];
   const serverPkgPath = path.join(REPO_ROOT, "server", "package.json");
   const webPkgPath = path.join(REPO_ROOT, "web", "package.json");
   const changelogPath = path.join(REPO_ROOT, "CHANGELOG.md");
 
-  let serverVersion = "";
-  if (!exists(serverPkgPath)) {
-    errors.push("server/package.json is missing");
-  } else {
-    try {
-      const pkg = JSON.parse(readText(serverPkgPath));
-      if (typeof pkg.version !== "string" || pkg.version.length === 0) {
-        errors.push("server/package.json is missing 'version'");
-      } else if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) {
-        errors.push(`server/package.json version '${pkg.version}' is not SemVer (x.y.z...)`);
-      } else {
-        serverVersion = pkg.version;
-      }
-    } catch (err) {
-      errors.push(`server/package.json is not valid JSON: ${err.message}`);
-    }
-  }
-  if (exists(webPkgPath)) {
-    try {
-      const pkg = JSON.parse(readText(webPkgPath));
-      if (pkg.version !== undefined) {
-        errors.push(
-          `web/package.json must not carry a 'version' field; server/package.json is the single source of truth`,
-        );
-      }
-    } catch (err) {
-      errors.push(`web/package.json is not valid JSON: ${err.message}`);
-    }
-  }
-  if (!exists(changelogPath)) {
-    errors.push("CHANGELOG.md is missing at the repository root");
-  } else {
-    const text = readText(changelogPath);
-    for (const re of CHANGELOG_REQUIRED_HEADINGS) {
-      if (!re.test(text)) {
-        errors.push(`CHANGELOG.md is missing required pattern ${re}`);
-      }
-    }
-    if (serverVersion) {
-      const versionRe = new RegExp(`^##\\s+\\[${serverVersion.replace(/[.+*?^$()|[\\]\\\\]/g, "\\$&")}\\]`, "m");
-      const unreleasedRe = /^##\s+\[Unreleased\]/m;
-      if (!versionRe.test(text) && !unreleasedRe.test(text)) {
-        // Not a hard error: the current version may not be released yet.
-        // Mention it so the user can decide.
-        errors.push(
-          `CHANGELOG.md has no entry for current version ${serverVersion} and no Unreleased section`,
-        );
-      }
-    }
-  }
+  const server = readServerVersion(serverPkgPath);
+  const errors = server.error ? [server.error] : [];
+  errors.push(...webVersionIssues(webPkgPath));
+  errors.push(...changelogIssues(changelogPath, server.version ?? ""));
   return { errors };
 }
 
@@ -878,18 +901,19 @@ export function scaffoldPlan({ slug, title, branch, cwd = REPO_ROOT } = {}) {
     throw err;
   }
   const plansDir = path.join(cwd, "dev-docs", "plans");
-  const target = path.join(plansDir, `${nowIsoDate()}-${safe}.md`);
+  const date = nowIsoDate();
+  const target = path.join(plansDir, `${date}-${safe}.md`);
   refuseOverwrite(target, "plan");
   fs.mkdirSync(plansDir, { recursive: true });
   const templatePath = path.join(cwd, "dev-docs", "templates", "plan.md");
   const rawTemplate = exists(templatePath) ? readText(templatePath) : PLAN_TEMPLATE;
   const content = renderTemplate(rawTemplate, {
-    date: nowIsoDate(),
+    date,
     title: title || safe,
     branch: branch || "<branch>",
   })
     .replace(/\[Feature \/ Task Title\]/g, title || safe)
-    .replace(/\[YYYY-MM-DD\]/g, nowIsoDate())
+    .replace(/\[YYYY-MM-DD\]/g, date)
     .replace(/\[branch-name\]/g, branch || "<branch>");
   fs.writeFileSync(target, content);
   return target;
@@ -1005,7 +1029,7 @@ Subcommands:
   status                  Show branch, dirty state, recent commits, and active handoffs.
   map                     Print the architectural map from scripts/repo-manifest.json.
   verify [ladder]         Run a verification ladder. Ladder: fast | server | web | docs | all.
-                          Default: fast.
+                          Default: fast. (npm run docs:check aliases verify -- docs.)
   handoff:check           Validate dev-docs/handoffs/active/ files.
   release:check           Check server/package.json version and CHANGELOG.md structure.
   work:plan --slug <s>    Scaffold a new plan under dev-docs/plans/ (refuses overwrite).

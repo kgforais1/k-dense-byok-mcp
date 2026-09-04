@@ -138,7 +138,10 @@ describe("scripts/docs-check.mjs", () => {
       );
       const result = runInTmp();
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
+      // rel() uses path.relative, which yields backslashes on Windows; normalize
+      // so the assertion matches on every platform.
+      const stderr = result.stderr.replace(/\\/g, "/");
+      expect(stderr).toContain(
         "dev-docs/plans/2026-01-01-wrong.md: plan with status 'completed' must be under dev-docs/plans/completed/",
       );
     });
@@ -150,7 +153,8 @@ describe("scripts/docs-check.mjs", () => {
       );
       const result = runInTmp();
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
+      const stderr = result.stderr.replace(/\\/g, "/");
+      expect(stderr).toContain(
         "dev-docs/plans/completed/2026-01-01-done.md: completed plan must have status 'completed' or 'Completed and merged...'",
       );
     });

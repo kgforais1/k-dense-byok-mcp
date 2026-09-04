@@ -34,7 +34,10 @@ const REPO_ROOT = process.cwd();
 const SCRIPT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function rel(p) {
-  return path.relative(REPO_ROOT, p) || ".";
+  // Normalize to forward slashes so error messages are identical on every OS
+  // (markdown links and the manifest use / separators; a Windows backslash in
+  // a reported path would break copy-paste and differ from the link text).
+  return path.relative(REPO_ROOT, p).split(path.sep).join("/") || ".";
 }
 
 function exists(p) {

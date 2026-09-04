@@ -571,8 +571,8 @@ function missingRequiredHeadings(body) {
 // the mismatch comparison instead of flagging a false mismatch.
 function currentBranchName(branchOverride) {
   if (branchOverride !== undefined) return branchOverride;
-  // GitHub Actions checks checks out a detached ref; fall back to the PR
-  // source branch so handoff comparison still works on CI pull-request runs.
+  // GitHub Actions checks out a detached ref; fall back to the PR source
+  // branch so handoff comparison still works on CI pull-request runs.
   const headRef = process.env.GITHUB_HEAD_REF;
   if (typeof headRef === "string" && headRef.length > 0) return headRef;
   try {

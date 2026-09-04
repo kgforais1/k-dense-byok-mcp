@@ -75,6 +75,34 @@ function fail(message, code = 1) {
 
 export const MANIFEST_PATH = path.join(REPO_ROOT, "scripts", "repo-manifest.json");
 
+function validateManifestEntry(entry, knownCategories, seenIds, seenPaths, missing) {
+  if (!entry || typeof entry !== "object") {
+    throw new Error("manifest entry is not an object");
+  }
+  for (const key of ["id", "category", "path", "name", "description"]) {
+    if (typeof entry[key] !== "string" || entry[key].length === 0) {
+      throw new Error(`manifest entry missing string field '${key}'`);
+    }
+  }
+  if (seenIds.has(entry.id)) {
+    throw new Error(`manifest entry id '${entry.id}' is duplicated`);
+  }
+  seenIds.add(entry.id);
+  if (seenPaths.has(entry.path)) {
+    throw new Error(`manifest entry path '${entry.path}' is duplicated`);
+  }
+  seenPaths.add(entry.path);
+  if (!knownCategories.has(entry.category)) {
+    throw new Error(
+      `manifest entry '${entry.id}' has unknown category '${entry.category}'; allowed: ${[...knownCategories].join(", ")}`,
+    );
+  }
+  const target = path.join(REPO_ROOT, entry.path);
+  if (!exists(target)) {
+    missing.push(entry.id);
+  }
+}
+
 /**
  * Load and validate the manifest. Throws on:
  *  - missing file
@@ -109,31 +137,7 @@ export function loadManifest(manifestPath = MANIFEST_PATH) {
   const seenPaths = new Set();
   const missing = [];
   for (const entry of manifest.entries) {
-    if (!entry || typeof entry !== "object") {
-      throw new Error("manifest entry is not an object");
-    }
-    for (const key of ["id", "category", "path", "name", "description"]) {
-      if (typeof entry[key] !== "string" || entry[key].length === 0) {
-        throw new Error(`manifest entry missing string field '${key}'`);
-      }
-    }
-    if (seenIds.has(entry.id)) {
-      throw new Error(`manifest entry id '${entry.id}' is duplicated`);
-    }
-    seenIds.add(entry.id);
-    if (seenPaths.has(entry.path)) {
-      throw new Error(`manifest entry path '${entry.path}' is duplicated`);
-    }
-    seenPaths.add(entry.path);
-    if (!knownCategories.has(entry.category)) {
-      throw new Error(
-        `manifest entry '${entry.id}' has unknown category '${entry.category}'; allowed: ${[...knownCategories].join(", ")}`,
-      );
-    }
-    const target = path.join(REPO_ROOT, entry.path);
-    if (!exists(target)) {
-      missing.push(entry.id);
-    }
+    validateManifestEntry(entry, knownCategories, seenIds, seenPaths, missing);
   }
   if (missing.length > 0) {
     throw new Error(
@@ -533,6 +537,32 @@ function isoDateDaysAgo(iso, days) {
   return dt.toISOString().slice(0, 10);
 }
 
+// Validate a handoff `updated` date string against today (calendar-string
+// comparison avoids timezone skew). Returns a failure message, or null if ok.
+function handoffDateFailure(updated, todayIso, maxAgeDays) {
+  if (!ISO_DATE_RE.test(updated)) {
+    return `frontmatter.updated '${updated}' is not ISO YYYY-MM-DD`;
+  }
+  if (parseIsoDate(updated) === null) {
+    return `frontmatter.updated '${updated}' is not a valid calendar date`;
+  }
+  if (updated > todayIso) {
+    return `frontmatter.updated '${updated}' is in the future`;
+  }
+  if (updated < isoDateDaysAgo(todayIso, maxAgeDays)) {
+    return `handoff is stale (updated ${updated}, > ${maxAgeDays} days ago)`;
+  }
+  return null;
+}
+
+const REQUIRED_HANDOFF_HEADINGS = ["Scope", "Verification", "Next action"];
+
+function missingRequiredHeadings(body) {
+  return REQUIRED_HANDOFF_HEADINGS.filter(
+    (h) => !new RegExp(`^##\\s+${h}`, "m").test(body),
+  );
+}
+
 /**
  * Validate every active handoff.
  * Returns { checked, failures }. Never throws — the caller renders the list.
@@ -550,7 +580,6 @@ export function checkHandoffs({ dir, currentBranch: branchOverride, maxAgeDays =
   // handoff dated today is never misclassified as future or stale across time
   // zones, and a tomorrow/impossible date is always rejected.
   const todayIso = new Date().toISOString().slice(0, 10);
-  const staleBeforeIso = isoDateDaysAgo(todayIso, maxAgeDays);
   for (const file of files) {
     const name = rel(file);
     let text;
@@ -571,15 +600,8 @@ export function checkHandoffs({ dir, currentBranch: branchOverride, maxAgeDays =
       }
     }
     if (typeof frontmatter.updated === "string") {
-      if (!ISO_DATE_RE.test(frontmatter.updated)) {
-        failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is not ISO YYYY-MM-DD`);
-      } else if (parseIsoDate(frontmatter.updated) === null) {
-        failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is not a valid calendar date`);
-      } else if (frontmatter.updated > todayIso) {
-        failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is in the future`);
-      } else if (frontmatter.updated < staleBeforeIso) {
-        failures.push(`${name}: handoff is stale (updated ${frontmatter.updated}, > ${maxAgeDays} days ago)`);
-      }
+      const dateFailure = handoffDateFailure(frontmatter.updated, todayIso, maxAgeDays);
+      if (dateFailure) failures.push(`${name}: ${dateFailure}`);
     }
     if (frontmatter.branch) {
       let currentBranch = branchOverride;
@@ -604,10 +626,8 @@ export function checkHandoffs({ dir, currentBranch: branchOverride, maxAgeDays =
         failures.push(`${name}: frontmatter.plan '${frontmatter.plan}' does not exist`);
       }
     }
-    for (const heading of ["Scope", "Verification", "Next action"]) {
-      if (!new RegExp(`^##\\s+${heading}`, "m").test(body)) {
-        failures.push(`${name}: body is missing required heading '## ${heading}'`);
-      }
+    for (const heading of missingRequiredHeadings(body)) {
+      failures.push(`${name}: body is missing required heading '## ${heading}'`);
     }
   }
   return { checked: files.length, failures };
@@ -1004,110 +1024,130 @@ function isMain() {
   return path.resolve(process.argv[1]) === SCRIPT_PATH;
 }
 
+function cmdStatus() {
+  const report = statusReport();
+  process.stdout.write(`${report.lines.join("\n")}\n`);
+  return 0;
+}
+
+function cmdMap() {
+  const manifest = loadManifest();
+  process.stdout.write(`${mapReport(manifest)}\n`);
+  return 0;
+}
+
+function cmdVerify(rest) {
+  const ladder = rest[0] && !rest[0].startsWith("--") ? rest[0] : "fast";
+  let result;
+  try {
+    result = runVerify(ladder);
+  } catch (err) {
+    process.stderr.write(`repo verify: ${err.message}\n`);
+    return err.code ?? 2;
+  }
+  process.stdout.write(`verify (${result.ladder}): ${result.description}\n`);
+  let worstCode = 0;
+  for (const r of result.results) {
+    const tag = r.ok ? "ok  " : "FAIL";
+    process.stdout.write(`  [${tag}] ${r.name}: ${r.message}\n`);
+    if (!r.ok && r.code > worstCode) worstCode = r.code;
+  }
+  if (worstCode !== 0) {
+    process.stderr.write(
+      `repo verify: ${result.results.filter((r) => !r.ok).length} step(s) failed; see output above for the failing command and its exit code\n`,
+    );
+  }
+  return worstCode;
+}
+
+function cmdHandoffCheck() {
+  const result = checkHandoffs();
+  process.stdout.write(`handoff:check: ${result.checked} active handoff(s)\n`);
+  if (result.failures.length > 0) {
+    for (const f of result.failures) process.stderr.write(`  - ${f}\n`);
+    return 1;
+  }
+  return 0;
+}
+
+function cmdReleaseCheck() {
+  const result = checkRelease();
+  if (result.errors.length === 0) {
+    process.stdout.write(`release:check: ok\n`);
+    return 0;
+  }
+  for (const e of result.errors) process.stderr.write(`  - ${e}\n`);
+  return 1;
+}
+
+function cmdWorkPlan(rest) {
+  try {
+    const target = scaffoldPlan({
+      slug: parseFlag(rest, "slug"),
+      title: parseFlag(rest, "title"),
+      branch: parseFlag(rest, "branch"),
+    });
+    process.stdout.write(`wrote ${rel(target)}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`repo: ${err.message}\n`);
+    return err.code ?? 2;
+  }
+}
+
+function cmdWorkHandoff(rest) {
+  try {
+    const target = scaffoldHandoff({
+      slug: parseFlag(rest, "slug"),
+      branch: parseFlag(rest, "branch"),
+      plan: parseFlag(rest, "plan"),
+    });
+    process.stdout.write(`wrote ${rel(target)}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`repo: ${err.message}\n`);
+    return err.code ?? 2;
+  }
+}
+
+function cmdWorkMaintenance(rest) {
+  try {
+    const target = scaffoldMaintenance({
+      pr: parseFlag(rest, "pr"),
+      category: parseFlag(rest, "category"),
+    });
+    process.stdout.write(`appended to ${rel(target)}\n`);
+    return 0;
+  } catch (err) {
+    process.stderr.write(`repo: ${err.message}\n`);
+    return err.code ?? 2;
+  }
+}
+
+const COMMANDS = {
+  status: cmdStatus,
+  map: cmdMap,
+  verify: cmdVerify,
+  "handoff:check": cmdHandoffCheck,
+  "release:check": cmdReleaseCheck,
+  "work:plan": cmdWorkPlan,
+  "work:handoff": cmdWorkHandoff,
+  "work:maintenance": cmdWorkMaintenance,
+};
+
 function main(argv) {
   const [, , subcommand, ...rest] = argv;
   if (!subcommand || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
     printHelp();
     return 0;
   }
-  switch (subcommand) {
-    case "status": {
-      const report = statusReport();
-      process.stdout.write(`${report.lines.join("\n")}\n`);
-      return 0;
-    }
-    case "map": {
-      const manifest = loadManifest();
-      process.stdout.write(`${mapReport(manifest)}\n`);
-      return 0;
-    }
-    case "verify": {
-      const ladder = rest[0] && !rest[0].startsWith("--") ? rest[0] : "fast";
-      let result;
-      try {
-        result = runVerify(ladder);
-      } catch (err) {
-        process.stderr.write(`repo verify: ${err.message}\n`);
-        return err.code ?? 2;
-      }
-      process.stdout.write(`verify (${result.ladder}): ${result.description}\n`);
-      let worstCode = 0;
-      for (const r of result.results) {
-        const tag = r.ok ? "ok  " : "FAIL";
-        process.stdout.write(`  [${tag}] ${r.name}: ${r.message}\n`);
-        if (!r.ok && r.code > worstCode) worstCode = r.code;
-      }
-      if (worstCode !== 0) {
-        process.stderr.write(
-          `repo verify: ${result.results.filter((r) => !r.ok).length} step(s) failed; see output above for the failing command and its exit code\n`,
-        );
-      }
-      return worstCode;
-    }
-    case "handoff:check": {
-      const result = checkHandoffs();
-      process.stdout.write(`handoff:check: ${result.checked} active handoff(s)\n`);
-      if (result.failures.length > 0) {
-        for (const f of result.failures) process.stderr.write(`  - ${f}\n`);
-        return 1;
-      }
-      return 0;
-    }
-    case "release:check": {
-      const result = checkRelease();
-      if (result.errors.length === 0) {
-        process.stdout.write(`release:check: ok\n`);
-        return 0;
-      }
-      for (const e of result.errors) process.stderr.write(`  - ${e}\n`);
-      return 1;
-    }
-    case "work:plan": {
-      try {
-        const target = scaffoldPlan({
-          slug: parseFlag(rest, "slug"),
-          title: parseFlag(rest, "title"),
-          branch: parseFlag(rest, "branch"),
-        });
-        process.stdout.write(`wrote ${rel(target)}\n`);
-        return 0;
-      } catch (err) {
-        process.stderr.write(`repo: ${err.message}\n`);
-        return err.code ?? 2;
-      }
-    }
-    case "work:handoff": {
-      try {
-        const target = scaffoldHandoff({
-          slug: parseFlag(rest, "slug"),
-          branch: parseFlag(rest, "branch"),
-          plan: parseFlag(rest, "plan"),
-        });
-        process.stdout.write(`wrote ${rel(target)}\n`);
-        return 0;
-      } catch (err) {
-        process.stderr.write(`repo: ${err.message}\n`);
-        return err.code ?? 2;
-      }
-    }
-    case "work:maintenance": {
-      try {
-        const target = scaffoldMaintenance({
-          pr: parseFlag(rest, "pr"),
-          category: parseFlag(rest, "category"),
-        });
-        process.stdout.write(`appended to ${rel(target)}\n`);
-        return 0;
-      } catch (err) {
-        process.stderr.write(`repo: ${err.message}\n`);
-        return err.code ?? 2;
-      }
-    }
-    default:
-      process.stderr.write(`repo: unknown subcommand '${subcommand}'\n`);
-      printHelp();
-      return 2;
+  const cmd = COMMANDS[subcommand];
+  if (!cmd) {
+    process.stderr.write(`repo: unknown subcommand '${subcommand}'\n`);
+    printHelp();
+    return 2;
   }
+  return cmd(rest);
 }
 
 // Expose the CLI entry for tests that want to invoke main() directly.

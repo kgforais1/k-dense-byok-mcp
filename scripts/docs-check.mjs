@@ -157,41 +157,43 @@ function checkLinks() {
   for (const file of files) {
     const text = readText(file);
     for (const m of text.matchAll(LINK_RE)) {
-      const raw = m[1].trim();
-      // Skip external URLs and mailto.
-      if (/^(https?:|mailto:)/i.test(raw)) continue;
-
-      const href = raw.split(/\s+/)[0];
-      const anchor = (() => {
-        const i = href.indexOf("#");
-        if (i === -1) return null;
-        // Normalize the fragment the same way we slugify headings so that
-        // e.g. `#foo bar` and `#Foo Bar` resolve to the same `foo-bar` anchor.
-        return slugifyHeading(decodeURIComponent(href.slice(i + 1)));
-      })();
-      const target = href.split("#")[0];
-
-      if (!target) {
-        // Self-reference or empty.
-        if (anchor && !anchorMap.get(file).has(anchor)) {
-          failures.push(
-            `${rel(file)}: fragment #${anchor} not found in ${rel(file)}`,
-          );
-        }
-        continue;
-      }
-
-      const resolved = path.resolve(path.dirname(file), target);
-      if (!exists(resolved)) {
-        failures.push(`${rel(file)}: link target missing: ${href}`);
-        continue;
-      }
-      if (anchor && !anchorMap.get(resolved).has(anchor)) {
-        failures.push(
-          `${rel(file)}: fragment #${anchor} not found in ${rel(resolved)}`,
-        );
-      }
+      failures.push(...checkLink(file, m[1], anchorMap));
     }
+  }
+  return failures;
+}
+
+// Validate a single markdown link (raw link text, the content of the (...)).
+function checkLink(file, raw, anchorMap) {
+  const failures = [];
+  // Skip external URLs and mailto.
+  if (/^(https?:|mailto:)/i.test(raw.trim())) return failures;
+
+  const href = raw.trim().split(/\s+/)[0];
+  const anchor = (() => {
+    const i = href.indexOf("#");
+    if (i === -1) return null;
+    // Normalize the fragment the same way we slugify headings so that
+    // e.g. `#foo bar` and `#Foo Bar` resolve to the same `foo-bar` anchor.
+    return slugifyHeading(decodeURIComponent(href.slice(i + 1)));
+  })();
+  const target = href.split("#")[0];
+
+  if (!target) {
+    // Self-reference or empty.
+    if (anchor && !anchorMap.get(file).has(anchor)) {
+      failures.push(`${rel(file)}: fragment #${anchor} not found in ${rel(file)}`);
+    }
+    return failures;
+  }
+
+  const resolved = path.resolve(path.dirname(file), target);
+  if (!exists(resolved)) {
+    failures.push(`${rel(file)}: link target missing: ${href}`);
+    return failures;
+  }
+  if (anchor && !anchorMap.get(resolved).has(anchor)) {
+    failures.push(`${rel(file)}: fragment #${anchor} not found in ${rel(resolved)}`);
   }
   return failures;
 }
@@ -231,35 +233,43 @@ function checkPointers() {
 
     // Must not contain policy headings beyond the allowed H1 (## , ### ) or bullet/numbered
     // policy-style lines. Allow the known template lines.
-    const knownTemplatePrefixes = [
-      "Read and follow the canonical repository instructions at",
-      "If a scoped instruction file is closer to the",
-      "area you are changing, read it first, then this file:",
-      "- `",
-      "Do not add policy",
-    ];
-    for (const line of lines) {
-      // Skip known template lines.
-      const isKnown = knownTemplatePrefixes.some((p) => line.startsWith(p));
-      if (isKnown) continue;
-      // Allow the single H1 filename heading.
-      if (/^##\s+/.test(line)) {
-        failures.push(
-          `${name}: must not contain extra policy headings (found '${line}')`,
-        );
-      }
-      // Disallow numbered policy rules.
-      if (/^\d+\.\s/.test(line)) {
-        failures.push(
-          `${name}: must not contain extra numbered policy (found '${line}')`,
-        );
-      }
-      // Disallow bold rule-style bullets.
-      if (/^-\s+\*\*[^*]+\*\*/.test(line)) {
-        failures.push(
-          `${name}: must not contain extra policy bullets (found '${line}')`,
-        );
-      }
+    for (const msg of pointerPolicyLineFailures(name, lines)) failures.push(msg);
+  }
+  return failures;
+}
+
+// Scan the non-empty lines of a pointer file for policy-style content that is
+// not part of the allowed template. Returns failure messages.
+function pointerPolicyLineFailures(name, lines) {
+  const failures = [];
+  const knownTemplatePrefixes = [
+    "Read and follow the canonical repository instructions at",
+    "If a scoped instruction file is closer to the",
+    "area you are changing, read it first, then this file:",
+    "- `",
+    "Do not add policy",
+  ];
+  for (const line of lines) {
+    // Skip known template lines.
+    const isKnown = knownTemplatePrefixes.some((p) => line.startsWith(p));
+    if (isKnown) continue;
+    // Allow the single H1 filename heading.
+    if (/^##\s+/.test(line)) {
+      failures.push(
+        `${name}: must not contain extra policy headings (found '${line}')`,
+      );
+    }
+    // Disallow numbered policy rules.
+    if (/^\d+\.\s/.test(line)) {
+      failures.push(
+        `${name}: must not contain extra numbered policy (found '${line}')`,
+      );
+    }
+    // Disallow bold rule-style bullets.
+    if (/^-\s+\*\*[^*]+\*\*/.test(line)) {
+      failures.push(
+        `${name}: must not contain extra policy bullets (found '${line}')`,
+      );
     }
   }
   return failures;
@@ -319,40 +329,37 @@ function checkManifest() {
   const seenIds = new Set();
   const seenPaths = new Set();
   for (const entry of manifest.entries) {
-    if (!entry || typeof entry !== "object") {
-      failures.push("scripts/repo-manifest.json: entry is not an object");
-      continue;
-    }
-    for (const key of ["id", "category", "path", "name", "description"]) {
-      if (typeof entry[key] !== "string" || entry[key].length === 0) {
-        failures.push(
-          `scripts/repo-manifest.json: entry missing string field '${key}'`,
-        );
-      }
-    }
-    if (seenIds.has(entry.id)) {
-      failures.push(`scripts/repo-manifest.json: duplicate entry id '${entry.id}'`);
-    }
-    seenIds.add(entry.id);
-    if (seenPaths.has(entry.path)) {
-      failures.push(
-        `scripts/repo-manifest.json: duplicate entry path '${entry.path}'`,
-      );
-    }
-    seenPaths.add(entry.path);
-    if (!(entry.category in manifest.categories)) {
-      failures.push(
-        `scripts/repo-manifest.json: entry '${entry.id}' has unknown category '${entry.category}'`,
-      );
-    }
-    const target = path.join(REPO_ROOT, entry.path);
-    if (!exists(target)) {
-      failures.push(
-        `scripts/repo-manifest.json: entry '${entry.id}' references missing target '${entry.path}'`,
-      );
-    }
+    validateManifestEntry(entry, manifest.categories, seenIds, seenPaths, failures);
   }
   return failures;
+}
+
+function validateManifestEntry(entry, categories, seenIds, seenPaths, failures) {
+  const prefix = "scripts/repo-manifest.json:";
+  if (!entry || typeof entry !== "object") {
+    failures.push(`${prefix} entry is not an object`);
+    return;
+  }
+  for (const key of ["id", "category", "path", "name", "description"]) {
+    if (typeof entry[key] !== "string" || entry[key].length === 0) {
+      failures.push(`${prefix} entry missing string field '${key}'`);
+    }
+  }
+  if (seenIds.has(entry.id)) {
+    failures.push(`${prefix} duplicate entry id '${entry.id}'`);
+  }
+  seenIds.add(entry.id);
+  if (seenPaths.has(entry.path)) {
+    failures.push(`${prefix} duplicate entry path '${entry.path}'`);
+  }
+  seenPaths.add(entry.path);
+  if (!(entry.category in categories)) {
+    failures.push(`${prefix} entry '${entry.id}' has unknown category '${entry.category}'`);
+  }
+  const target = path.join(REPO_ROOT, entry.path);
+  if (!exists(target)) {
+    failures.push(`${prefix} entry '${entry.id}' references missing target '${entry.path}'`);
+  }
 }
 
 // ---------------------------------------------------------------------------

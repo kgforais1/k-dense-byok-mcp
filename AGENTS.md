@@ -1,6 +1,44 @@
-# CLAUDE.md
+# Repository Guidance
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file is the cross-agent entry point and policy boundary for the
+`kgforais1/k-dense-byok-mcp` fork. Read it first, then the scoped guidance for
+the area you are about to change. Closest-scope guidance always wins over
+generic advice here; this file owns only repository-wide invariants, navigation,
+and the source-of-truth order.
+
+## Scoped guidance
+
+| Scope | File | Owns |
+|---|---|---|
+| Repository (this file) | `AGENTS.md` | Cross-agent policy, navigation, lifecycle, shared commands. |
+| Backend (TypeScript + Pi SDK) | `server/AGENTS.md` | Fastify, Pi SDK integration, backend tests, helper venv, sandbox boundaries. |
+| Frontend (Next.js 16 + React 19) | `web/AGENTS.md` | Next.js/React conventions, viewer registry, frontend tests. |
+| Automation & release | `.github/AGENTS.md` | Workflow permissions, action pinning, secrets, matrix testing, release automation. |
+
+Claude Code users: also see `CLAUDE.md` (compatibility pointer). Gemini CLI
+users: see `GEMINI.md` (compatibility pointer). Both are short pointers to this
+file and must not accrete a second policy.
+
+For contributor/developer documentation, see
+[`docs/development/README.md`](docs/development/README.md) (developer
+documentation index, ownership, and freshness) and
+[`docs/development/architecture-map.md`](docs/development/architecture-map.md)
+(architecture map, package boundaries, and data flows). The existing
+product-facing docs under `docs/` are unchanged and remain authoritative for
+the features they describe.
+
+## Source of truth (precedence order)
+
+1. Explicit user request and repository safety rules.
+2. Merged code, tests, and CI configuration (actual behavior).
+3. The issue/PR and its accepted implementation plan (intent and scope).
+4. Current branch handoff record — branch-scoped, short-lived continuation
+   summary in `dev-docs/handoffs/active/` (temporary).
+5. Narrative documentation.
+
+A stale handoff, TODO, or architecture note must never silently override tested
+behavior. If a doc and the code disagree, the code wins and the doc is a bug;
+fix the doc in the same PR or call it out explicitly.
 
 ## Git / PR policy
 
@@ -44,6 +82,29 @@ Full app (both services):
 ```bash
 ./start.sh                  # installs deps, seeds skills, starts backend + frontend
 start.cmd                   # same, on Windows (both wrap `node start.mjs`)
+```
+
+## Command hub (navigation + verification)
+
+Portable, dependency-free Node entry points (aliases in root `package.json`).
+They delegate to the server/web scripts above, preserve exit codes, and never
+bypass hooks or CI. See [`docs/development/verification.md`](docs/development/verification.md)
+for the full ladder and CI mapping.
+
+```bash
+npm run status            # branch, dirty state, recent commits, active handoffs
+npm run repo:map          # architectural map + entry points from scripts/repo-manifest.json
+npm run verify -- fast    # manifest validation + git hygiene + hub aliases (<2s)
+npm run verify -- server  # backend typecheck + vitest
+npm run verify -- web     # frontend typecheck + vitest
+npm run verify -- docs    # docs:check + handoff:check + release:check + manifest coverage
+npm run verify -- all     # all ladders (2–6 min); run before requesting review
+npm run docs:check        # structural docs validation (links, pointers, manifest, handoffs, plans)
+npm run handoff:check     # validate active handoff schema/branch/plan/staleness
+npm run release:check     # version-source + CHANGELOG structure
+npm run work:plan -- --slug <s>        # scaffold a plan (refuses overwrite)
+npm run work:handoff -- --plan <path>  # scaffold an active handoff (refuses overwrite)
+npm run work:maintenance -- --pr <n>   # append a maintenance-log entry
 ```
 
 ## Architecture: how a turn flows

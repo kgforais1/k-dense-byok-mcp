@@ -2,8 +2,6 @@
 
 This page explains how K-Dense BYOK runs on your computer. You do not need to read this to use the app - it is here if you are curious or troubleshooting.
 
-![K-Dense BYOK Architecture](k-dense-byok-architecture.png)
-
 ## The two services
 
 The start script (`start.sh` on macOS/Linux, `start.cmd` on Windows — both thin wrappers around the cross-platform `start.mjs` launcher) launches two local services that work together:

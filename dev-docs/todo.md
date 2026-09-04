@@ -2,7 +2,7 @@
 
 ## Next Up
 
-- [ ] **Add repo harness** — scripts, agent guidance, policies, workflows, etc. → [1. Repo harness](#1-repo-harness)
+- [ ] **Add repo harness** — scripts, agent guidance, policies, workflows, etc. → [1. Repo harness](#1-repo-harness) · [proposed plan](plans/2026-09-03-repo-agent-harness.md)
 - [ ] **CI and hooks** → [2. CI and hooks](#2-ci-and-hooks)
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [3. Code scanning, security alerts, and Dependabot](#3-code-scanning-security-alerts-and-dependabot)
 
@@ -52,4 +52,3 @@ Ideas:
 - Consider enabling Dependabot config (`dependabot.yml`) for ongoing update PRs
 - Rate limiting (PR #7) is scoped to sandbox routes only, so UI polling can no longer be throttled; the frontend 429-handling idea for `apiFetch` is moot unless per-route limits are ever tightened
 - Consider exempting `/health` from rate limits if external monitoring ever polls it (currently unthrottled anyway, since the limiter is sandbox-scoped)
-

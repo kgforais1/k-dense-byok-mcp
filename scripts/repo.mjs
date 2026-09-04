@@ -487,6 +487,11 @@ export function runVerify(ladderName = "fast") {
         message: err.message ?? String(err),
         code: typeof err.code === "number" ? err.code : 1,
       });
+      // Stop the ladder at the first failing step and return that step's exit
+      // code, matching the documented "stop at first failure" contract. A
+      // green run is the only pass signal; the first failure is the actionable
+      // one.
+      break;
     }
   }
   return { ladder: ladderName, description: ladder.description, results };
@@ -498,6 +503,35 @@ export function runVerify(ladderName = "fast") {
 
 const REQUIRED_HANDOFF_FRONTMATTER = ["branch", "plan", "status", "updated"];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Parse a YYYY-MM-DD string strictly: return the UTC Date on success, or null
+// for malformed / impossible calendar dates (e.g. 2026-02-31), which plain
+// `new Date(...)` would silently normalize into a later day.
+function parseIsoDate(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== mo - 1 ||
+    dt.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return dt;
+}
+
+// Return the ISO date (YYYY-MM-DD) `days` days before the given ISO date.
+function isoDateDaysAgo(iso, days) {
+  const [y, mo, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - days);
+  return dt.toISOString().slice(0, 10);
+}
 
 /**
  * Validate every active handoff.
@@ -512,7 +546,11 @@ export function checkHandoffs({ dir, currentBranch: branchOverride, maxAgeDays =
         .map((f) => path.join(handoffsDir, f))
     : [];
   const failures = [];
-  const today = new Date();
+  // Compare calendar dates (YYYY-MM-DD strings), not timestamps, so that a
+  // handoff dated today is never misclassified as future or stale across time
+  // zones, and a tomorrow/impossible date is always rejected.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const staleBeforeIso = isoDateDaysAgo(todayIso, maxAgeDays);
   for (const file of files) {
     const name = rel(file);
     let text;
@@ -535,18 +573,12 @@ export function checkHandoffs({ dir, currentBranch: branchOverride, maxAgeDays =
     if (typeof frontmatter.updated === "string") {
       if (!ISO_DATE_RE.test(frontmatter.updated)) {
         failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is not ISO YYYY-MM-DD`);
-      } else {
-        const updatedDate = new Date(frontmatter.updated + "T00:00:00Z");
-        if (isNaN(updatedDate.getTime())) {
-          failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is an invalid date`);
-        } else {
-          const ageInDays = (today.getTime() - updatedDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (ageInDays < -1) {
-            failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is in the future`);
-          } else if (ageInDays > maxAgeDays) {
-            failures.push(`${name}: handoff is stale (updated ${frontmatter.updated}, > ${maxAgeDays} days ago)`);
-          }
-        }
+      } else if (parseIsoDate(frontmatter.updated) === null) {
+        failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is not a valid calendar date`);
+      } else if (frontmatter.updated > todayIso) {
+        failures.push(`${name}: frontmatter.updated '${frontmatter.updated}' is in the future`);
+      } else if (frontmatter.updated < staleBeforeIso) {
+        failures.push(`${name}: handoff is stale (updated ${frontmatter.updated}, > ${maxAgeDays} days ago)`);
       }
     }
     if (frontmatter.branch) {
@@ -609,7 +641,7 @@ export function checkRelease() {
       const pkg = JSON.parse(readText(serverPkgPath));
       if (typeof pkg.version !== "string" || pkg.version.length === 0) {
         errors.push("server/package.json is missing 'version'");
-      } else if (!/^\d+\.\d+\.\d+/.test(pkg.version)) {
+      } else if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) {
         errors.push(`server/package.json version '${pkg.version}' is not SemVer (x.y.z...)`);
       } else {
         serverVersion = pkg.version;
@@ -666,7 +698,12 @@ function parseFlag(argv, name) {
       // `--name value` form: consume the next arg if it isn't another flag.
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("--")) return next;
-      return true;
+      // A value-bearing flag supplied without a value is a usage error. Reject
+      // it (exit 2) rather than substituting a truthy/empty placeholder and
+      // writing an artifact that fails the repo's own validation.
+      const err = new Error(`flag --${name} requires a value`);
+      err.code = 2;
+      throw err;
     }
     if (arg.startsWith(prefix)) return arg.slice(prefix.length);
   }

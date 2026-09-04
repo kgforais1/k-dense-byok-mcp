@@ -198,6 +198,23 @@ describe("repo.mjs CLI runner", () => {
     expect(caught).toBeInstanceOf(Error);
     expect((caught as { code?: number }).code).toBe(2);
   });
+
+  it("work:plan rejects a value-bearing flag supplied without a value (exit 2)", () => {
+    // A bare --slug must not be silently converted to `true` and written into
+    // an artifact; it is a usage error.
+    const code = __cli.main(["node", "scripts/repo.mjs", "work:plan", "--slug"]);
+    expect(code).toBe(2);
+  });
+
+  it("work:handoff rejects a missing required --plan value (exit 2)", () => {
+    const code = __cli.main(["node", "scripts/repo.mjs", "work:handoff", "--plan", "--branch", "x"]);
+    expect(code).toBe(2);
+  });
+
+  it("work:maintenance rejects a missing required --pr value (exit 2)", () => {
+    const code = __cli.main(["node", "scripts/repo.mjs", "work:maintenance", "--pr"]);
+    expect(code).toBe(2);
+  });
 });
 
 describe("checkHandoffs", () => {
@@ -322,6 +339,63 @@ describe("checkHandoffs", () => {
     const result = checkHandoffs({ dir: tmp, currentBranch: "branch-b" });
     expect(result.failures.some((f) => f.includes("does not match current branch"))).toBe(true);
     expect(result.failures.some((f) => f.includes("does not exist"))).toBe(true);
+  });
+
+  it("rejects a handoff dated tomorrow (no one-day grace)", () => {
+    const planPath = path.join(tmp, "plan.md");
+    fs.writeFileSync(planPath, "# Plan");
+    const today = new Date();
+    const tomorrow = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1));
+    const tomorrowIso = tomorrow.toISOString().slice(0, 10);
+    fs.writeFileSync(
+      path.join(tmp, "future.md"),
+      [
+        "---",
+        "branch: feat/test",
+        `plan: ${planPath}`,
+        "status: active",
+        `updated: ${tomorrowIso}`,
+        "---",
+        "",
+        "## Scope",
+        "x",
+        "",
+        "## Verification",
+        "x",
+        "",
+        "## Next action",
+        "x",
+      ].join("\n"),
+    );
+    const result = checkHandoffs({ dir: tmp, currentBranch: "feat/test", maxAgeDays: 14 });
+    expect(result.failures.some((f) => f.includes("is in the future"))).toBe(true);
+  });
+
+  it("rejects an impossible calendar date such as 2026-02-31", () => {
+    const planPath = path.join(tmp, "plan.md");
+    fs.writeFileSync(planPath, "# Plan");
+    fs.writeFileSync(
+      path.join(tmp, "impossible.md"),
+      [
+        "---",
+        "branch: feat/test",
+        `plan: ${planPath}`,
+        "status: active",
+        "updated: 2026-02-31",
+        "---",
+        "",
+        "## Scope",
+        "x",
+        "",
+        "## Verification",
+        "x",
+        "",
+        "## Next action",
+        "x",
+      ].join("\n"),
+    );
+    const result = checkHandoffs({ dir: tmp, currentBranch: "feat/test", maxAgeDays: 14 });
+    expect(result.failures.some((f) => f.includes("is not a valid calendar date"))).toBe(true);
   });
 });
 

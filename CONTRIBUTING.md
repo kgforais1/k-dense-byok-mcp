@@ -94,7 +94,7 @@ command hub in [`scripts/repo.mjs`](scripts/repo.mjs):
 | `fast` | `npm run verify -- fast` | Manifest + git hygiene + hub alias check (<2 s) | After every edit, before commit |
 | `server` | `npm run verify -- server` | `server` typecheck + vitest | After touching `server/src/` |
 | `web` | `npm run verify -- web` | `web` typecheck + vitest | After touching `web/src/` |
-| `docs` | `npm run verify -- docs` | `handoff:check` + `release:check` + manifest coverage | After editing handoffs / changelog / manifest |
+| `docs` | `npm run verify -- docs` | `docs:check` + `handoff:check` + `release:check` + manifest category coverage | After editing handoffs / changelog / manifest |
 | `all` | `npm run verify -- all` | The four ladders in order (2–6 min) | Before requesting review on any non-trivial PR |
 
 Rules:

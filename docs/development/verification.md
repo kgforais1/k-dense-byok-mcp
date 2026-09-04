@@ -115,9 +115,13 @@ reliable enough to gate a commit:
 
 ### `all` — fast + server + web + docs
 
-Runs the four ladders in that order, stopping the run at the first
-step that fails in each ladder. Use it before opening or updating a
-PR; it is the closest the local machine gets to what CI runs.
+Runs the four ladders in that order. Each ladder stops at its first failing
+step and returns that step's exit code, so a red run points directly at the
+first actionable failure. Use it before opening or updating a PR; it is the
+closest the local machine gets to what CI runs.
+
+> `npm run docs:check` is an alias for `npm run verify -- docs` (the full docs
+> gate: structure + handoff + release + manifest category coverage).
 
 ## CI matrix
 

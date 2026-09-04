@@ -629,6 +629,22 @@ describe("scaffolders", () => {
     expect(updated).not.toContain("[YYYY-MM-DD]");
     expect(updated).not.toContain("[security | dependency | ci-tooling | operational | verification]");
   });
+
+  it("scaffoldMaintenance refuses to append a duplicate entry for the same PR", () => {
+    const realTemplates = path.join(REPO_ROOT, "dev-docs", "templates");
+    const tmpTemplates = path.join(tmp, "dev-docs", "templates");
+    fs.mkdirSync(tmpTemplates, { recursive: true });
+    for (const f of fs.readdirSync(realTemplates)) {
+      fs.copyFileSync(path.join(realTemplates, f), path.join(tmpTemplates, f));
+    }
+    const logPath = path.join(tmp, "dev-docs", "maintenance-log.md");
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, "# Maintenance log\n\n");
+    scaffoldMaintenance({ pr: "#42", category: "ci-tooling", cwd: tmp });
+    expect(() => scaffoldMaintenance({ pr: "#42", category: "ci-tooling", cwd: tmp })).toThrow(
+      /refusing to append duplicate maintenance entry/,
+    );
+  });
 });
 
 describe("end-to-end CLI invocation via node", () => {

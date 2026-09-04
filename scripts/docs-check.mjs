@@ -261,28 +261,47 @@ function checkPointers() {
 // not part of the allowed template. Returns failure messages.
 function pointerPolicyLineFailures(name, lines) {
   const failures = [];
+  const allowedScopedBullets = new Set([
+    "- `server/AGENTS.md` — backend (TypeScript + Pi SDK).",
+    "- `web/AGENTS.md` — frontend (Next.js 16 / React 19).",
+    "- `.github/AGENTS.md` — workflow permissions, matrix, release automation.",
+  ]);
   const knownTemplatePrefixes = [
+    "Claude Code project memory discovers",
+    "Gemini CLI discovers",
+    "This file is a short",
+    "compatibility pointer",
+    "pointer; it is not a second policy.",
     "Read and follow the canonical repository instructions at",
     "If a scoped instruction file is closer to the",
     "area you are changing, read it first, then this file:",
-    "- `",
     "Do not add policy",
+    "`AGENTS.md` (and the scoped file, if any) instead.",
   ];
   for (const line of lines) {
-    // Skip known template lines.
-    const isKnown = knownTemplatePrefixes.some((p) => line.startsWith(p));
-    if (isKnown) continue;
-    // Allow the single H1 filename heading.
+    // Allow the single H1 filename heading and the AGENTS.md pointer line.
+    if (/^#\s+/.test(line)) continue;
+    if (/\[`?AGENTS\.md`?\]\(AGENTS\.md\)/.test(line)) continue;
+    if (knownTemplatePrefixes.some((p) => line.startsWith(p))) continue;
+    if (allowedScopedBullets.has(line)) continue;
     if (/^##\s+/.test(line)) {
       failures.push(
         `${name}: must not contain extra policy headings (found '${line}')`,
       );
+      continue;
+    }
+    if (line.startsWith("- ")) {
+      failures.push(
+        `${name}: must not contain extra policy bullets (found '${line}')`,
+      );
+      continue;
     }
     // Disallow numbered policy rules.
     if (/^\d+\.\s/.test(line)) {
       failures.push(
         `${name}: must not contain extra numbered policy (found '${line}')`,
       );
+      continue;
     }
     // Disallow bold rule-style bullets.
     if (/^-\s+\*\*[^*]+\*\*/.test(line)) {

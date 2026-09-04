@@ -101,12 +101,15 @@ Rules:
 
 - The hub never bypasses hooks or CI and preserves the original exit code — a
   green hub run is the only pass signal.
-- CI (`.github/workflows/tests.yml`) runs the same checks for the `fast`,
-  `server`, and `web` ladders; a failure there should reproduce in its matching
-  CI job. The `docs` ladder is local-only for now (no CI docs job yet — see
-  `docs/development/verification.md`), so run it locally. If a CI-mapped
-  failure does not reproduce, file a maintenance log entry — the disagreement
-  is the bug.
+- CI (`.github/workflows/tests.yml`) exercises overlapping checks; see
+  [`docs/development/verification.md`](docs/development/verification.md) for
+  the matrix. The `server` ladder matches the backend job (typecheck +
+  vitest). The `web` ladder runs typecheck + vitest locally; CI also runs
+  `lint` and a production `build`. The `fast` ladder validates manifest and
+  hub aliases; CI's launcher job runs `./start.sh --check` instead — both are
+  quick pre-push gates but not identical. The `docs` ladder is local-only for
+  now. When a CI-mapped check and its local counterpart disagree, file a
+  maintenance log entry — the disagreement is the bug.
 - Also run `npm run status` to surface branch, recent commits, and any active
   handoff before pushing.
 

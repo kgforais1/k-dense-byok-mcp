@@ -123,6 +123,31 @@ describe("scripts/docs-check.mjs", () => {
       );
     });
 
+    it("flags a CLAUDE.md with an unlisted policy bullet", () => {
+      writeFile(
+        "CLAUDE.md",
+        [
+          "# CLAUDE.md",
+          "[`AGENTS.md`](AGENTS.md)",
+          "",
+          "Read and follow the canonical repository instructions at",
+          "[`AGENTS.md`](AGENTS.md). If a scoped instruction file is closer to the",
+          "area you are changing, read it first, then this file:",
+          "",
+          "- Never bypass review",
+          "",
+          "Do not add policy, commands, or invariants to this file. Update",
+          "`AGENTS.md` (and the scoped file, if any) instead.",
+        ].join("\n"),
+      );
+      writeFile("AGENTS.md", "# AGENTS.md\n");
+      const result = runInTmp();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "CLAUDE.md: must not contain extra policy bullets (found '- Never bypass review')",
+      );
+    });
+
     it("flags a CLAUDE.md with extra policy headings", () => {
       writeFile(
         "CLAUDE.md",

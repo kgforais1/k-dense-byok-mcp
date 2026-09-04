@@ -958,15 +958,16 @@ export function scaffoldHandoff({ slug, branch, plan, cwd = REPO_ROOT } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const templatePath = path.join(cwd, "dev-docs", "templates", "handoff.md");
   const rawTemplate = exists(templatePath) ? readText(templatePath) : HANDOFF_TEMPLATE;
+  const date = nowIsoDate();
   const content = renderTemplate(rawTemplate, {
-    date: nowIsoDate(),
+    date,
     branch: resolvedBranch,
   })
     .replace(/<relative path under dev-docs\/plans\/>/, plan)
     .replace("[branch-name]", resolvedBranch)
     .replace("[plan-file].md", plan.replace(/^dev-docs\/plans\//, ""))
     .replace("[optional-owner]", "")
-    .replace("[YYYY-MM-DD]", nowIsoDate())
+    .replace("[YYYY-MM-DD]", date)
     .replace("[Branch Name]", resolvedBranch);
   fs.writeFileSync(target, content);
   return target;
@@ -990,16 +991,25 @@ export function scaffoldMaintenance({ pr, category, cwd = REPO_ROOT } = {}) {
   const templatePath = path.join(cwd, "dev-docs", "templates", "maintenance-entry.md");
   const rawTemplate = exists(templatePath) ? readText(templatePath) : MAINTENANCE_TEMPLATE;
   const prRef = String(pr).replace(/^#/, "");
+  const current = readText(logPath);
+  const prMarker = `(PR #${prRef})`;
+  if (current.includes(prMarker)) {
+    const err = new Error(
+      `refusing to append duplicate maintenance entry for ${prMarker}; edit the existing entry instead`,
+    );
+    err.code = 4;
+    throw err;
+  }
+  const date = nowIsoDate();
   const entry = renderTemplate(rawTemplate, {
-    date: nowIsoDate(),
+    date,
     category: category || "<security | dependency | ci-tooling | operational | verification>",
   })
     .replace(/<PR number or merge commit hash>/, pr)
     .replace(/<security \| dependency \| ci-tooling \| operational \| verification>/, category || "<security | dependency | ci-tooling | operational | verification>")
-    .replace(/\[YYYY-MM-DD\]/g, nowIsoDate())
+    .replace(/\[YYYY-MM-DD\]/g, date)
     .replace("[security | dependency | ci-tooling | operational | verification]", category || "[security | dependency | ci-tooling | operational | verification]")
     .replace("[number]", prRef);
-  const current = readText(logPath);
   const lines = current.split("\n");
   let h1Index = -1;
   for (let i = 0; i < lines.length; i++) {

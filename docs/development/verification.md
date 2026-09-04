@@ -138,16 +138,17 @@ CI coverage. The mapping is:
 
 | Local ladder | CI job / step | Runner(s) |
 |---|---|---|
-| `verify fast` | fast launcher check (`start.sh/cmd --check`) | `ubuntu-latest`, `macos-latest`, `windows-latest` |
+| `verify fast` | launcher smoke (`start.sh/cmd --check`; manifest/alias checks are local-only) | `ubuntu-latest`, `macos-latest`, `windows-latest` |
 | `verify server` | backend job (`typecheck` + `vitest`) | `ubuntu-latest`, `windows-latest` |
-| `verify web` | frontend job (`typecheck` + `lint` + `build` + `vitest`) | `ubuntu-latest`, `windows-latest` |
+| `verify web` | frontend job (`typecheck` + `lint` + `build` + `vitest`; local `web` omits lint/build) | `ubuntu-latest`, `windows-latest` |
 | `verify docs` | *(local only — no CI job yet; the plan's Phase 5 docs job is still pending)* | — |
 | `verify all` | all jobs in matrix | per-job matrix runners |
 
-A failure in the `fast`, `server`, or `web` ladder should reproduce in
-the corresponding CI step. The `docs` ladder is local-only for now, so
-run it before review. If a CI-mapped failure does not reproduce, file a
-maintenance log entry; the disagreement is the bug.
+Failures in overlapping checks should reproduce across local ladders and CI.
+The `fast` and `web` ladders are not identical to their CI jobs — see the
+notes in the table above. The `docs` ladder is local-only for now, so run it
+before review. If a CI-mapped check and its local counterpart disagree, file
+a maintenance log entry; the disagreement is the bug.
 
 ## Adding a new check
 

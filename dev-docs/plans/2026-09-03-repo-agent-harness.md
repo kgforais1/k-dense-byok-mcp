@@ -129,9 +129,11 @@ the manifest update rule.
 
 For work that crosses an agent/session boundary, add a branch-local,
 versioned handoff in `dev-docs/handoffs/active/`. Its frontmatter records the
-branch, plan/issue, owner (if known), status, and `updated` date. Its body has
-fixed sections: scope, decisions, changed files, verification with outcomes,
-known failures, blockers, and the one recommended next action.
+branch, a required local plan path, owner (if known), status, and `updated`
+date. Its body has fixed sections: scope, decisions, changed files,
+verification with outcomes, known failures, blockers, and the one recommended
+next action. An issue may be linked from the plan or handoff body, but it is
+not a substitute for the required plan reference.
 
 Handoffs are required only when work will continue after the current session
 or another agent is explicitly asked to take over. They are summaries, not
@@ -310,16 +312,16 @@ folk knowledge, and policy documents have named owners/review cadence.
 
 ### Phase 4 — State coordination and handoff
 
-- [ ] Define the active-handoff frontmatter schema (branch, plan/issue, status,
-  updated ISO date) and required body headings; add examples for
+- [ ] Define the active-handoff frontmatter schema (branch, required local plan
+  path, status, updated ISO date) and required body headings; add examples for
   code/docs/infrastructure work and the removal rule to
   `docs/development/workflow.md`.
 - [ ] Implement `handoff:check` for branch-name match, required fields, ISO
-  dates, referenced-plan existence, and removal of closed handoffs from the
-  active directory.
+  dates, required local-plan existence, and removal of closed handoffs from
+  the active directory.
 - [ ] Add a short “resume protocol” to root guidance: inspect status, recent
-  commits, active handoff, plan/issue, then run the smallest relevant health
-  check before changing code.
+  commits, active handoff and its required plan, then run the smallest relevant
+  health check before changing code.
 - [ ] Add a PR closing checklist that requires handoff archival/removal and
   plan/maintenance/changelog updates when applicable.
 - [ ] Add templates and guarded generators for plans, handoffs, maintenance

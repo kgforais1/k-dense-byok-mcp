@@ -2,7 +2,8 @@
 /**
  * Repository command hub.
  *
- * Phase 2 of dev-docs/plans/2026-09-03-repo-agent-harness.md. This is a
+ * Phase 2 of the repository agent harness plan (archived to
+ * dev-docs/plans/completed/2026-09-03-repo-agent-harness.md). This is a
  * portable Node command hub that delegates to the existing server/ and web/
  * scripts. It is dependency-free, cross-platform, and never bypasses hooks
  * or CI. Subcommands fail loudly and preserve the original exit code of the

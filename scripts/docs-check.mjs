@@ -220,6 +220,14 @@ function anchorsFor(resolvedPath, anchorMap) {
 // Pointer validation
 // ---------------------------------------------------------------------------
 
+/** Split pointer-file text into non-empty lines with CRLF normalized away. */
+function pointerFileLines(text) {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/\r$/, ""))
+    .filter((line) => line.trim().length > 0);
+}
+
 /** Validate CLAUDE.md and GEMINI.md pointer files for shape and policy drift. */
 function checkPointers() {
   const failures = [];
@@ -230,7 +238,7 @@ function checkPointers() {
       continue;
     }
     const text = readText(file);
-    const lines = text.split("\n").filter((l) => l.trim().length > 0);
+    const lines = pointerFileLines(text);
 
     // Must contain exactly one AGENTS.md pointer link (with or without backticks).
     const pointerLines = lines.filter((l) =>

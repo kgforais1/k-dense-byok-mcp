@@ -127,6 +127,54 @@ describe("scripts/docs-check.mjs", () => {
       );
     });
 
+    it("accepts CRLF line endings in pointer files", () => {
+      const claude = [
+        "# CLAUDE.md",
+        "[`AGENTS.md`](AGENTS.md)",
+        "",
+        "Do not add policy, commands, or invariants to this file. Update",
+        "`AGENTS.md` (and the scoped file, if any) instead.",
+      ].join("\r\n");
+      const gemini = [
+        "# GEMINI.md",
+        "[`AGENTS.md`](AGENTS.md)",
+        "",
+        "Do not add policy, commands, or invariants to this file. Update",
+        "`AGENTS.md` (and the scoped file, if any) instead.",
+      ].join("\r\n");
+      writeFile("AGENTS.md", "# AGENTS.md\n");
+      writeFile("CLAUDE.md", `${claude}\r\n`);
+      writeFile("GEMINI.md", `${gemini}\r\n`);
+      writeFile("README.md", "# README\n");
+      writeFile(
+        "scripts/repo-manifest.json",
+        JSON.stringify({
+          categories: {
+            "entry-point": "Entry points",
+            "runtime-service": "Runtime services",
+            "persistence-boundary": "Persistence boundaries",
+            policy: "Policy files",
+            verification: "Verification files",
+            "developer-documentation": "Developer docs",
+            "product-documentation": "Product docs",
+            "release-record": "Release records",
+          },
+          entries: [
+            {
+              id: "agents",
+              category: "policy",
+              path: "AGENTS.md",
+              name: "Root policy",
+              description: "x",
+            },
+          ],
+        }),
+      );
+      const result = runInTmp();
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("docs:check: ok");
+    });
+
     it("flags a CLAUDE.md whose H1 does not match the filename", () => {
       writeFile(
         "CLAUDE.md",

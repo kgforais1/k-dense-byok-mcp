@@ -163,6 +163,8 @@ All guides live in the [`docs/`](./docs) folder:
 | [Model selection](./docs/model-selection.md) | OpenRouter, Pi subscription, NVIDIA NIM, Ollama, model refs, and billing behavior |
 | [OpenRouter Fusion](./docs/openrouter-fusion.md) | Multi-model deliberation presets — what they are and how the integration works |
 | [Architecture](./docs/architecture.md) | How the two local services fit together (for the technically curious) |
+| [Developer documentation](./docs/development/README.md) | Contributor documentation index, architecture map, verification, and workflow |
+| [Architecture map](./docs/development/architecture-map.md) | Package boundaries, entry points, and component data flows |
 | [Contributing workflows](./docs/contributing-workflows.md) | Add new workflow templates to the library |
 | [Known limitations](./docs/limitations.md) | Rough edges to be aware of in the current beta |
 

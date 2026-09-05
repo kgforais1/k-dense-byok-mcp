@@ -1,0 +1,311 @@
+{
+  "$schema": "Manifest defined by the repository agent harness (Phase 2, see dev-docs/plans/2026-09-03-repo-agent-harness.md).",
+  "version": 1,
+  "description": "Curated entry points and policy locations used by scripts/repo.mjs. The author who adds, removes, or relocates a listed target updates this file in the same PR.",
+  "categories": {
+    "entry-point": "Process entry point: the file that boots a service, runner, or top-level command.",
+    "runtime-service": "A long-lived service module: route registration, agent wiring, or background work that runs while the app is up.",
+    "persistence-boundary": "An on-disk state location that the backend reads or writes (sessions, ledger, provenance, jobs, skills).",
+    "policy": "A document or file that defines a rule an agent or human must follow (AGENTS.md, CLAUDE.md, fork guard, hook).",
+    "verification": "A file that defines or runs a check (CI workflow, test config, verification ladder doc).",
+    "developer-documentation": "A canonical contributor/developer document under docs/development/ or dev-docs/.",
+    "product-documentation": "A product-facing document under docs/ that describes a feature to users.",
+    "release-record": "A file that records or governs a release (CHANGELOG, version source, release workflow)."
+  },
+  "entries": [
+    {
+      "id": "start-launcher",
+      "category": "entry-point",
+      "path": "start.mjs",
+      "name": "Cross-platform launcher",
+      "description": "Cross-platform Node launcher that installs deps, seeds skills, and starts backend + frontend together. Wrapped by start.sh (macOS/Linux) and start.cmd (Windows). The only supported full-app path."
+    },
+    {
+      "id": "backend-entry",
+      "category": "entry-point",
+      "path": "server/src/index.ts",
+      "name": "Fastify backend entry",
+      "description": "Fastify server bootstrap (port 8000): registers routes, installs the undici EnvHttpProxyAgent as the global dispatcher, and sets up the AsyncLocalStorage scope onRequest hook."
+    },
+    {
+      "id": "backend-prep",
+      "category": "entry-point",
+      "path": "server/src/prep.ts",
+      "name": "Backend prep",
+      "description": "Ensures a default project exists and seeds scientific skills. Run via `npm run prep` in server/."
+    },
+    {
+      "id": "frontend-entry",
+      "category": "entry-point",
+      "path": "web/src/app",
+      "name": "Next.js App Router",
+      "description": "Next.js 16 App Router entry. The dev server (`next dev`), production build, and the App Router layout/page tree live here."
+    },
+    {
+      "id": "session-registry",
+      "category": "runtime-service",
+      "path": "server/src/agent/session-registry.ts",
+      "name": "Pi session registry",
+      "description": "Holds live Pi AgentSession objects (one per chat tab, ≤10 per project) and persists them as JSONL files under the project's sessions/ directory."
+    },
+    {
+      "id": "models-runtime",
+      "category": "runtime-service",
+      "path": "server/src/agent/models.ts",
+      "name": "Model runtime + registry",
+      "description": "Resolves canonical provider/model refs (openrouter/, ollama/, nvidia/, subscription providers) to Pi Model objects and synthesizes OpenRouter pricing for non-built-in models."
+    },
+    {
+      "id": "events-sse",
+      "category": "runtime-service",
+      "path": "server/src/agent/events.ts",
+      "name": "SSE event mapper",
+      "description": "Maps Pi AgentSessionEvent to the SSE schema (text_delta, thinking_delta, tool_start/update/end, turn_start/end, error, cost, done) consumed by the frontend."
+    },
+    {
+      "id": "sandbox-api",
+      "category": "runtime-service",
+      "path": "server/src/api/sandbox.ts",
+      "name": "Sandbox API routes",
+      "description": "File ops, annotation sidecars, LaTeX compile/SyncTeX, latex-assist, and the scientific preview dispatcher (sci-summary / sci-render.png)."
+    },
+    {
+      "id": "sessions-api",
+      "category": "runtime-service",
+      "path": "server/src/api/sessions.ts",
+      "name": "Sessions API routes",
+      "description": "Session lifecycle: create, run, history, interview answers, notebook, and the methods-draft one-shot."
+    },
+    {
+      "id": "modal-manager",
+      "category": "runtime-service",
+      "path": "server/src/modal/manager.ts",
+      "name": "Durable Modal job manager",
+      "description": "Owns persistent Modal jobs under .kady/modal/, including budget reservations, abort-safe sandbox creation, retry, batches, and restart recovery through saved sandbox ids."
+    },
+    {
+      "id": "cost-ledger",
+      "category": "persistence-boundary",
+      "path": "server/src/cost/ledger.ts",
+      "name": "Cost ledger",
+      "description": "Snapshots session stats before/after each run and appends one row to sandbox/.kady/runs/<sessionId>/costs.jsonl (role: agent | subagent | compute)."
+    },
+    {
+      "id": "provenance-recorder",
+      "category": "persistence-boundary",
+      "path": "server/src/provenance/recorder.ts",
+      "name": "Provenance recorder",
+      "description": "Derives one observed step per tool call from the session subscribe stream and appends to sandbox/.kady/provenance/<sessionId>/steps.jsonl. No agent-facing tool writes here."
+    },
+    {
+      "id": "skills-sync",
+      "category": "persistence-boundary",
+      "path": "server/src/agent/skills-sync.ts",
+      "name": "Skills sync writer",
+      "description": "Sole writer of live skill directories. Manifest v2 lives at sandbox/.kady/skills-sync.json with per-skill origin, ref, catalogueDigest, and removed tombstones."
+    },
+    {
+      "id": "pi-sessions-store",
+      "category": "persistence-boundary",
+      "path": "server/src/projects.ts",
+      "name": "Projects registry & sessions store",
+      "description": "Owns the projects registry and on-disk state under projects/<id>/sandbox/.pi/sessions/ (gitignored runtime data). One JSONL per chat tab; replayed for reopened tabs and harvested for subagent provenance + notebook entries. This entry points at the owning module because the data location itself is not committed."
+    },
+    {
+      "id": "root-agents-policy",
+      "category": "policy",
+      "path": "AGENTS.md",
+      "name": "Root repository policy",
+      "description": "Cross-agent entry point and policy boundary: fork, hook, release, version, platform, and harness invariants. Canonical policy for this repository."
+    },
+    {
+      "id": "server-agents-policy",
+      "category": "policy",
+      "path": "server/AGENTS.md",
+      "name": "Backend policy",
+      "description": "Scoped backend deltas: Fastify/Pi conventions, test boundaries, helper venv, sandbox boundary, model billing touchpoints, Pi runtime vs contributor policy."
+    },
+    {
+      "id": "web-agents-policy",
+      "category": "policy",
+      "path": "web/AGENTS.md",
+      "name": "Frontend policy",
+      "description": "Scoped frontend deltas: Next.js/React conventions, viewer registry, capability-hub structure, frontend tests."
+    },
+    {
+      "id": "github-agents-policy",
+      "category": "policy",
+      "path": ".github/AGENTS.md",
+      "name": "Automation & release policy",
+      "description": "Scoped automation deltas: workflow permissions, action pinning, secrets, matrix testing, release automation."
+    },
+    {
+      "id": "claude-md-pointer",
+      "category": "policy",
+      "path": "CLAUDE.md",
+      "name": "Claude Code compatibility pointer",
+      "description": "Short pointer telling Claude Code to read and follow the root AGENTS.md. Validated by docs:check (Phase 5) for exact template; must not accrete a second policy."
+    },
+    {
+      "id": "gemini-md-pointer",
+      "category": "policy",
+      "path": "GEMINI.md",
+      "name": "Gemini CLI compatibility pointer",
+      "description": "Short pointer telling Gemini CLI to read and follow the root AGENTS.md. Same template rules as CLAUDE.md."
+    },
+    {
+      "id": "pre-push-hook",
+      "category": "policy",
+      "path": ".githooks/pre-push",
+      "name": "Pre-push fork guard",
+      "description": "Blocks pushes to any remote that is not the fork. Activated by start.mjs via `git config core.hooksPath .githooks`. Do not bypass."
+    },
+    {
+      "id": "release-workflow",
+      "category": "verification",
+      "path": ".github/workflows/release.yml",
+      "name": "Release workflow",
+      "description": "Runs on every push to main; if the tag v<version> doesn't exist it creates it plus a GitHub release with auto-generated notes. No manual tagging."
+    },
+    {
+      "id": "tests-workflow",
+      "category": "verification",
+      "path": ".github/workflows/tests.yml",
+      "name": "Tests workflow",
+      "description": "Runs backend (typecheck + vitest) and frontend (typecheck + lint + build + vitest) on ubuntu + windows, plus the launcher --check smoke on ubuntu/macos/windows, on PR and push to main. Also runs on documentation-only PRs."
+    },
+    {
+      "id": "harness-update-check",
+      "category": "verification",
+      "path": "scripts/harness-update-check.mjs",
+      "name": "Harness pin update check",
+      "description": "Compares pinned Pi harness packages against npm's `latest` dist-tag. Report-only; never upgrades."
+    },
+    {
+      "id": "server-vitest-config",
+      "category": "verification",
+      "path": "server/vitest.config.ts",
+      "name": "Backend vitest config",
+      "description": "Vitest config that points KADY_PROJECTS_ROOT at a temp dir so tests do not touch user projects."
+    },
+    {
+      "id": "repo-command-hub",
+      "category": "verification",
+      "path": "scripts/repo.mjs",
+      "name": "Repository command hub",
+      "description": "Portable Node command hub: status, map, verify (fast/server/web/docs/all), handoff:check, release:check, work:plan/handoff/maintenance scaffolders. Delegates to existing server/web scripts; never bypasses hooks or CI."
+    },
+    {
+      "id": "repo-manifest",
+      "category": "verification",
+      "path": "scripts/repo-manifest.json",
+      "name": "Repository manifest",
+      "description": "Curated navigation and policy locations used by `npm run repo:map` and `docs:check`. Update in the same PR as any target relocation."
+    },
+    {
+      "id": "dev-readme",
+      "category": "developer-documentation",
+      "path": "docs/development/README.md",
+      "name": "Developer documentation index",
+      "description": "Entry point for contributor/developer documentation. Defines the category table, ownership/freshness table, and rules for adding a new document."
+    },
+    {
+      "id": "dev-architecture-map",
+      "category": "developer-documentation",
+      "path": "docs/development/architecture-map.md",
+      "name": "Architecture map",
+      "description": "Package, module, and data-flow boundaries. Owned by the cross-cutting area; updated when a new entry point or data flow is added."
+    },
+    {
+      "id": "dev-verification",
+      "category": "developer-documentation",
+      "path": "docs/development/verification.md",
+      "name": "Verification ladder",
+      "description": "Fast targeted checks, package checks, full local checks, and CI matrix mapping. Owned by the cross-cutting area; updated when a command or matrix changes."
+    },
+    {
+      "id": "harness-plan",
+      "category": "developer-documentation",
+      "path": "dev-docs/plans/2026-09-03-repo-agent-harness.md",
+      "name": "Repository agent harness plan",
+      "description": "Implementation plan for the repository agent harness. Defines the layered interface, source-of-truth order, command hub, handoff schema, and rollout phases."
+    },
+    {
+      "id": "maintenance-log",
+      "category": "developer-documentation",
+      "path": "dev-docs/maintenance-log.md",
+      "name": "Maintenance log",
+      "description": "Append-only record of security, dependency, CI/tooling, and operational decisions with evidence and follow-ups."
+    },
+    {
+      "id": "todo-roadmap",
+      "category": "developer-documentation",
+      "path": "dev-docs/todo.md",
+      "name": "Roadmap TODO",
+      "description": "Prioritized, non-authoritative roadmap. Not a state record; handoffs and PRs are the coordination mechanism."
+    },
+    {
+      "id": "product-architecture",
+      "category": "product-documentation",
+      "path": "docs/architecture.md",
+      "name": "Product architecture",
+      "description": "User-facing architecture description: runtime, services, persistence, and integration boundaries."
+    },
+    {
+      "id": "product-file-previews",
+      "category": "product-documentation",
+      "path": "docs/file-previews.md",
+      "name": "File previews",
+      "description": "User-facing coverage of supported scientific file previews. Update when a new viewer is added to web/src/lib/viewers/registry.ts."
+    },
+    {
+      "id": "product-limitations",
+      "category": "product-documentation",
+      "path": "docs/limitations.md",
+      "name": "Limitations",
+      "description": "User-facing limitations: provider refusals, trust boundary, harness pinning. Short and explicit."
+    },
+    {
+      "id": "product-modal",
+      "category": "product-documentation",
+      "path": "docs/modal-compute.md",
+      "name": "Modal compute",
+      "description": "User-facing guide to durable Modal remote compute: how to configure, submit, and reconcile jobs."
+    },
+    {
+      "id": "product-provenance",
+      "category": "product-documentation",
+      "path": "docs/provenance.md",
+      "name": "Provenance",
+      "description": "User-facing description of provenance: what is observed, what is derived, and what is out of scope (nested subagents, Modal, env capture)."
+    },
+    {
+      "id": "product-skills",
+      "category": "product-documentation",
+      "path": "docs/skill-management.md",
+      "name": "Skill management",
+      "description": "User-facing guide to project vs global skills, manifest v2 semantics, install/update flows, and the catalogue sync cadence."
+    },
+    {
+      "id": "changelog",
+      "category": "release-record",
+      "path": "CHANGELOG.md",
+      "name": "Changelog",
+      "description": "Keep-a-Changelog formatted release notes. The Unreleased section is updated in the implementing PR; entries move under [version] - YYYY-MM-DD as part of release prep."
+    },
+    {
+      "id": "server-version-source",
+      "category": "release-record",
+      "path": "server/package.json",
+      "name": "Server version source",
+      "description": "Single source of truth for the app version. web/package.json deliberately has no version field. Bumping the version is what triggers the release workflow on main."
+    },
+    {
+      "id": "dependabot-config",
+      "category": "release-record",
+      "path": ".github/dependabot.yml",
+      "name": "Dependabot config",
+      "description": "Dependabot configuration for server/ and web/ packages. Not used for the pinned Pi harness packages, which the project upgrades deliberately."
+    }
+  ]
+}

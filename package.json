@@ -3,7 +3,16 @@
   "private": true,
   "scripts": {
     "start": "node start.mjs",
-    "check": "node start.mjs --check"
+    "check": "node start.mjs --check",
+    "status": "node scripts/repo.mjs status",
+    "repo:map": "node scripts/repo.mjs map",
+    "verify": "node scripts/repo.mjs verify",
+    "docs:check": "npm run verify -- docs",
+    "handoff:check": "node scripts/repo.mjs handoff:check",
+    "release:check": "node scripts/repo.mjs release:check",
+    "work:plan": "node scripts/repo.mjs work:plan",
+    "work:handoff": "node scripts/repo.mjs work:handoff",
+    "work:maintenance": "node scripts/repo.mjs work:maintenance"
   },
   "engines": {
     "node": ">=22"

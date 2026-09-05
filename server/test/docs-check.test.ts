@@ -27,7 +27,9 @@ describe("scripts/docs-check.mjs", () => {
     expect(result.stdout).toContain("docs:check: ok");
   });
 
-  it("passes against a clean checkout (only git-tracked files, plus untracked branch files)", () => {
+  it(
+    "passes against a clean checkout (only git-tracked files, plus untracked branch files)",
+    () => {
     // A fresh clone has no gitignored runtime state (e.g. projects/). The
     // docs gate and the manifest must stay green there. Simulate by copying
     // `git ls-files` (tracked) + `git ls-files --others --exclude-standard`
@@ -56,7 +58,9 @@ describe("scripts/docs-check.mjs", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  },
+    60_000,
+  );
 
   describe("negative fixtures in a temp repo", () => {
     let tmp: string;

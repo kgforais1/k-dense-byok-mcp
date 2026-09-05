@@ -2,7 +2,7 @@
 
 This doc is the lifecycle reference for the repository harness described in
 [`../../AGENTS.md`](../../AGENTS.md) and planned in
-[`../../dev-docs/plans/2026-09-03-repo-agent-harness.md`](../../dev-docs/plans/2026-09-03-repo-agent-harness.md).
+[`../../dev-docs/plans/completed/2026-09-03-repo-agent-harness.md`](../../dev-docs/plans/completed/2026-09-03-repo-agent-harness.md).
 For the developer documentation index, category definitions, and the
 ownership/freshness table see [`README.md`](README.md). For the command-to-CI
 mapping see [`verification.md`](verification.md). For versioning and changelog

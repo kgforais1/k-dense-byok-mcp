@@ -2,7 +2,7 @@
 
 ## Next Up
 
-- [ ] **Add repo harness** — scripts, agent guidance, policies, workflows, etc. → [1. Repo harness](#1-repo-harness) · [proposed plan](plans/2026-09-03-repo-agent-harness.md)
+- [x] **Add repo harness** — scripts, agent guidance, policies, workflows, etc. → [1. Repo harness](#1-repo-harness) · [plan archived](plans/completed/2026-09-03-repo-agent-harness.md) (merged in [PR #11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11))
 - [ ] **CI and hooks** → [2. CI and hooks](#2-ci-and-hooks)
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [3. Code scanning, security alerts, and Dependabot](#3-code-scanning-security-alerts-and-dependabot)
 

@@ -6,6 +6,16 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
 
 ## Log Entries
 
+### 2026-09-05: Repository Agent Harness Archive
+- **PR:** [#11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11)
+- **Category:** CI-Tooling & Verification
+- **Summary:**
+  - Archived `dev-docs/plans/2026-09-03-repo-agent-harness.md` to `dev-docs/plans/completed/` and updated its status to `Completed and merged in PR #11`, matching the workflow's "only after the implementing PR merges" rule.
+  - Checked off the "Add repo harness" entry in `dev-docs/todo.md` and re-pointed the link at the archived plan + PR.
+  - No code changes; this entry exists so the archive and the distilled decision land in the same PR per `docs/development/workflow.md`.
+- **Evidence:** `docs:check` (link + manifest coverage) clean; `git log -1` on `origin/main` shows `de17efe` as the harness merge.
+- **Follow-up:** None — CI Hardening (#8) and Harness (#11) are the two PRs currently listed under `[Unreleased]` in `CHANGELOG.md`; the next release bump rolls them up.
+
 ### 2026-09-03: CI Hardening & Frontend Quality Pipeline
 - **PR:** [#8](https://github.com/kgforais1/k-dense-byok-mcp/pull/8)
 - **Category:** CI/CD & Testing

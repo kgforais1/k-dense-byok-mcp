@@ -33,13 +33,12 @@ import { checkHandoffs as checkHandoffsStrict } from "./repo.mjs";
 const REPO_ROOT = process.cwd();
 const SCRIPT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+/** Return a repo-relative path using forward slashes for stable error messages. */
 function rel(p) {
-  // Normalize to forward slashes so error messages are identical on every OS
-  // (markdown links and the manifest use / separators; a Windows backslash in
-  // a reported path would break copy-paste and differ from the link text).
   return path.relative(REPO_ROOT, p).split(path.sep).join("/") || ".";
 }
 
+/** Return true when `p` exists and is accessible. */
 function exists(p) {
   try {
     fs.accessSync(p);
@@ -49,13 +48,13 @@ function exists(p) {
   }
 }
 
+/** Read a UTF-8 text file from disk. */
 function readText(p) {
   return fs.readFileSync(p, "utf8");
 }
 
+/** Strip optional YAML single- or double-quote wrappers from a scalar value. */
 function stripQuotes(value) {
-  // YAML scalar values may be single- or double-quoted; the schema checks below
-  // compare against unquoted forms (ISO dates, branch names, plan paths).
   if (value.length >= 2) {
     const first = value[0];
     const last = value[value.length - 1];
@@ -66,6 +65,7 @@ function stripQuotes(value) {
   return value;
 }
 
+/** Recursively collect files under `dir` whose names satisfy `predicate`. */
 function walk(dir, predicate) {
   if (!exists(dir)) return [];
   const out = [];
@@ -81,6 +81,7 @@ function walk(dir, predicate) {
   return out;
 }
 
+/** Print validation failures to stderr and exit with code 1. */
 function fail(messages) {
   const list = Array.isArray(messages) ? messages : [messages];
   for (const msg of list) {
@@ -95,10 +96,7 @@ function fail(messages) {
 
 const LINK_RE = /!?\[[^\]]*\]\(([^)]+)\)/g;
 
-// Approximate GitHub's heading-anchor algorithm: lowercase, drop punctuation
-// except hyphens/underscores, collapse whitespace to single hyphens, and dedupe
-// repeated headings by appending -1, -2, ... . Kept in one place so the
-// fragment checks below stay consistent with the links GitHub generates.
+/** Slugify a markdown heading the way GitHub generates fragment anchors. */
 function slugifyHeading(raw) {
   return raw
     .trim()
@@ -108,6 +106,7 @@ function slugifyHeading(raw) {
     .replace(/\s+/g, "-"); // whitespace -> single hyphen run
 }
 
+/** Extract deduplicated heading anchor slugs from markdown text. */
 function extractAnchors(text) {
   const anchors = new Set();
   const seen = new Map();
@@ -121,6 +120,7 @@ function extractAnchors(text) {
   return anchors;
 }
 
+/** Validate internal markdown links and fragment anchors across scanned roots. */
 function checkLinks() {
   const failures = [];
   const roots = [
@@ -163,7 +163,7 @@ function checkLinks() {
   return failures;
 }
 
-// Validate a single markdown link (raw link text, the content of the (...)).
+/** Validate one markdown link target and optional fragment against `anchorMap`. */
 function checkLink(file, raw, anchorMap) {
   const failures = [];
   // Skip external URLs and mailto.
@@ -198,11 +198,10 @@ function checkLink(file, raw, anchorMap) {
   return failures;
 }
 
-// Return the anchor set for a link target, computing and caching it when the
-// target is a Markdown file outside the pre-scanned roots (e.g. a doc linking
-// into server/ or web/), and an empty set for non-Markdown targets. Guarding
-// here prevents `.has()` from throwing when a target exists but was never
-// scanned, while preserving missing-fragment reporting.
+/**
+ * Return anchor slugs for a link target, lazily parsing out-of-root markdown
+ * files and caching the result in `anchorMap`.
+ */
 function anchorsFor(resolvedPath, anchorMap) {
   if (anchorMap.has(resolvedPath)) return anchorMap.get(resolvedPath);
   let anchors = new Set();
@@ -221,6 +220,7 @@ function anchorsFor(resolvedPath, anchorMap) {
 // Pointer validation
 // ---------------------------------------------------------------------------
 
+/** Validate CLAUDE.md and GEMINI.md pointer files for shape and policy drift. */
 function checkPointers() {
   const failures = [];
   for (const name of ["CLAUDE.md", "GEMINI.md"]) {
@@ -248,6 +248,13 @@ function checkPointers() {
       failures.push(
         `${name}: must contain exactly one H1 heading, found ${h1Headings.length}`,
       );
+    } else {
+      const expectedH1 = `# ${name}`;
+      if (h1Headings[0] !== expectedH1) {
+        failures.push(
+          `${name}: H1 must be '${expectedH1}', found '${h1Headings[0]}'`,
+        );
+      }
     }
 
     // Must not contain policy headings beyond the allowed H1 (## , ### ) or bullet/numbered
@@ -257,8 +264,10 @@ function checkPointers() {
   return failures;
 }
 
-// Scan the non-empty lines of a pointer file for policy-style content that is
-// not part of the allowed template. Returns failure messages.
+/**
+ * Scan pointer-file lines for policy content outside the allowed template.
+ * Returns human-readable failure messages.
+ */
 function pointerPolicyLineFailures(name, lines) {
   const failures = [];
   const allowedScopedBullets = new Set([
@@ -328,6 +337,7 @@ const REQUIRED_CATEGORIES = new Set([
   "release-record",
 ]);
 
+/** Validate repo-manifest.json categories, entries, and on-disk targets. */
 function checkManifest() {
   const failures = [];
   const manifestPath = path.join(REPO_ROOT, "scripts", "repo-manifest.json");
@@ -372,6 +382,7 @@ function checkManifest() {
   return failures;
 }
 
+/** Append manifest entry validation failures into the shared `failures` list. */
 function validateManifestEntry(entry, categories, seenIds, seenPaths, failures) {
   const prefix = "scripts/repo-manifest.json:";
   if (!entry || typeof entry !== "object") {
@@ -404,12 +415,7 @@ function validateManifestEntry(entry, categories, seenIds, seenPaths, failures) 
 // Handoff validation
 // ---------------------------------------------------------------------------
 
-// Delegate to the strict checker in repo.mjs so `npm run docs:check` and
-// `npm run verify -- docs` (and `npm run handoff:check`) all enforce the SAME
-// rules: required frontmatter, ISO date, not future / not stale (>14d),
-// branch-name match, plan-file existence, and required body headings. A
-// shorter local copy here previously skipped branch/staleness/plan checks,
-// letting a bad handoff pass docs:check while verify -- docs failed it.
+/** Delegate active-handoff validation to the shared checker in repo.mjs. */
 function checkHandoffs() {
   // When docs-check runs against a fixture tree (cwd != this script's repo),
   // handoff fixtures are validated by the caller's own copy of repo.mjs, not
@@ -423,6 +429,7 @@ function checkHandoffs() {
 // Plan placement validation
 // ---------------------------------------------------------------------------
 
+/** Enforce active vs completed plan placement under dev-docs/plans/. */
 function checkPlans() {
   const failures = [];
   const plansDir = path.join(REPO_ROOT, "dev-docs", "plans");

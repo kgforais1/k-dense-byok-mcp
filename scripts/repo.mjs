@@ -34,16 +34,17 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
 
+/** Return a repo-relative path using forward slashes for stable messages. */
 function rel(p) {
-  // Normalize to forward slashes so messages are identical on every OS
-  // (matches docs-check.mjs and keeps repo-relative paths copy-pasteable).
   return path.relative(REPO_ROOT, p).split(path.sep).join("/") || ".";
 }
 
+/** Return today's date as an ISO YYYY-MM-DD string in UTC. */
 function nowIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Return true when `p` exists and is accessible. */
 function exists(p) {
   try {
     fs.accessSync(p);
@@ -53,10 +54,12 @@ function exists(p) {
   }
 }
 
+/** Read a UTF-8 text file from disk. */
 function readText(p) {
   return fs.readFileSync(p, "utf8");
 }
 
+/** Run a git command in the repository root and return trimmed stdout. */
 function runGit(args, opts = {}) {
   return execFileSync("git", args, {
     cwd: REPO_ROOT,
@@ -66,6 +69,7 @@ function runGit(args, opts = {}) {
   }).trimEnd();
 }
 
+/** Print an error to stderr and exit with the given code. */
 function fail(message, code = 1) {
   process.stderr.write(`repo: ${message}\n`);
   process.exit(code);
@@ -77,6 +81,7 @@ function fail(message, code = 1) {
 
 export const MANIFEST_PATH = path.join(REPO_ROOT, "scripts", "repo-manifest.json");
 
+/** Validate one manifest entry and record missing on-disk targets. */
 function validateManifestEntry(entry, knownCategories, seenIds, seenPaths, missing) {
   if (!entry || typeof entry !== "object") {
     throw new Error("manifest entry is not an object");
@@ -155,6 +160,7 @@ export function loadManifest(manifestPath = MANIFEST_PATH) {
 
 const ACTIVE_HANDOFFS_DIR = path.join(REPO_ROOT, "dev-docs", "handoffs", "active");
 
+/** List markdown files in dev-docs/handoffs/active/. */
 function listActiveHandoffs() {
   if (!exists(ACTIVE_HANDOFFS_DIR)) return [];
   return fs
@@ -164,9 +170,8 @@ function listActiveHandoffs() {
     .sort();
 }
 
+/** Strip optional YAML single- or double-quote wrappers from a scalar value. */
 function stripQuotes(value) {
-  // YAML scalar values may be single- or double-quoted; the schema checks below
-  // compare against unquoted forms (branch names, ISO dates, paths).
   if (value.length >= 2) {
     const first = value[0];
     const last = value[value.length - 1];
@@ -177,6 +182,7 @@ function stripQuotes(value) {
   return value;
 }
 
+/** Parse optional YAML frontmatter from a markdown document. */
 function parseFrontmatter(text) {
   const match = text.match(/^---\s*\n([\s\S]*?)\n---\s*(\n|$)/);
   if (!match) return { frontmatter: null, body: text };
@@ -190,6 +196,7 @@ function parseFrontmatter(text) {
   return { frontmatter: fields, body };
 }
 
+/** Collect branch, dirty state, recent commits, and active handoff metadata. */
 export function statusReport() {
   const out = { lines: [] };
   let branch = "(unknown)";
@@ -250,6 +257,7 @@ export function statusReport() {
 // map
 // --------------------------------------------------------------------------
 
+/** Render the manifest as a human-readable architecture map. */
 export function mapReport(manifest = loadManifest()) {
   const lines = [];
   lines.push("Repository manifest");
@@ -436,6 +444,7 @@ VERIFY_LADDERS.all = {
   ],
 };
 
+/** Run an npm script and return stdout, preserving non-zero exit codes. */
 function runNpmScript(args) {
   // Returns the captured stdout. Throws on non-zero exit (preserves code).
   // On Windows the `npm` command is a shim (`npm.cmd`) that spawnSync cannot
@@ -510,9 +519,7 @@ export function runVerify(ladderName = "fast") {
 const REQUIRED_HANDOFF_FRONTMATTER = ["branch", "plan", "status", "updated"];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// Parse a YYYY-MM-DD string strictly: return the UTC Date on success, or null
-// for malformed / impossible calendar dates (e.g. 2026-02-31), which plain
-// `new Date(...)` would silently normalize into a later day.
+/** Parse a YYYY-MM-DD string strictly; return null for impossible calendar dates. */
 function parseIsoDate(s) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (!m) return null;
@@ -531,7 +538,7 @@ function parseIsoDate(s) {
   return dt;
 }
 
-// Return the ISO date (YYYY-MM-DD) `days` days before the given ISO date.
+/** Return the ISO date `days` before the given YYYY-MM-DD string. */
 function isoDateDaysAgo(iso, days) {
   const [y, mo, d] = iso.split("-").map(Number);
   const dt = new Date(Date.UTC(y, mo - 1, d));
@@ -539,8 +546,7 @@ function isoDateDaysAgo(iso, days) {
   return dt.toISOString().slice(0, 10);
 }
 
-// Validate a handoff `updated` date string against today (calendar-string
-// comparison avoids timezone skew). Returns a failure message, or null if ok.
+/** Validate a handoff `updated` date; return a failure message or null when ok. */
 function handoffDateFailure(updated, todayIso, maxAgeDays) {
   if (!ISO_DATE_RE.test(updated)) {
     return `frontmatter.updated '${updated}' is not ISO YYYY-MM-DD`;
@@ -559,16 +565,17 @@ function handoffDateFailure(updated, todayIso, maxAgeDays) {
 
 const REQUIRED_HANDOFF_HEADINGS = ["Scope", "Verification", "Next action"];
 
+/** Return required handoff body headings that are missing from `body`. */
 function missingRequiredHeadings(body) {
   return REQUIRED_HANDOFF_HEADINGS.filter(
     (h) => !new RegExp(`^##\\s+${h}`, "m").test(body),
   );
 }
 
-// Resolve the git branch name to compare against, honoring an override (used
-// by tests to avoid depending on the checked-out branch). Returns "" when no
-// real branch is available (detached HEAD, CI without a ref), so callers skip
-// the mismatch comparison instead of flagging a false mismatch.
+/**
+ * Resolve the git branch name for handoff comparison.
+ * Returns "" when detached or unavailable so callers skip the mismatch check.
+ */
 function currentBranchName(branchOverride) {
   if (branchOverride !== undefined) return branchOverride;
   // GitHub Actions checks out a detached ref; fall back to the PR source
@@ -584,7 +591,7 @@ function currentBranchName(branchOverride) {
   }
 }
 
-// Validate a single active handoff file. Returns a list of failure messages.
+/** Validate one active handoff file and return failure messages. */
 function validateHandoffFile(file, todayIso, maxAgeDays, branchOverride) {
   const name = rel(file);
   let text;
@@ -662,8 +669,7 @@ const CHANGELOG_REQUIRED_HEADINGS = [
   /^##\s+\[Unreleased\]/m,
 ];
 
-// Read and validate server/package.json's version (the single source of truth
-// for the app). Returns { version } on success or { error } on failure.
+/** Read and validate server/package.json as the single app version source. */
 function readServerVersion(serverPkgPath) {
   if (!exists(serverPkgPath)) return { error: "server/package.json is missing" };
   try {
@@ -680,7 +686,7 @@ function readServerVersion(serverPkgPath) {
   }
 }
 
-// Confirm web/package.json carries no version field (server is the sole source).
+/** Return release-check errors when web/package.json carries a version field. */
 function webVersionIssues(webPkgPath) {
   if (!exists(webPkgPath)) return [];
   try {
@@ -696,7 +702,7 @@ function webVersionIssues(webPkgPath) {
   }
 }
 
-// Validate CHANGELOG.md structure and version-source consistency.
+/** Validate CHANGELOG.md structure against the current server version. */
 function changelogIssues(changelogPath, serverVersion) {
   if (!exists(changelogPath)) return ["CHANGELOG.md is missing at the repository root"];
   const text = readText(changelogPath);
@@ -741,6 +747,7 @@ export function checkRelease() {
 // work:* scaffolders
 // --------------------------------------------------------------------------
 
+/** Parse a `--flag value` pair from argv, returning undefined when absent. */
 function parseFlag(argv, name) {
   const prefix = `--${name}=`;
   for (let i = 0; i < argv.length; i++) {
@@ -761,6 +768,7 @@ function parseFlag(argv, name) {
   return undefined;
 }
 
+/** Throw when a scaffold target already exists so callers never overwrite. */
 function refuseOverwrite(target, kind) {
   if (exists(target)) {
     const err = new Error(
@@ -771,6 +779,7 @@ function refuseOverwrite(target, kind) {
   }
 }
 
+/** Convert arbitrary text into a safe lowercase slug for filenames. */
 function slugify(input) {
   return input
     .toLowerCase()
@@ -886,6 +895,7 @@ the changelog or a plan.
 - Bullet list of commands run, links to artifacts, or output excerpts.
 `;
 
+/** Replace `{{key}}` placeholders in a template string. */
 function renderTemplate(template, vars) {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) =>
     vars[key] !== undefined ? String(vars[key]) : `{{${key}}}`,

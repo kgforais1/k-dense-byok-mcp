@@ -107,7 +107,7 @@ Rules:
   vitest). The `web` ladder runs typecheck + vitest locally; CI also runs
   `lint` and a production `build`. The `fast` ladder validates manifest and
   hub aliases; CI's launcher job runs `./start.sh --check` instead — both are
-  quick pre-push gates but not identical. The `docs` ladder is local-only for
+  quick gates at different stages and are not identical. The `docs` ladder is local-only for
   now. When a CI-mapped check and its local counterpart disagree, file a
   maintenance log entry — the disagreement is the bug.
 - Also run `npm run status` to surface branch, recent commits, and any active

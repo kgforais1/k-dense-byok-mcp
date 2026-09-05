@@ -123,6 +123,25 @@ describe("scripts/docs-check.mjs", () => {
       );
     });
 
+    it("flags a CLAUDE.md whose H1 does not match the filename", () => {
+      writeFile(
+        "CLAUDE.md",
+        [
+          "# Wrong Title",
+          "[`AGENTS.md`](AGENTS.md)",
+          "",
+          "Do not add policy, commands, or invariants to this file. Update",
+          "`AGENTS.md` (and the scoped file, if any) instead.",
+        ].join("\n"),
+      );
+      writeFile("AGENTS.md", "# AGENTS.md\n");
+      const result = runInTmp();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "CLAUDE.md: H1 must be '# CLAUDE.md', found '# Wrong Title'",
+      );
+    });
+
     it("flags a CLAUDE.md with an unlisted policy bullet", () => {
       writeFile(
         "CLAUDE.md",

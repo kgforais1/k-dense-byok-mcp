@@ -9,6 +9,12 @@ branch: [branch-name]
 
 **Status:** Proposed
 
+> Status values: `Proposed` → `Accepted` (when implementation starts) →
+> `Completed and merged in PR #<n>`. The implementing PR sets the
+> final status and moves this file to `dev-docs/plans/completed/` in
+> its closing checklist — never after merge. See
+> `docs/development/workflow.md#archive-lifecycle`.
+
 **Goal:** [One or two sentences describing what this change achieves.]
 
 ## Why this work

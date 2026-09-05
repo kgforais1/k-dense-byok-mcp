@@ -6,6 +6,37 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
 
 ## Log Entries
 
+### 2026-09-05: Closing Checklist Belongs in the Implementing PR
+- **PR:** [#13](https://github.com/kgforais1/k-dense-byok-mcp/pull/13)
+- **Category:** Governance & Documentation
+- **Summary:**
+  - Rewrote the archive-lifecycle flow in `docs/development/workflow.md`,
+    `CONTRIBUTING.md`, the PR template, the plan template, and this
+    log's procedures section so the closing checklist (plan archive,
+    handoff removal, CHANGELOG `Unreleased` entry, maintenance log
+    entry, TODO row deletion) ships **in the implementing PR** instead
+    of as a follow-up after merge. The old text explicitly said "only
+    after the implementing PR merges" and contradicted the PR template
+    it was supposed to back.
+  - Cleaned up the prior PR #11's trailing state: archived the
+    `2026-09-03-repo-agent-harness` plan to `dev-docs/plans/completed/`,
+    deleted (not checked off) the "Add repo harness" TODO row, fixed
+    the manifest and `workflow.md` link targets so `docs:check` is
+    green on the next branch, and replaced the section body with a
+    short shipped pointer so the `## 1. Repo harness` anchor still
+    resolves for downstream links.
+  - `CHANGELOG.md` already covered the harness under `[Unreleased]`
+    in PR #11, so no new entry is needed in this PR.
+- **Evidence:**
+  - `npm run verify -- fast` — green (manifest validates, no uncommitted
+    manifest changes, hub aliases present).
+  - `npm run verify -- docs` — green (`docs:check` passes pointer
+    check, `handoff:check` clean, `release:check` clean, manifest
+    category coverage 8/8).
+- **Follow-up:** None — the new rule is the workflow going forward.
+  PR #12 (the old-shape follow-up) was closed in favour of this PR
+  so the rule and its first application land together.
+
 ### 2026-09-03: CI Hardening & Frontend Quality Pipeline
 - **PR:** [#8](https://github.com/kgforais1/k-dense-byok-mcp/pull/8)
 - **Category:** CI/CD & Testing
@@ -59,7 +90,18 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
    - Tagging `v<version>` triggers `.github/workflows/release.yml` to generate release notes and publish a GitHub release.
 2. **Implementation Plan Lifecycle:**
    - Active plans live in `dev-docs/plans/<YYYY-MM-DD>-<plan-title>.md`.
-   - Upon completion and merge of the PR, update the plan status to `Status: Completed and merged in PR #...` and move it to `dev-docs/plans/completed/`.
-3. **Changelog & Maintenance Logging:**
-   - User-facing and structural additions/changes should be recorded under `## [Unreleased]` in `CHANGELOG.md`.
-   - Internal refactoring, security triage, dependency maintenance, and CI adjustments should be logged in `dev-docs/maintenance-log.md`.
+   - The implementing PR moves the plan to `dev-docs/plans/completed/`
+     and updates its Status to `Completed and merged in PR #<this PR>`
+     as part of the PR's closing checklist — never as a follow-up after
+     merge. See `docs/development/workflow.md#archive-lifecycle`.
+3. **TODO Lifecycle:**
+   - `dev-docs/todo.md` only contains unstarted or in-progress work.
+   - When a TODO entry ships, the implementing PR **deletes** the row
+     (not check it off). A checked-off box is a bug — the entry has
+     shipped, so it no longer belongs on the roadmap.
+4. **Changelog & Maintenance Logging:**
+   - User-facing and structural additions/changes should be recorded under
+     `## [Unreleased]` in `CHANGELOG.md` in the implementing PR.
+   - Internal refactoring, security triage, dependency maintenance, and
+     CI adjustments should be logged in `dev-docs/maintenance-log.md` in
+     the implementing PR.

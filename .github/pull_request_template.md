@@ -68,24 +68,27 @@ See CONTRIBUTING.md and docs/development/workflow.md for the full lifecycle.
      boundary. One of:
      - None — single-session change, no handoff.
      - Active: `dev-docs/handoffs/active/<branch>.md` (link; must have frontmatter branch/plan/status/updated and required headings).
-     - Archived / removed: `dev-docs/handoffs/active/<branch>.md` → removed on merge; enduring decisions distilled to `dev-docs/maintenance-log.md#YYYY-MM-DD`.
+     - Archived / removed: `dev-docs/handoffs/active/<branch>.md` → removed in this PR; enduring decisions distilled to `dev-docs/maintenance-log.md#YYYY-MM-DD`.
      Gate: `npm run handoff:check` must pass. See docs/development/workflow.md. -->
 
-- Disposition: None / Active: `dev-docs/handoffs/active/...` / Archived/removed
-- Linked plan: `dev-docs/plans/YYYY-MM-DD-....md` / None
+- Disposition: None / Active: `dev-docs/handoffs/active/...` / Removed in this PR
+- Linked plan: `dev-docs/plans/YYYY-MM-DD-....md` → archived to `dev-docs/plans/completed/` in this PR / None
 - `npm run handoff:check`: pass / fail — 
 
 ---
 
 ### PR closing checklist
 
-<!-- Complete before requesting review. Check each item or mark N/A with a reason. -->
+<!-- Complete in this PR, before requesting review. Check each item or mark N/A
+     with a reason. "Done after merge" is not an option for any of these — see
+     docs/development/workflow.md#archive-lifecycle. -->
 
-- [ ] Handoff archived or removed from `dev-docs/handoffs/active/` when the work merges/is abandoned/is superseded (or N/A — no handoff)
-- [ ] Plan updated to `Completed and merged in PR #...` and moved to `dev-docs/plans/completed/` when the implementing PR merges (or N/A)
-- [ ] `CHANGELOG.md` `Unreleased` updated when shipped behavior changed (or N/A)
-- [ ] `dev-docs/maintenance-log.md` appended when security/dependency/CI/operational work applies (or N/A)
-- [ ] Enduring incident or operational decision distilled from the handoff into the maintenance log instead of retaining a second state record (or N/A)
+- [ ] Handoff archived or removed from `dev-docs/handoffs/active/` in this PR (or N/A — no handoff)
+- [ ] Plan moved to `dev-docs/plans/completed/` with Status `Completed and merged in PR #<this PR>` in this PR (or N/A — no plan)
+- [ ] `CHANGELOG.md` `## [Unreleased]` updated for shipped behavior in this PR (or N/A)
+- [ ] `dev-docs/maintenance-log.md` appended for security/dependency/CI/operational work in this PR (or N/A)
+- [ ] Matching `dev-docs/todo.md` entry **deleted** (not checked off) in this PR (or N/A)
+- [ ] `npm run verify -- docs` is green on this branch
 
 <!--
 Fork policy reminder:

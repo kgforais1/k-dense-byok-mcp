@@ -2,7 +2,7 @@
 
 This doc is the lifecycle reference for the repository harness described in
 [`../../AGENTS.md`](../../AGENTS.md) and planned in
-[`../../dev-docs/plans/2026-09-03-repo-agent-harness.md`](../../dev-docs/plans/2026-09-03-repo-agent-harness.md).
+[`../../dev-docs/plans/completed/2026-09-03-repo-agent-harness.md`](../../dev-docs/plans/completed/2026-09-03-repo-agent-harness.md).
 For the developer documentation index, category definitions, and the
 ownership/freshness table see [`README.md`](README.md). For the command-to-CI
 mapping see [`verification.md`](verification.md). For versioning and changelog
@@ -15,9 +15,14 @@ Branch (kebab-case, from main)
   └─ Plan (dev-docs/plans/YYYY-MM-DD-<slug>.md) — required before substantial work
        └─ Active handoff (dev-docs/handoffs/active/<branch>.md) — only when crossing a session/agent boundary
             └─ PR (evidence: Scope · Tests · Docs · Security · Handoff disposition)
-                 └─ Archive: plan → dev-docs/plans/completed/ · handoff → removed · changelog/maintenance-log updated
+                 └─ PR closing checklist: archive plan · remove/condense handoff · CHANGELOG · maintenance log · trim TODO
+                        └─ Merge to main (no post-merge follow-up — closing checklist is the finish line)
 ```
 
+The closing checklist is **part of the implementing PR**, not a follow-up. The
+PR is not "done" while its plan still lives in `dev-docs/plans/`, the matching
+TODO entry is still open, the changelog/maintenance-log entries are still
+missing, or `npm run verify -- docs` still fails on a pointer the PR created.
 All four records are distinct — do not merge them. The table in
 [`release-policy.md#changelogmd-versus-maintenance-logmd`](release-policy.md#changelogmd-versus-maintenance-logmd)
 is the reference.
@@ -45,8 +50,13 @@ packages, introduces a new route/tool/storage boundary, changes the harness, or
 needs phased review. Trivial single-file fixes and docs-only typos do not need
 a plan — state the rationale in the PR's Scope section instead.
 
-- **Location:** active plans live in `dev-docs/plans/YYYY-MM-DD-<slug>.md`;
-  on merge they move to `dev-docs/plans/completed/` — never before.
+- **Location:** active plans live in `dev-docs/plans/YYYY-MM-DD-<slug>.md`.
+  The implementing PR moves the plan to `dev-docs/plans/completed/` and
+  flips its Status line to `Completed and merged in PR #...` **as part of
+  the same PR's closing checklist** — never as a follow-up after merge.
+  The file path is captured by `docs:check`; leaving the plan in
+  `dev-docs/plans/` keeps the next branch's `npm run verify -- docs` red
+  and the harness considers that PR unfinished.
 - **Scaffold (refuses to overwrite):**
   `npm run work:plan -- --slug <kebab-case> [--title "..." --branch <name>]`
   (renders `dev-docs/templates/plan.md` with branch/date/slug fields).
@@ -55,8 +65,10 @@ a plan — state the rationale in the PR's Scope section instead.
   changes, Implementation sequence (phases with exit criteria), Guardrails,
   Acceptance measures.
 - **Status values:** `Proposed` (draft) → `Accepted` (reviewed, implementation
-  starts) → `Completed and merged in PR #...` (on merge, then archive). Do not
-  invent other statuses.
+  starts) → `Completed and merged in PR #...` (set in the implementing PR's
+  closing checklist, then move to `dev-docs/plans/completed/`). Do not
+  invent other statuses. A plan in `dev-docs/plans/` whose Status is
+  `Completed` is a bug — the file should already have moved.
 - **Source-of-truth order:** merged code/tests/CI win over any plan sentence.
   When the plan and the implementation disagree, the code wins — fix the doc in
   the same PR. A stale plan never silently overrides tested behavior.
@@ -198,38 +210,60 @@ exact checks.
   work → `dev-docs/maintenance-log.md` (append-only, after merge). See
   [`release-policy.md`](release-policy.md).
 - **Closing checklist** (also rendered inside the PR template) — complete
-  before requesting review when applicable:
+  in the **same PR** that ships the work, before requesting review:
 
-  - [ ] Handoff archived or removed from `dev-docs/handoffs/active/` when the
-        work merges / is abandoned / is superseded (or N/A — no handoff).
-  - [ ] Plan status updated to `Completed and merged in PR #...` and moved
-        to `dev-docs/plans/completed/` when the implementing PR merges (or N/A).
-  - [ ] `CHANGELOG.md` `Unreleased` updated when shipped behavior changed (or N/A).
-  - [ ] `dev-docs/maintenance-log.md` appended when security/dependency/CI/
-        operational work applies (or N/A — scaffold via
-        `npm run work:maintenance -- --pr <n>`).
-  - [ ] Enduring incident or operational decision distilled from the handoff
-        into the maintenance log instead of retaining a second state record (or N/A).
+  - [ ] Handoff archived or removed from `dev-docs/handoffs/active/` (or N/A
+        — no handoff). If the handoff records an enduring decision, distill
+        that fact into the maintenance log in the same PR.
+  - [ ] Plan moved to `dev-docs/plans/completed/` and its Status line
+        updated to `Completed and merged in PR #<this PR>` (or N/A — no
+        plan). The file path change must happen in this PR so the next
+        branch's `docs:check` is green.
+  - [ ] `CHANGELOG.md` `## [Unreleased]` updated when shipped behavior
+        changed (or N/A). Release prep later moves entries under
+        `[X.Y.Z] - YYYY-MM-DD`.
+  - [ ] `dev-docs/maintenance-log.md` appended when security, dependency,
+        CI, or operational work applies (or N/A — scaffold via
+        `npm run work:maintenance -- --pr <this PR>`).
+  - [ ] `dev-docs/todo.md` entry for this work **deleted** (not checked
+        off) on completion. A checked-off box is a bug — the entry has
+        shipped, so it no longer belongs on the roadmap (or N/A — no
+        matching TODO entry).
+  - [ ] `npm run verify -- docs` is green on the PR branch. The manifest
+        git-hygiene gate will reject any PR that touches
+        `scripts/repo-manifest.json` without committing the change.
 
 ## Archive lifecycle
 
-- **Plans:** `dev-docs/plans/*.md` → `dev-docs/plans/completed/` **only after
-  the implementing PR merges**. Move the file, update its Status line, and
-  link the PR. Do not archive proposed plans that never shipped.
-- **Handoffs:** `dev-docs/handoffs/active/*.md` → **removed** on merge /
-  abandonment / supersession. No `handoffs/completed/` directory — git history
-  and the maintenance log (for incidents) are the durable record. Moving a
-  closed handoff out of `active/` is the gate that lets `handoff:check` pass
-  on the next branch.
+The "archive" happens in the **implementing PR**, not after it. The
+branch is not done while any of the following still points at the
+pre-completion state.
+
+- **Plans:** `dev-docs/plans/<plan>.md` → `dev-docs/plans/completed/<plan>.md`
+  in the same PR that ships the work. Move the file, update its Status
+  line, link this PR. Do not archive proposed plans that never shipped —
+  leave them in `dev-docs/plans/` until you either implement them or
+  explicitly remove them.
+- **Handoffs:** `dev-docs/handoffs/active/<branch>.md` → **removed** in
+  the same PR. No `handoffs/completed/` directory — git history and the
+  maintenance log (for incidents) are the durable record.
+- **TODO entries:** `dev-docs/todo.md` rows for the shipped work are
+  **deleted**, not ticked, in the same PR. The roadmap only contains
+  unstarted / in-progress work.
+- **Changelog:** `CHANGELOG.md` `## [Unreleased]` is updated in the
+  implementing PR; release prep later moves entries under
+  `[X.Y.Z] - YYYY-MM-DD` (see [`release-policy.md`](release-policy.md)).
 - **Maintenance log:** append-only at `dev-docs/maintenance-log.md`; scaffold
-  via `npm run work:maintenance`. The PR that archives a plan/handoff also
-  appends the maintenance entry when the category applies — the two live in
-  the same PR so the archive and the distilled decision do not drift.
-- **Artifacts to keep linked:** the plan links the PR, the PR links the plan
-  and (when applicable) the handoff, and the maintenance log entry links the
-  PR/commit. No mutable coordination file needs to be retained for an agent
-  to reconstruct what happened — `git log`, the archived plan, and the
-  maintenance log suffice.
+  via `npm run work:maintenance`. The implementing PR appends the entry
+  when the category applies — the entry ships with the code in the same
+  PR so the archive, the distilled decision, and the running code do not
+  drift.
+- **Artifacts to keep linked:** the archived plan links the PR, the PR
+  links the archived plan and (when applicable) the removed handoff, and
+  the maintenance log entry links the PR. No mutable coordination file
+  needs to be retained for an agent to reconstruct what happened — `git
+  log`, the archived plan, the closed PR, and the maintenance log
+  suffice.
 
 ## Adding a new document or template
 

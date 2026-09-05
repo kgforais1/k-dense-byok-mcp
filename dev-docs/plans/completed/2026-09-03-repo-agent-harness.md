@@ -1,6 +1,6 @@
 # Repository Agent Harness Implementation Plan
 
-**Status:** Proposed — implementation has not started.
+**Status:** Completed and merged in PR [#11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11) (merge commit `de17efe`).
 
 **Goal:** Make this fork straightforward and safe for a fresh human or coding
 agent to navigate, change, verify, hand off, and maintain without turning

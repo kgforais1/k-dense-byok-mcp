@@ -144,11 +144,11 @@ than rewrites — it never edits a handoff or opens an automated fix.
 
 ### Removal rule
 
-Remove an active handoff when **any** of these is true:
-
-- The work merges (PR merged to `main`).
-- The work is abandoned (branch deleted or superseded).
-- The work is superseded by a newer handoff or plan.
+Remove an active handoff in the **implementing PR's closing checklist**
+(before merge, finalized after review approval) — not as a follow-up
+after merge. Also remove when the work is abandoned (branch deleted or
+superseded) or superseded by a newer handoff or plan. If review reopens
+the work, recreate or restore the handoff and re-close before merge.
 
 If the handoff records an incident or enduring operational decision, **distill
 that fact into [`../../dev-docs/maintenance-log.md`](../../dev-docs/maintenance-log.md)**
@@ -207,10 +207,13 @@ exact checks.
   the **same PR**. Link rather than duplicate rules from any `AGENTS.md`.
 - **Release notes:** user-facing behavior → `CHANGELOG.md` `Unreleased`
   (Keep a Changelog categories); internal triage/dependency/CI/operational
-  work → `dev-docs/maintenance-log.md` (append-only, after merge). See
-  [`release-policy.md`](release-policy.md).
+  work → `dev-docs/maintenance-log.md` (append-only, in the implementing
+  PR). See [`release-policy.md`](release-policy.md).
 - **Closing checklist** (also rendered inside the PR template) — complete
-  in the **same PR** that ships the work, before requesting review:
+  in the **same PR** that ships the work, before merge. Finalize after
+  review approval, while the branch owner still owns the work (not as a
+  follow-up after merge). If review reopens the work, restore the handoff
+  / plan to their active locations and re-close before merge:
 
   - [ ] Handoff archived or removed from `dev-docs/handoffs/active/` (or N/A
         — no handoff). If the handoff records an enduring decision, distill
@@ -240,12 +243,17 @@ branch is not done while any of the following still points at the
 pre-completion state.
 
 - **Plans:** `dev-docs/plans/<plan>.md` → `dev-docs/plans/completed/<plan>.md`
-  in the same PR that ships the work. Move the file, update its Status
-  line, link this PR. Do not archive proposed plans that never shipped —
+  in the same PR that ships the work (finalized after review approval,
+  before merge). Move the file, update its Status line to
+  `Completed and merged in PR #<this PR>` (the PR number is prospective —
+  merge finalizes it). If review reopens the work, move the plan back and
+  re-close before merge. Do not archive proposed plans that never shipped —
   leave them in `dev-docs/plans/` until you either implement them or
   explicitly remove them.
 - **Handoffs:** `dev-docs/handoffs/active/<branch>.md` → **removed** in
-  the same PR. No `handoffs/completed/` directory — git history and the
+  the same PR (finalized after review approval, before merge). If review
+  reopens the work, restore the handoff and re-close before merge.
+  No `handoffs/completed/` directory — git history and the
   maintenance log (for incidents) are the durable record.
 - **TODO entries:** `dev-docs/todo.md` rows for the shipped work are
   **deleted**, not ticked, in the same PR. The roadmap only contains

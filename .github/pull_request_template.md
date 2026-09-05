@@ -79,8 +79,10 @@ See CONTRIBUTING.md and docs/development/workflow.md for the full lifecycle.
 
 ### PR closing checklist
 
-<!-- Complete in this PR, before requesting review. Check each item or mark N/A
-     with a reason. "Done after merge" is not an option for any of these — see
+<!-- Complete in this PR, before merge — finalize after review approval, while
+     the branch owner still owns the work. Check each item or mark N/A
+     with a reason. "Done after merge" is not an option for any of these —
+     if review reopens the work, restore and re-close before merge. See
      docs/development/workflow.md#archive-lifecycle. -->
 
 - [ ] Handoff archived or removed from `dev-docs/handoffs/active/` in this PR (or N/A — no handoff)

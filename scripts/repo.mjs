@@ -801,8 +801,10 @@ branch: <branch>
 # <title>
 
 > **Status:** proposed. Update to \`accepted\` once the plan is reviewed and the
-> implementation starts. Move this file under \`dev-docs/plans/completed/\` only
-> after the implementing PR merges.
+> implementation starts. The implementing PR moves this file to
+> \`dev-docs/plans/completed/\` and sets the final status in its closing
+> checklist — before merge, finalized after review approval. See
+> \`docs/development/workflow.md#archive-lifecycle\`.
 
 ## Goal
 
@@ -846,8 +848,10 @@ updated: {{date}}
 
 # Active handoff: <title>
 
-> Branch-scoped continuation record. Remove this file when the work merges,
-> is abandoned, or is superseded. Do not use it as a global state file.
+> Branch-scoped continuation record. Remove this file in the implementing PR's
+> closing checklist (before merge, finalized after review approval); also remove
+> when abandoned or superseded. If review reopens the work, recreate it and
+> re-close before merge. Do not use it as a global state file.
 
 ## Scope
 

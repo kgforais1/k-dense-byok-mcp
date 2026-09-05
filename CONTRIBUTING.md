@@ -150,7 +150,10 @@ to that role. Reviews are assigned manually per PR.
   See the schema and removal rule in
   [`docs/development/workflow.md`](docs/development/workflow.md).
 - All of the following ship **in the implementing PR's closing checklist**,
-  before review — not as a follow-up after merge:
+  before merge — finalized after review approval, while the branch owner
+  still owns the work (not as a follow-up after merge). If review reopens
+  the work, restore the handoff / plan to their active locations and
+  re-close before merge:
   - Remove the handoff from `dev-docs/handoffs/active/`. If it records an
     enduring operational decision or incident, distill that fact into
     [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md) — do not

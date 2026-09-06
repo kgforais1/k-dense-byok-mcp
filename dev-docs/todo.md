@@ -2,20 +2,14 @@
 
 ## Next Up
 
-- [ ] **CI and hooks** → [1. CI and hooks](#1-ci-and-hooks)
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [2. Code scanning, security alerts, and Dependabot](#2-code-scanning-security-alerts-and-dependabot)
 - [ ] **Start MCP server work** → [3. Start MCP server work](#3-start-mcp-server-work)
 
 ---
 
-## 1. CI and hooks
+## 1. CI and hooks (optional future enhancements)
 
-Set up continuous integration and git hooks for the fork.
-
-Implemented:
-- GitHub Actions CI hardened in PR #8 (`.github/workflows/tests.yml`): `permissions: contents: read`, `cancel-in-progress` on PRs, 15m timeouts, deterministic `npm ci`, full frontend gates (`typecheck`, `lint`, `build`, `test`), failure artifact capture, and PDF viewer initialization unit tests.
-
-Remaining Ideas:
+CI and hooks are set up (hardened in PR #8; `.githooks/pre-push` fork guard; `tests` / `release` / `harness-update-check` workflows; active `dependabot.yml`). What remains is enhancement-track only — pick up if/when it pays for itself, not as blocking setup work:
 - pre-commit / pre-push hook coverage beyond the fork push guard (`.githooks/`)
 - status checks required before merge
 - test coverage
@@ -49,7 +43,7 @@ Expose K-Dense/Kady itself as an MCP server so an external coding agent can dele
 
 Ideas:
 
-- Author an implementation plan (`npm run work:plan -- --slug mcp-server`) before substantial work, per `CONTRIBUTING.md`.
+- Master plan (Proposed): [2026-09-06 MCP server](plans/2026-09-06-mcp-server.md) with phase plans — MCP first, CLI deferred, per the notes' recommendations 7–8.
 - Decide transport and scope: stdio vs HTTP, project scoping (`X-Project-Id`), auth for a local server.
 - Adapt the existing project/session/run/file/sandbox HTTP APIs as the tool backend rather than building from scratch.
 - Start with a minimal tool subset (e.g. list projects, research prompt, get result) before the full §10 surface.

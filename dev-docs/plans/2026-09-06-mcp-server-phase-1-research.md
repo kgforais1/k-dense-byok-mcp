@@ -73,10 +73,10 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
 
 Record each master-plan open question as **answered** or **deferred** (with reason) before Phase 2 starts. Include inherited decisions from the master plan (e.g. CLI default: after hardening).
 
-1. Transport (stdio vs StreamableHTTP): **Answered:** SSEServerTransport (HTTP over standard SSE) works cleanly.
+1. Transport (stdio vs StreamableHTTP): **Answered:** StreamableHTTPServerTransport (SSEServerTransport is deprecated in 1.29.0). Note that mounting this on Fastify requires `reply.hijack()` to pass raw Node.js ServerResponses, which bypasses Fastify's native hooks (CORS, logging).
 2. Process model (in-process vs sidecar): **Answered:** In-process. By mounting the MCP routes directly on the existing Fastify server, we reuse the `X-Project-Id` scope and avoid duplicating state or budgets.
-3. SSE run → MCP mapping (progress vs poll): **Answered:** Poll. Since agent runs are long, `start_research_run` will return a run ID and the client can use `poll_run` to check status. This prevents MCP tool timeout.
+3. SSE run → MCP mapping (progress vs poll): **Answered:** Poll. MCP tools are single-shot JSON-RPC and cannot stream results. We will use a durable-job pattern (`start_research_run` + `poll_run`), which matches existing infrastructure (Modal tools, `runBroker`). We must guard against concurrent runs on the same session.
 4. Minimal-viable tool subset: **Answered:** `list_projects`, `get_session_history`, `start_research_run`, `poll_run`.
 5. Project-scoping/auth UX (local-first; remote out of scope): **Answered:** Pass `X-Project-Id` in the MCP client connection headers, reusing existing scoping.
 6. CLI ordering (before vs after hardening): _inherited — after, reusing the adapter; revisit only if Phase 1 finds MCP blocked_
-7. Interview handling for MCP-driven sessions (disable / elicitation / tool result): **Answered:** Disable. `interview` is an interactive chat form not supported by standard MCP. MCP-driven sessions must skip it.
+7. Interview handling for MCP-driven sessions (disable / elicitation / tool result): **Answered:** Disable. While MCP SDK 1.29.0 does support elicitation, bridging our Pi-specific React UI and `runBroker` to MCP elicitation is out of scope. Risk: MCP-driven sessions will guess instead of asking clarifying questions.

@@ -74,6 +74,7 @@ place reviewers go to learn what a doc covers.
 | [`architecture-map.md`](architecture-map.md) | Cross-cutting | Contributors orienting in the codebase | New package, new entry point, new data flow | Manifest and code; both win on disagreement. |
 | [`verification.md`](verification.md) | Cross-cutting | Contributors picking a command | Command, runner, or matrix change | `package.json` files and `.github/workflows/tests.yml`. |
 | [`workflow.md`](workflow.md) | Cross-cutting | Branch authors and reviewers | Branching, plan/handoff template, PR template change | `dev-docs/`, root templates. |
+| `dev-docs/plans/*.md` (active plans) | Planning | Branch authors and reviewers | Phase verdicts, scope change, implementation deviations — update in the implementing PR; archive to `completed/` on merge | Merged code/tests/CI win on disagreement. |
 | [`release-policy.md`](release-policy.md) | Release | Release captains and contributors touching public contracts | SemVer decision, changelog rule, release-readiness change | `server/package.json`, `CHANGELOG.md`, `.github/workflows/release.yml`. |
 | `../architecture.md` | Product (architecture) | Users and integrators | Runtime architecture changes (new tool family, new store, new provider) | Code; this doc is product-facing, not contributor-facing. |
 | `../file-previews.md` | Product (file previews) | Users | New viewer added to the registry | `web/src/lib/viewers/registry.ts`. |

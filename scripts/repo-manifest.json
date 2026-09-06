@@ -1,5 +1,5 @@
 {
-  "$schema": "Manifest defined by the repository agent harness (Phase 2, see dev-docs/plans/2026-09-03-repo-agent-harness.md).",
+  "$schema": "Manifest defined by the repository agent harness (Phase 2; plan archived to dev-docs/plans/completed/2026-09-03-repo-agent-harness.md in PR #13).",
   "version": 1,
   "description": "Curated entry points and policy locations used by scripts/repo.mjs. The author who adds, removes, or relocates a listed target updates this file in the same PR.",
   "categories": {
@@ -226,7 +226,7 @@
     {
       "id": "harness-plan",
       "category": "developer-documentation",
-      "path": "dev-docs/plans/2026-09-03-repo-agent-harness.md",
+      "path": "dev-docs/plans/completed/2026-09-03-repo-agent-harness.md",
       "name": "Repository agent harness plan",
       "description": "Implementation plan for the repository agent harness. Defines the layered interface, source-of-truth order, command hub, handoff schema, and rollout phases."
     },

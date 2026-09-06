@@ -1,6 +1,14 @@
 # Repository Agent Harness Implementation Plan
 
-**Status:** Proposed — implementation has not started.
+**Status:** Completed and merged in PR [#11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11) (merge commit `de17efe`).
+
+> **Note (PR #13):** this archived plan predates the "closing checklist ships
+> in the implementing PR" rule. Its body still describes plan archival and
+> maintenance logging as post-merge steps. The current rule is
+> `docs/development/workflow.md#archive-lifecycle` — closing checklist work
+> ships in the implementing PR before merge, while the owner still owns the
+> branch. This note supersedes the timing sentences below; the body is
+> preserved as the historical record.
 
 **Goal:** Make this fork straightforward and safe for a fresh human or coding
 agent to navigate, change, verify, hand off, and maintain without turning

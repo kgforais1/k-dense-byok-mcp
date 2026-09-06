@@ -67,14 +67,18 @@ A plan is required before **substantial implementation** — any change that
 spans packages, introduces a new route/tool/storage boundary, changes the
 harness, or needs phased review.
 
-- **Location:** `dev-docs/plans/YYYY-MM-DD-<slug>.md` (active). Move to
-  `dev-docs/plans/completed/` only after the implementing PR merges.
+- **Location:** `dev-docs/plans/YYYY-MM-DD-<slug>.md` (active). The
+  implementing PR moves the plan to `dev-docs/plans/completed/` and
+  updates its Status to `Completed and merged in PR #<this PR>` — that
+  move is part of the PR's closing checklist, not a follow-up after
+  merge.
 - **Scaffold (refuses to overwrite):** `npm run work:plan -- --slug <kebab-case> --title "..."`.
 - **Template:** `dev-docs/templates/plan.md` — must contain Goal, Constraints,
   Interfaces/data flow, Phases with exit criteria, Acceptance checks, and
   Decisions.
-- **Status:** `Proposed` → `Accepted` (reviewed) → update to
-  `Completed and merged in PR #...` on merge, then archive.
+- **Status:** `Proposed` → `Accepted` (reviewed) → `Completed and merged
+  in PR #...` (set in the implementing PR's closing checklist; the file
+  moves to `dev-docs/plans/completed/` in that same PR).
 - Plans are intent, not a task board. Code, tests, and CI are the source of
   truth when a plan and the implementation disagree — fix the doc in the same
   PR. See [`docs/development/workflow.md`](docs/development/workflow.md) for
@@ -138,19 +142,33 @@ gh pr create --repo kgforais1/k-dense-byok-mcp --title "..." --body "..."
 owners, so a `CODEOWNERS` file would auto-request reviewers who have not agreed
 to that role. Reviews are assigned manually per PR.
 
-## Handoff & archive duty
+## Handoff & archive duty (in the implementing PR)
 
 - If work will continue after the current session or another agent is asked to
   take over, create a branch-scoped handoff in `dev-docs/handoffs/active/`
   (`npm run work:handoff -- --plan dev-docs/plans/...` — refuses to overwrite).
   See the schema and removal rule in
   [`docs/development/workflow.md`](docs/development/workflow.md).
-- Remove the handoff when the work merges, is abandoned, or is superseded. If
-  it records an enduring operational decision or incident, distill that fact
-  into [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md) — do not
-  keep a second state record.
-- On merge, archive the plan to `dev-docs/plans/completed/` and update its
-  status line to `Completed and merged in PR #...`.
+- All of the following ship **in the implementing PR's closing checklist**,
+  before merge — finalized after review approval, while the branch owner
+  still owns the work (not as a follow-up after merge). If review reopens
+  the work, restore the handoff / plan to their active locations and
+  re-close before merge:
+  - Remove the handoff from `dev-docs/handoffs/active/`. If it records an
+    enduring operational decision or incident, distill that fact into
+    [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md) — do not
+    keep a second state record.
+  - Move the matching plan from `dev-docs/plans/` to
+    `dev-docs/plans/completed/` and update its Status line to
+    `Completed and merged in PR #<this PR>`.
+  - Delete (not check off) the matching entry in
+    [`dev-docs/todo.md`](dev-docs/todo.md). A checked-off box is a bug.
+  - Update [`CHANGELOG.md`](CHANGELOG.md) `## [Unreleased]` for any
+    user-facing change.
+  - Append [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md) for
+    security, dependency, CI, or operational work.
+- `npm run verify -- docs` is the gate: a red docs ladder means the
+  closing checklist is incomplete.
 
 ## Documentation duty
 

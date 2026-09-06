@@ -131,7 +131,7 @@ app locally and may not update automatically.
 
 ## Attribution
 
-Security-relevant maintenance is recorded after merge in
+Security-relevant maintenance is recorded in the implementing PR in
 [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md) (internal
 operational record) and, when users are affected, in [`CHANGELOG.md`](CHANGELOG.md)
 under `Security`. The advisory itself remains the canonical disclosure record.

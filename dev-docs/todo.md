@@ -2,7 +2,6 @@
 
 ## Next Up
 
-- [ ] **Add repo harness** — scripts, agent guidance, policies, workflows, etc. → [1. Repo harness](#1-repo-harness) · [proposed plan](plans/2026-09-03-repo-agent-harness.md)
 - [ ] **CI and hooks** → [2. CI and hooks](#2-ci-and-hooks)
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [3. Code scanning, security alerts, and Dependabot](#3-code-scanning-security-alerts-and-dependabot)
 
@@ -10,17 +9,10 @@
 
 ## 1. Repo harness
 
-Add the repo-level harness: supporting scripts, agent guidance files, policies, workflows, and related scaffolding so the repository is self-describing for both humans and agents.
-
-Ideas:
-
-- scripts (setup, checks, common tasks)
-- agent guidance (AGENTS.md sections, contributor docs)
-- policies (contribution rules, security posture)
-- workflows (GitHub Actions beyond CI)
-- Semantic Versioning (SemVer) release policy and single source-of-truth guidelines (`server/package.json`)
-- Implementation plan lifecycle procedures (authoring in `dev-docs/plans/`, archiving to `dev-docs/plans/completed/` post-merge)
-- Changelog (`CHANGELOG.md`) and maintenance log (`dev-docs/maintenance-log.md`) maintenance procedures
+> **Shipped** in [PR #11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11)
+> (plan archived at
+> `dev-docs/plans/completed/2026-09-03-repo-agent-harness.md`). Section
+> kept as a stable anchor for the rest of the roadmap.
 
 ## 2. CI and hooks
 

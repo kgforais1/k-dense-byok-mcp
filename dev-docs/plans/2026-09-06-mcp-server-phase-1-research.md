@@ -40,7 +40,7 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 - [ ] Map the existing MCP-related code — the client bridge (`server/src/agent/mcp.ts`) plus the server-side config API (`server/src/api/mcp.ts`, Fastify settings endpoints for MCP client configs) — and note what transports/patterns already exist in-repo.
 - [ ] Inventory blocking/headless-hostile tools — notably `interview` (blocks a run on a chat-UI answer; withheld from subagent child processes for this reason) — and decide for MCP-driven sessions: disable, surface as MCP elicitation, or map to a tool result.
-- [ ] Confirm server-side exports available at the declared `@modelcontextprotocol/sdk` range against the lockfile-resolved version `1.29.0` (`McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version.
+- [ ] Confirm server-side exports available at the declared `@modelcontextprotocol/sdk` range against the lockfile-resolved version `1.29.0` (`Server`, stdio + StreamableHTTP transports) and record the exact resolved version.
 - [ ] List the HTTP endpoints backing each candidate §10 tool (projects, sessions/run SSE, files, notebook).
 
 **Exit criteria:** inventory written down; no open "what exists?" questions remain.

@@ -46,7 +46,7 @@ server/test/mcp-server/     NEW — tool-shape, scoping, contract tests
 ## Guardrails
 
 - Tools never return secrets; local trust boundary unchanged (`docs/limitations.md`).
-- No SDK version drift beyond the harness pin without a deliberate upgrade (typecheck + tests).
+- No casual SDK upgrades — deliberate, test-gated upgrades only (typecheck + tests).
 - Cross-platform paths; no new network listeners beyond what Phase 1 decided.
 
 ## Acceptance measures

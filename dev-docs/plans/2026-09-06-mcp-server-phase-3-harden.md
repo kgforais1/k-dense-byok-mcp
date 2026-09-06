@@ -37,7 +37,7 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 
 ## Implementation sequence
 
-- [ ] Write `docs/mcp-server.md` and validate with a fresh-client walkthrough.
+- [ ] Write `docs/mcp-server.md` and validate with a fresh-client walkthrough. Register the new doc per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
 - [ ] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts.
 - [ ] Add or explicitly defer remaining §10 tools.
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
@@ -60,4 +60,4 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 
 1. Packaging: npx distribution vs "point your client at localhost:8000" docs?
 2. Which §10 tools make the cut vs defer?
-3. Does anything in Phase 2 force an SDK upgrade (deliberate-act path)?
+3. Does anything in Phase 2 force an SDK upgrade (deliberate, test-gated path)?

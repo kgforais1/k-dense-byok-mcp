@@ -21,9 +21,9 @@ CI and hooks are set up (hardened in PR #8; `.githooks/pre-push` fork guard; `te
 
 ## 2. Code scanning, security alerts, and Dependabot
 
-Triage and resolve the security findings GitHub reports on the fork — currently 41 open Dependabot alerts (11 high, 25 moderate, 5 low as of 2026-09-06; down from ~140 on 2026-09-02) plus 207 open CodeQL code-scanning alerts (196 error, 11 warning — dominated by 195× `js/path-injection`). The branch ruleset (`Rules1`, active on `main`) gates merges on CodeQL `high_or_higher` / errors, so error-level findings can block PRs.
+Triage and resolve the security findings GitHub reports on the fork — currently 41 open Dependabot alerts (11 high, 25 moderate, 5 low as of 2026-09-06; down from ~140 in the 2026-09-02 snapshot — see git history for this file) plus 207 open CodeQL code-scanning alerts (196 error, 11 warning — dominated by 195× `js/path-injection`). The branch ruleset (`Rules1`, active on `main`) gates merges on CodeQL `high_or_higher` / errors, so error-level findings can block PRs.
 
-Triage snapshot (2026-09-06):
+Triage snapshot (2026-09-06 — refresh from the GitHub security tabs when working this item):
 
 - Dependabot highs to prioritize: `pdfjs-dist` (arbitrary JS via malicious PDF — directly relevant to the PDF preview/annotation surface), `postcss` path-traversal/file-read (web build chain), `sharp`/libvips CVEs, `lodash-es` template injection, `adm-zip` 4GB allocation (notebook export zips via adm-zip), `find-my-way` HTTP2 DDoS (Fastify dep), `flatted` prototype pollution. The bulk of the count is `mermaid` (9×) and `postcss` (4×) in `web/`.
 - CodeQL: 195 of 207 are `js/path-injection`, likely concentrated on the sandbox file-serving routes, which legitimately resolve user-supplied paths — triage true vs false positives before bulk action. Remaining: 7× `js/insecure-randomness`, 2× polynomial ReDoS, 1× resource-exhaustion, 1× incomplete-sanitization, 1× reflected-XSS.
@@ -39,7 +39,7 @@ Ideas:
 
 ## 3. Start MCP server work
 
-Expose K-Dense/Kady itself as an MCP server so an external coding agent can delegate research to it. Today Kady is only an MCP *client* (consumes external tools); the inverse — another agent driving Kady over MCP — is not a documented feature. Background, candidate tool surface (`kdense_research`, `kdense_delegate_specialist`, …), and the CLI-vs-MCP rationale are in [kady-architecture-and-integration-notes.md](kady-architecture-and-integration-notes.md) §§ 9–11.
+Expose K-Dense/Kady itself as an MCP server so an external coding agent can delegate research to it. Today Kady is only an MCP *client* (consumes external tools); the inverse — another agent driving Kady over MCP — is not a documented feature. Background, candidate tool surface (`kdense_research`, `kdense_delegate_specialist`, …), and the CLI-vs-MCP rationale are in [kady-architecture-and-integration-notes.md](kady-architecture-and-integration-notes.md) §§ 9–11 and §13 (recommendations 7–8).
 
 Ideas:
 

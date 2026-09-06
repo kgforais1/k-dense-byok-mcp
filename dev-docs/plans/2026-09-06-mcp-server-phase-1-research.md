@@ -38,7 +38,7 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 ### Phase 1a — Inventory (read-only)
 
-- [ ] Map the existing client-side MCP code (`server/src/agent/mcp.ts`, `server/src/api/mcp.ts`) — what transports/patterns already exist in-repo.
+- [ ] Map the existing MCP-related code — the client bridge (`server/src/agent/mcp.ts`) plus the server-side config API (`server/src/api/mcp.ts`, Fastify settings endpoints for MCP client configs) — and note what transports/patterns already exist in-repo.
 - [ ] Confirm server-side exports available at the pinned `@modelcontextprotocol/sdk` version (`McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version.
 - [ ] List the HTTP endpoints backing each candidate §10 tool (projects, sessions/run SSE, files, notebook).
 

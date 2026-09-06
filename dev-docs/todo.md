@@ -9,7 +9,7 @@
 
 ## 1. CI and hooks (optional future enhancements)
 
-CI and hooks are set up (hardened in PR #8; `.githooks/pre-push` fork guard; `tests` / `release` / `harness-update-check` workflows; active `dependabot.yml`). What remains is enhancement-track only — pick up if/when it pays for itself, not as blocking setup work:
+Baseline in place (PR #8, `.githooks/pre-push`, `tests`/`release`/`harness-update-check` workflows, active `dependabot.yml`). What remains is enhancement-track only — pick up if/when it pays for itself, not as blocking setup work:
 - pre-commit / pre-push hook coverage beyond the fork push guard (`.githooks/`)
 - status checks required before merge
 - test coverage
@@ -25,8 +25,8 @@ Triage and resolve the security findings GitHub reports on the fork — currentl
 
 Triage snapshot (2026-09-06 — refresh from the GitHub security tabs when working this item):
 
-- Dependabot highs to prioritize: `pdfjs-dist` (arbitrary JS via malicious PDF — directly relevant to the PDF preview/annotation surface), `postcss` path-traversal/file-read (web build chain), `sharp`/libvips CVEs, `lodash-es` template injection, `adm-zip` 4GB allocation (notebook export zips via adm-zip), `find-my-way` HTTP2 DDoS (Fastify dep), `flatted` prototype pollution. The bulk of the count is `mermaid` (9×) and `postcss` (4×) in `web/`.
-- CodeQL: 195 of 207 are `js/path-injection`, likely concentrated on the sandbox file-serving routes, which legitimately resolve user-supplied paths — triage true vs false positives before bulk action. Remaining: 7× `js/insecure-randomness`, 2× polynomial ReDoS, 1× resource-exhaustion, 1× incomplete-sanitization, 1× reflected-XSS.
+- Dependabot highs to prioritize: `pdfjs-dist` (arbitrary JS via malicious PDF — directly relevant to the PDF preview/annotation surface), `postcss` path-traversal/file-read (web build chain), `sharp`/libvips CVEs, `lodash-es` template injection, `adm-zip` 4GB allocation (notebook export zips via adm-zip), `find-my-way` HTTP2 DDoS (Fastify dep), `flatted` prototype pollution, `ip-address` leading-zero octet decoding (server + web; SSRF/trust-boundary angle given backend outbound fetches), `browserslist` stats crash. The bulk of the count is `mermaid` (9×) and `postcss` (4×) in `web/`.
+- CodeQL: 195 of 207 are `js/path-injection`, spread across server-side filesystem path handling — largest single file `server/src/api/sandbox.ts` (49); also annotation sidecars, skills install/sync, agent files, Modal store, and project/ledger paths — triage true vs false positives before bulk action (the sandbox API legitimately resolves user-supplied paths). Remaining: 7× `js/insecure-randomness`, 2× polynomial ReDoS, 1× resource-exhaustion, 1× incomplete-sanitization, 1× reflected-XSS.
 
 Ideas:
 

@@ -44,6 +44,8 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
 
+Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
+
 ## Guardrails
 
 - Same as Phase 2 (no secrets over tools, local-first, pin discipline, cross-platform).

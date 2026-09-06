@@ -31,17 +31,20 @@ A minimal live loop validates the adapter approach before committing to the full
 
 ```text
 server/src/mcp-server/      NEW — adapter (exact split TBD in Phase 1)
-server/test/mcp-server/     NEW — tool-shape, scoping, contract tests
+server/test/mcp-server-*.test.ts   NEW — tool-shape, scoping, contract tests
+  (flat files, per the existing `server/test/` convention)
 ```
 
 ## Implementation sequence
 
 - [ ] Scaffold the adapter per Phase 1 transport/process verdicts.
-- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, error mapping).
+- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, bind address, error mapping).
 - [ ] End-to-end check from a real external MCP client (OpenCode or Claude Code) against a scratch project.
 - [ ] Record deviations from this stub as Decisions.
 
 **Exit criteria:** external client completes one research task via MCP tools only; tests green; deviations recorded.
+
+Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
 
 ## Guardrails
 

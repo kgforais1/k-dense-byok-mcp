@@ -39,6 +39,7 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 ### Phase 1a — Inventory (read-only)
 
 - [ ] Map the existing MCP-related code — the client bridge (`server/src/agent/mcp.ts`) plus the server-side config API (`server/src/api/mcp.ts`, Fastify settings endpoints for MCP client configs) — and note what transports/patterns already exist in-repo.
+- [ ] Inventory blocking/headless-hostile tools — notably `interview` (blocks a run on a chat-UI answer; withheld from subagent child processes for this reason) — and decide for MCP-driven sessions: disable, surface as MCP elicitation, or map to a tool result.
 - [ ] Confirm server-side exports available at the pinned `@modelcontextprotocol/sdk` version (`McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version.
 - [ ] List the HTTP endpoints backing each candidate §10 tool (projects, sessions/run SSE, files, notebook).
 
@@ -51,6 +52,8 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 - [ ] Record verdicts for master-plan questions 1–5 (answered or explicitly deferred with a reason).
 
 **Exit criteria:** decision record complete; Phase 2 plan updated to match; spike code discarded or clearly quarantined.
+
+Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
 
 ## Guardrails
 

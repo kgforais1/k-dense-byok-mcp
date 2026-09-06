@@ -45,6 +45,8 @@ All paths tentative pending Phase 1 findings.
 
 ## Implementation sequence
 
+Detail lives in the phase plans, not here — this master stays at the high level. If any phase grows too large for its file, split its detail into further per-phase plan files and keep this master as the index.
+
 - [ ] Phase 1 — Research spike and decisions → [phase plan](2026-09-06-mcp-server-phase-1-research.md)
 - [ ] Phase 2 — Minimal MCP server → [phase plan](2026-09-06-mcp-server-phase-2-server.md)
 - [ ] Phase 3 — Harden, document, package → [phase plan](2026-09-06-mcp-server-phase-3-harden.md)

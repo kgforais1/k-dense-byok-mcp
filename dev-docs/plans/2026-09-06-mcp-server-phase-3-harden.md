@@ -13,7 +13,7 @@ branch: chore/todo-refresh-mcp-roadmap
 > `Completed and merged in PR #<n>`. The implementing PR sets the
 > final status and moves this file to `dev-docs/plans/completed/` in
 > its closing checklist — never after merge. See
-> `docs/development/workflow.md#archive-lifecycle`.
+> `../../docs/development/workflow.md#archive-lifecycle`.
 
 **Goal:** Turn the Phase 2 minimal server into something another human can install and use: client setup docs, packaging story, remaining §10 tools (or explicit deferrals), and a recorded entry point for the deferred CLI.
 

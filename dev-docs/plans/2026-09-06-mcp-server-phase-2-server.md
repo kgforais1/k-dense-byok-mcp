@@ -38,7 +38,7 @@ server/test/mcp-server-*.test.ts   NEW — tool-shape, scoping, contract tests
 ## Implementation sequence
 
 - [ ] Scaffold the adapter per Phase 1 transport/process verdicts.
-- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, bind address, error mapping).
+- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, transport-specific bind assertions — StreamableHTTP must bind `127.0.0.1`; stdio must expose no network listener — and error mapping).
 - [ ] End-to-end check from a real external MCP client (OpenCode or Claude Code) against a scratch project.
 - [ ] Record deviations from this stub as Decisions.
 

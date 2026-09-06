@@ -19,7 +19,7 @@ branch: chore/todo-refresh-mcp-roadmap
 
 ## Why this work
 
-Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE → MCP), and which tools are minimal-viable. Guessing any of these risks building the wrong adapter. A short spike against the real backend and the pinned SDK resolves them cheaply.
+Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE → MCP), and which tools are minimal-viable. Guessing any of these risks building the wrong adapter. A short spike against the real backend and the declared SDK range (`@modelcontextprotocol/sdk` `^1.29.0`) resolves them cheaply — validate server-side exports against the lockfile-resolved version `1.29.0`.
 
 ## Design decisions
 
@@ -40,7 +40,7 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 - [ ] Map the existing MCP-related code — the client bridge (`server/src/agent/mcp.ts`) plus the server-side config API (`server/src/api/mcp.ts`, Fastify settings endpoints for MCP client configs) — and note what transports/patterns already exist in-repo.
 - [ ] Inventory blocking/headless-hostile tools — notably `interview` (blocks a run on a chat-UI answer; withheld from subagent child processes for this reason) — and decide for MCP-driven sessions: disable, surface as MCP elicitation, or map to a tool result.
-- [ ] Confirm server-side exports available at the pinned `@modelcontextprotocol/sdk` version (`McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version.
+- [ ] Confirm server-side exports available at the declared `@modelcontextprotocol/sdk` range against the lockfile-resolved version `1.29.0` (`McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version.
 - [ ] List the HTTP endpoints backing each candidate §10 tool (projects, sessions/run SSE, files, notebook).
 
 **Exit criteria:** inventory written down; no open "what exists?" questions remain.
@@ -49,7 +49,7 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 - [ ] Stand up one read-only tool (e.g. project list) over the leading transport candidate.
 - [ ] Attempt one live run-mapping experiment (SSE run → MCP progress or poll) and record what worked.
-- [ ] Record verdicts for master-plan questions 1–5 (answered or explicitly deferred with a reason).
+- [ ] Record verdicts for master-plan questions 1–7 (answered or explicitly deferred with a reason), including CLI-ordering (Q6) and interview-handling (Q7).
 
 **Exit criteria:** decision record complete; Phase 2 plan updated to match; spike code discarded or clearly quarantined.
 
@@ -71,4 +71,12 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
 
 ## Decisions
 
-(Record Phase 1 verdicts here as they are made.)
+Record each master-plan open question as **answered** or **deferred** (with reason) before Phase 2 starts. Include inherited decisions from the master plan (e.g. CLI default: after hardening).
+
+1. Transport (stdio vs StreamableHTTP): _pending_
+2. Process model (in-process vs sidecar): _pending_
+3. SSE run → MCP mapping (progress vs poll): _pending_
+4. Minimal-viable tool subset: _pending_
+5. Project-scoping/auth UX (local-first; remote out of scope): _pending_
+6. CLI ordering (before vs after hardening): _inherited — after, reusing the adapter; revisit only if Phase 1 finds MCP blocked_
+7. Interview handling for MCP-driven sessions (disable / elicitation / tool result): _pending (Phase 1a)_

@@ -802,9 +802,9 @@ branch: <branch>
 
 > **Status:** proposed. Update to \`accepted\` once the plan is reviewed and the
 > implementation starts. The implementing PR moves this file to
-> \`dev-docs/plans/completed/\` and sets the final status in its closing
-> checklist — before merge, finalized after review approval. See
-> \`docs/development/workflow.md#archive-lifecycle\`.
+> \`dev-docs/plans/completed/\` and sets Status to \`Completed and merged in
+> PR #<this PR>\` in its closing checklist — before merge, finalized after
+> review approval. See \`docs/development/workflow.md#archive-lifecycle\`.
 
 ## Goal
 

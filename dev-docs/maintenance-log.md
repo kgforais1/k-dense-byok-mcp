@@ -8,7 +8,7 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
 
 ### 2026-09-05: Closing Checklist Belongs in the Implementing PR
 - **PR:** [#13](https://github.com/kgforais1/k-dense-byok-mcp/pull/13)
-- **Category:** Governance & Documentation
+- **Category:** operational
 - **Summary:**
   - Rewrote the archive-lifecycle flow in `docs/development/workflow.md`,
     `CONTRIBUTING.md`, the PR template, the plan template, and this

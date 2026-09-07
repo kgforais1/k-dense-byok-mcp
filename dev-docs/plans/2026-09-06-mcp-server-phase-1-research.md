@@ -7,7 +7,7 @@ branch: mcp-work
 
 # MCP Server Phase 1 — Research Spike and Decisions
 
-**Status:** Proposed
+**Status:** Accepted — spike evidence recorded below
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -29,7 +29,9 @@ Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE �
 ## Proposed information architecture / file changes
 
 ```text
-(no product files; spike code lives in tmp/ or a scratch branch and is discarded)
+(no product surface; executable spike checks are quarantined under `server/test/`)
+server/test/mcp-phase1-spike.test.ts              SDK + headless-session evidence
+server/test/mcp-run-mapping-spike.test.ts         broker poll-contract evidence
 dev-docs/plans/2026-09-06-mcp-server-phase-1-research.md  THIS FILE (+ Decisions)
 dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
 ```
@@ -38,18 +40,18 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 ### Phase 1a — Inventory (read-only)
 
-- [ ] Map the existing MCP-related code — the client bridge (`server/src/agent/mcp.ts`) plus the server-side config API (`server/src/api/mcp.ts`, Fastify settings endpoints for MCP client configs) — and note what transports/patterns already exist in-repo.
-- [ ] Inventory blocking/headless-hostile tools — notably `interview` (blocks a run on a chat-UI answer; withheld from subagent child processes for this reason) — and decide for MCP-driven sessions: disable, surface as MCP elicitation, or map to a tool result.
+- [x] Map the existing MCP-related code — `server/src/agent/mcp.ts` is an outbound client bridge using `Client` plus stdio/Streamable HTTP client transports; `server/src/api/mcp.ts` is only the project connector-settings API. Neither exposes Kady as an MCP server, so the adapter is new and mounts beside the existing Fastify routes.
+- [x] Inventory blocking/headless-hostile tools — `session-registry.ts` registers `interview` by default and `interview.ts` blocks awaiting the chat UI. The spike proves `{ includeInterview: false }` omits it while preserving the ordinary tool surface; Phase 2 must pair that option with its replacement MCP prompt guidance.
 - [x] Confirm server-side exports available at the declared `@modelcontextprotocol/sdk` range against the lockfile-resolved version `1.29.0` (high-level `McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version: `server/package-lock.json` resolves `@modelcontextprotocol/sdk` to `1.29.0`; import `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js`, the low-level `Server` (whose `elicitInput()` method is needed only for a future elicitation bridge) from `@modelcontextprotocol/sdk/server/index.js`, `StdioServerTransport` from `@modelcontextprotocol/sdk/server/stdio.js`, and `StreamableHTTPServerTransport` from `@modelcontextprotocol/sdk/server/streamableHttp.js`.
-- [ ] List the HTTP endpoints backing each candidate §10 tool (projects, sessions/run SSE, files, notebook).
+- [x] List the HTTP endpoints backing the minimum candidate tools: `GET /projects`; `POST /sessions`; `GET /sessions/:id/history`; `POST /sessions/:id/run`; and `GET /sessions/:id/run/state`/`events`. The run result must not use the broker alone after expiry; Phase 2 adds the documented persisted per-run lookup.
 
 **Exit criteria:** every Phase 1a inventory item is checked, or explicitly deferred with a reason; no open "what exists?" questions remain.
 
 ### Phase 1b — Prototype (throwaway)
 
-- [ ] Stand up one read-only tool (e.g. project list) over the leading transport candidate.
-- [ ] Attempt one live run-mapping experiment (SSE run → MCP progress or poll) and record what worked.
-- [ ] Record verdicts for master-plan questions 1–7 (answered or explicitly deferred with a reason), including CLI-ordering (Q6) and interview-handling (Q7).
+- [~] Defer a served read-only tool to Phase 2: the SDK spike constructs the actual high-level `McpServer` and proves `registerTool`, but intentionally does not mount a product route or create an adapter-only prototype that would be discarded. This does not change the transport decision; Phase 2's first contract test will serve `list_projects`.
+- [x] Run the poll-mapping experiment in `server/test/mcp-run-mapping-spike.test.ts`: live frames are sequence-pollable; only `RunAlreadyActiveError` is typed concurrency; budget/error/done remain terminal frames; completed handles become `none` after retention. Existing `steer-abort.test.ts` confirms the route's generic start failure is an HTTP 500, so the adapter must use the typed rule or a future typed HTTP reason.
+- [x] Record verdicts for master-plan questions 1–7 (answered or explicitly deferred with a reason), including CLI-ordering (Q6) and interview-handling (Q7).
 
 **Exit criteria:** every Phase 1b prototype item is checked, or explicitly deferred with a reason; decision record updated with its evidence; Phase 2 plan updated to match; spike code discarded or clearly quarantined.
 
@@ -71,7 +73,7 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
 
 ## Decisions
 
-The entries below are **provisional design constraints**, not completed-spike evidence: the unchecked Phase 1a/1b tasks above still need to validate or revise them. Do not treat these labels as verified until their inventory/prototype evidence is recorded and the Phase 1 exit criteria are met. Record each master-plan question as verified, revised, or explicitly deferred (with reason) before Phase 2 starts. Include inherited decisions from the master plan (e.g. CLI default: after hardening).
+The entries below are the accepted Phase 1 decision record. The served read-only tool is explicitly deferred to the first Phase 2 contract test; all other evidence is captured by the quarantined spike checks above. Include inherited decisions from the master plan (e.g. CLI default: after hardening).
 
 1. Transport (stdio vs StreamableHTTP): **Provisionally answered:** StreamableHTTPServerTransport (SSEServerTransport is deprecated in 1.29.0). Note that mounting this on Fastify requires `reply.hijack()` to pass raw Node.js ServerResponses, which skips Fastify's response-side hooks (CORS headers, logging) — the `onRequest` scope hook still runs, so project scoping is unaffected. The transport has both a stateful mode (session id via response header) and a stateless mode (no session id) — Phase 2 must pick one and record how (or whether) the transport session id relates to a Kady Pi session before implementation.
 2. Process model (in-process vs sidecar): **Provisionally answered:** In-process. By mounting the MCP routes directly on the existing Fastify server, we reuse the `X-Project-Id` scope and avoid duplicating state or budgets. The MCP route shares the existing listener — never a separate port — so the "local-only" guarantee is a property of that shared listener, not of the MCP route.

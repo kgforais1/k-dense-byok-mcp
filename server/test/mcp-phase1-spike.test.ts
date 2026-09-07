@@ -11,8 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -46,21 +45,31 @@ afterEach(() => {
 });
 
 describe("MCP SDK 1.29.0 server-side surface", () => {
+  it("is resolved to 1.29.0 in the server lockfile", () => {
+    const lockfile = JSON.parse(
+      fs.readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"),
+    ) as { packages: Record<string, { version?: string }> };
+
+    expect(lockfile.packages["node_modules/@modelcontextprotocol/sdk"]?.version).toBe("1.29.0");
+  });
+
   it("loads exact server-side modules", async () => {
+    const mcpModule = await import("@modelcontextprotocol/sdk/server/mcp.js");
     const serverModule = await import("@modelcontextprotocol/sdk/server/index.js");
     const stdioModule = await import("@modelcontextprotocol/sdk/server/stdio.js");
     const httpModule = await import("@modelcontextprotocol/sdk/server/streamableHttp.js");
 
+    expect(typeof mcpModule.McpServer).toBe("function");
     expect(typeof serverModule.Server).toBe("function");
     expect(typeof stdioModule.StdioServerTransport).toBe("function");
     expect(typeof httpModule.StreamableHTTPServerTransport).toBe("function");
   });
 
-  it("constructs a usable McpServer (Server)", async () => {
-    const { Server: ServerCls } = await import("@modelcontextprotocol/sdk/server/index.js");
-    const server = new ServerCls({ name: "kady-phase1-spike", version: "1.0.0" });
-    expect(server).toBeDefined();
-    expect(typeof server.setRequestHandler).toBe("function");
+  it("constructs a usable high-level McpServer over the low-level Server", () => {
+    const server = new McpServer({ name: "kady-phase1-spike", version: "1.0.0" });
+
+    expect(server.server).toBeInstanceOf(Server);
+    expect(typeof server.registerTool).toBe("function");
     expect(typeof server.connect).toBe("function");
     expect(typeof server.close).toBe("function");
   });

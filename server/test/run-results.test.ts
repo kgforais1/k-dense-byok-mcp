@@ -36,4 +36,16 @@ describe("durable terminal run results", () => {
     expect(readRunResult("run-results", "does-not-exist")).toBeNull();
     expect(readRunResult("run-results", "../escape")).toBeNull();
   });
+
+  it("preserves an abort as a distinct terminal outcome", () => {
+    createProject({ projectId: "aborted-results", name: "Aborted results" });
+    const broker = new RunBroker();
+    const handle = broker.start("aborted-results", "session-2", metadata("aborted-result-1"));
+    handle.requestAbort();
+    handle.publish({ type: "done" });
+    handle.complete();
+
+    expect(persistRunResult("aborted-results", handle)).toMatchObject({ status: "aborted" });
+    expect(readRunResult("aborted-results", "aborted-result-1")).toMatchObject({ status: "aborted" });
+  });
 });

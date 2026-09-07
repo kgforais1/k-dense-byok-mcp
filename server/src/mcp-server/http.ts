@@ -47,6 +47,7 @@ export async function registerInboundMcpRoutes(
   app.all(INBOUND_MCP_PATH, async (req, reply) => {
     const requestedId = requestedSessionId(req.headers);
     let connection = requestedId ? connections.get(requestedId) : undefined;
+    const existingConnection = connection !== undefined;
     let newConnection = false;
 
     if (requestedId && !connection) {
@@ -92,7 +93,7 @@ export async function registerInboundMcpRoutes(
     try {
       await connection.transport.handleRequest(req.raw, reply.raw, req.body);
       const establishedId = connection.transport.sessionId;
-      if (establishedId) {
+      if (establishedId && !existingConnection) {
         connections.set(establishedId, connection);
         newConnection = false;
       } else if (newConnection) {

@@ -16,7 +16,7 @@ describe("inbound MCP listener guard", () => {
     expect(() => assertMcpLoopbackHost("::1", true)).not.toThrow();
   });
 
-  it.each(["0.0.0.0", "192.168.1.20", "example.test", "localhost", ""])(
+  it.each(["0.0.0.0", "192.168.1.20", "example.test", "localhost", "[::1]", ""])(
     "rejects non-loopback KADY_HOST=%j when MCP is enabled",
     (host) => {
       expect(() => assertMcpLoopbackHost(host, true)).toThrow(

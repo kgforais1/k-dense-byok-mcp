@@ -75,7 +75,7 @@ export const MCP_ENABLED = process.env.KADY_MCP_ENABLED === "1";
 export function assertMcpLoopbackHost(host = HOST, enabled = MCP_ENABLED): void {
   if (!enabled) return;
   const normalized = host.trim().toLowerCase();
-  if (normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]") return;
+  if (normalized === "127.0.0.1" || normalized === "::1") return;
   throw new Error(
     `KADY_MCP_ENABLED requires a loopback KADY_HOST; received ${JSON.stringify(host)}`,
   );

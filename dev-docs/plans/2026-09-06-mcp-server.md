@@ -74,13 +74,13 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 | Minimal subset covers the loop | Phase 2 tool list exercised end-to-end without raw-HTTP fallback |
 | A new client can connect quickly | Fresh-client walkthrough against `docs/mcp-server.md` |
 
-## Resolved Phase 1 decisions (hinge Phase 2 scope)
+## Phase 1 decision record (pending spike validation)
 
-The decision record and rationale live in the [Phase 1 research plan](2026-09-06-mcp-server-phase-1-research.md#decisions); the Phase 2 plan is the implementation contract.
+The decision record and rationale live in the [Phase 1 research plan](2026-09-06-mcp-server-phase-1-research.md#decisions). It resolves the intended Phase 2 direction, but remains pending the research spike's unchecked inventory and prototype validation; the Phase 2 plan is the implementation contract once that evidence is recorded.
 
 1. **Transport:** Streamable HTTP on the existing backend listener, via `StreamableHTTPServerTransport`; not stdio.
 2. **Process model:** in-process Fastify routes; not a sidecar or a second listener.
-3. **Run mapping:** durable poll tools (`start_research_run` and `poll_run`), not MCP progress streaming; concurrency uses the typed `RunAlreadyActiveError` rule and completed handles require retention reconciliation.
+3. **Run mapping:** durable poll tools (`start_research_run` and `poll_run`), not MCP progress streaming; concurrency uses the typed `RunAlreadyActiveError` rule, and a persisted terminal record keyed by `runId` makes completed results available after broker retention expires.
 4. **Tool subset:** `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, and `poll_run`; the creation tool supplies a fresh client with the Kady session id for its research thread.
 5. **Scoping/auth UX:** local-first Streamable HTTP clients send `X-Project-Id`; remote and browser-origin clients are out of scope, and MCP fails closed on any non-loopback bind.
 6. **CLI ordering:** after MCP hardening, reusing the adapter; revisit only if the implementation is blocked.

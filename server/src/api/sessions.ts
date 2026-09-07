@@ -7,7 +7,7 @@
  * frame sourced from Pi's per-session usage accounting.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { activePaths, getProject, touchProject } from "../projects.ts";
+import { activePaths, getProject, touchProject, type ProjectPaths } from "../projects.ts";
 import { corsResponseHeaders } from "../cors.ts";
 import { currentProjectId } from "../scope.ts";
 import {
@@ -36,7 +36,7 @@ import {
   resolveModel,
 } from "../agent/models.ts";
 import { explainProviderRefusal } from "../agent/model-refusal.ts";
-import { parseRunImages } from "../agent/prompt-images.ts";
+import { parseRunImages, type RunImage } from "../agent/prompt-images.ts";
 import { readNotebookEntries } from "../agent/notebook-store.ts";
 import { notebookToMarkdown } from "../agent/notebook-export.ts";
 import { buildNotebookZip } from "../agent/notebook-zip.ts";
@@ -152,6 +152,359 @@ function streamRun(
   // The socket may have closed while a completed handle replayed
   // synchronously, before `unsubscribe` received its real function.
   if (raw.destroyed) unsubscribe();
+}
+
+type RunRequest = FastifyRequest<{ Params: { id: string }; Body: RunBody }>;
+type LiveSession = NonNullable<Awaited<ReturnType<typeof getSession>>>;
+
+interface PreparedRun {
+  projectId: string;
+  paths: ProjectPaths;
+  session: LiveSession;
+  sessionId: string;
+  runKey: string;
+  body: RunBody;
+  prompt: string;
+  images: RunImage[];
+  baseline: {
+    messages: ReturnType<typeof toHistory>;
+    contextUsage: ReturnType<typeof contextUsageForClient> | null;
+  };
+  isFusion: boolean;
+  requestedModel: ReturnType<typeof resolveModel>;
+  runBilling: BillingContext;
+  runId: string;
+  handle: RunHandle;
+}
+
+interface RunLifecycle {
+  handOff(): void;
+  wasHandedOff(): boolean;
+  saveToolNames(names: string[]): void;
+  complete(): void;
+  cleanup(): void;
+}
+
+interface RunPreparationFailure {
+  failure: object;
+}
+
+/** Claim a session, validate its inputs, and create its replayable run handle.
+ * Every pre-handle failure releases the synchronous claim here. */
+async function prepareRun(
+  req: RunRequest,
+  reply: FastifyReply,
+): Promise<PreparedRun | RunPreparationFailure> {
+  const projectId = currentProjectId();
+  const paths = activePaths();
+  const sessionId = req.params.id;
+  const session = await getSession(projectId, paths, sessionId);
+  if (!session) {
+    reply.code(404);
+    return { failure: { detail: "No such session" } };
+  }
+
+  const runKey = `${projectId}:${sessionId}`;
+  const retained = runBroker.get(projectId, sessionId);
+  if (session.isStreaming || activeRuns.has(runKey) || (retained && !retained.isComplete)) {
+    reply.code(409);
+    return {
+      failure: { detail: "Session is already streaming a response", reason: "run_already_active" },
+    };
+  }
+
+  const body = req.body ?? {};
+  if (!body.message || !body.message.trim()) {
+    reply.code(400);
+    return { failure: { detail: "message is required" } };
+  }
+  const parsedImages = parseRunImages(body.images);
+  if ("error" in parsedImages) {
+    reply.code(400);
+    return { failure: { detail: parsedImages.error } };
+  }
+
+  const historyFile = findSessionFile(paths, sessionId);
+  const baseline = {
+    messages: historyFile ? toHistory(historyFile, paths.sandbox) : [],
+    contextUsage: contextUsageForClient(session) ?? null,
+  };
+  activeRuns.add(runKey);
+  pinSession(projectId, session.sessionId);
+
+  let requestedModel: ReturnType<typeof resolveModel>;
+  let runBilling: BillingContext;
+  try {
+    requestedModel = body.model
+      ? resolveModel(body.model, getModelRegistry(), body.fusionConfig)
+      : session.model ?? resolveModel(undefined, getModelRegistry());
+    await assertModelAuthentication(requestedModel, getModelRuntime());
+    runBilling = await billingForModel(requestedModel, getModelRuntime());
+  } catch (error) {
+    unpinSession(projectId, session.sessionId);
+    activeRuns.delete(runKey);
+    reply.code(error instanceof ModelAuthenticationError ? 401 : 400);
+    return {
+      failure: {
+        detail: error instanceof Error ? error.message : "The selected model could not be prepared",
+        reason:
+          error instanceof ModelAuthenticationError ? "provider_not_connected" : "invalid_model",
+      },
+    };
+  }
+
+  const runId = mintRunId();
+  try {
+    setSessionRunId(projectId, session.sessionId, runId);
+    const handle = runBroker.start(projectId, sessionId, {
+      runId,
+      prompt: body.message,
+      images: parsedImages.images.map(({ data, mimeType }) => ({ data, mimeType })),
+      baseline,
+    });
+    handle.publish({ type: "run_start", runId });
+    return {
+      projectId,
+      paths,
+      session,
+      sessionId,
+      runKey,
+      body,
+      prompt: body.message,
+      images: parsedImages.images,
+      baseline,
+      isFusion: Boolean(body.model && body.model.startsWith("fusion/")),
+      requestedModel,
+      runBilling,
+      runId,
+      handle,
+    };
+  } catch (error) {
+    setSessionRunId(projectId, session.sessionId, null);
+    unpinSession(projectId, session.sessionId);
+    activeRuns.delete(runKey);
+    const failure = runStartFailure(error);
+    reply.code(failure.statusCode);
+    return { failure: failure.body };
+  }
+}
+
+function createRunLifecycle(run: PreparedRun, log: FastifyRequest["log"]): RunLifecycle {
+  let savedToolNames: string[] | null = null;
+  let handedOff = false;
+  return {
+    handOff: () => {
+      handedOff = true;
+    },
+    wasHandedOff: () => handedOff,
+    saveToolNames: (names) => {
+      savedToolNames = names;
+    },
+    complete: () => {
+      if (run.handle.isComplete) return;
+      try {
+        persistTerminalRunResult(run.projectId, run.handle);
+      } catch (error) {
+        log.error({ error, runId: run.runId }, "failed to persist terminal run result");
+        run.handle.publish({
+          type: "error",
+          message: "Terminal run result could not be persisted; late MCP polling is unavailable.",
+        });
+      }
+      run.handle.publish({ type: "done" });
+      run.handle.complete();
+    },
+    cleanup: () => {
+      if (savedToolNames !== null) {
+        run.session.setActiveToolsByName(savedToolNames);
+        savedToolNames = null;
+      }
+      setSessionRunId(run.projectId, run.session.sessionId, null);
+      untrackInFlightRun(run.runKey);
+      unpinSession(run.projectId, run.session.sessionId);
+      activeRuns.delete(run.runKey);
+    },
+  };
+}
+
+async function configureRunModel(run: PreparedRun, lifecycle: RunLifecycle): Promise<string | null> {
+  if (run.isFusion) {
+    try {
+      await run.session.setModel(run.requestedModel);
+      setFusionConfig(run.projectId, run.session.sessionId, run.body.fusionConfig ?? null);
+      lifecycle.saveToolNames(run.session.getActiveToolNames());
+      run.session.setActiveToolsByName([]);
+      return null;
+    } catch (error) {
+      setFusionConfig(run.projectId, run.session.sessionId, null);
+      const detail = `Fusion model could not be prepared: ${(error as Error).message}`;
+      run.handle.publish({ type: "error", message: detail });
+      return detail;
+    }
+  }
+
+  setFusionConfig(run.projectId, run.session.sessionId, null);
+  if (!run.body.model) return null;
+  try {
+    await run.session.setModel(run.requestedModel);
+    return null;
+  } catch (error) {
+    const detail = `Model could not be selected: ${(error as Error).message}`;
+    run.handle.publish({ type: "error", message: detail });
+    return detail;
+  }
+}
+
+async function configureRun(
+  run: PreparedRun,
+  lifecycle: RunLifecycle,
+  log: FastifyRequest["log"],
+): Promise<string | null> {
+  setSessionComputeTarget(run.projectId, run.session.sessionId, run.body.computeTarget ?? null);
+  setSessionComputeOptions(
+    run.projectId,
+    run.session.sessionId,
+    run.body.computeTarget ? run.body.computeOptions : null,
+  );
+  const modelError = await configureRunModel(run, lifecycle);
+  if (modelError) return modelError;
+
+  if (run.body.thinkingLevel !== undefined) {
+    const level = parseThinkingLevel(run.body.thinkingLevel);
+    if (level) run.session.setThinkingLevel(level);
+    else log.warn({ thinkingLevel: run.body.thinkingLevel }, "ignoring invalid thinkingLevel");
+  }
+  run.baseline.contextUsage = contextUsageForClient(run.session) ?? null;
+  const frame = contextUsageFrame(contextUsageForClient(run.session));
+  if (frame) run.handle.publish(frame);
+  return null;
+}
+
+function publishContextUsage(run: PreparedRun): void {
+  const frame = contextUsageFrame(contextUsageForClient(run.session));
+  if (frame) run.handle.publish(frame);
+}
+
+function publishBudgetFailure(run: PreparedRun): boolean {
+  const budget = isBudgetExceeded(run.projectId);
+  if (!billingCountsTowardBudget(run.runBilling) || !budget.exceeded) return false;
+  run.handle.publish({
+    type: "error",
+    kind: "budget",
+    message:
+      `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
+      `$${(budget.limitUsd ?? 0).toFixed(2)}). Raise the limit in project settings and retry.`,
+  });
+  return true;
+}
+
+async function recordRunAccounting(
+  run: PreparedRun,
+  before: CostSnapshot,
+  turnTally: CostSnapshot,
+  log: FastifyRequest["log"],
+): Promise<void> {
+  try {
+    const usage = snapshotMax(snapshotDelta(before, snapshot(run.session)), turnTally);
+    const entry = recordRun({
+      sessionId: run.sessionId,
+      projectId: run.projectId,
+      model: run.session.model ? modelReference(run.session.model) : "unknown",
+      before: emptySnapshot(),
+      after: usage,
+      billing: run.runBilling,
+    });
+    const stats = run.session.getSessionStats();
+    publishContextUsage(run);
+    run.handle.publish({
+      type: "cost",
+      cost: sessionCostSummary(run.sessionId, run.projectId).totalUsd,
+      tokens: stats.tokens,
+      runCost: entry?.costUsd ?? 0,
+      runTokens: usage.total,
+      runBillingMode: run.runBilling.billingMode,
+      runProvider: run.runBilling.provider,
+      ...(entry?.listPriceUsd !== undefined ? { runListPriceUsd: entry.listPriceUsd } : {}),
+    });
+  } catch (error) {
+    log.warn({ error }, "failed to ledger run cost");
+  }
+}
+
+async function promptAndRecordRun(run: PreparedRun, log: FastifyRequest["log"]): Promise<void> {
+  const turnTally = emptySnapshot();
+  const provenance = new ProvenanceRecorder({
+    projectId: run.projectId,
+    sessionId: run.sessionId,
+    sandboxRoot: run.paths.sandbox,
+    runId: run.runId,
+    getModel: () => (run.session.model ? modelReference(run.session.model) : undefined),
+    onError: (error) => log.warn({ error }, "provenance recorder step failed"),
+  });
+  const withRefusalGuidance = (frame: ClientFrame): ClientFrame =>
+    frame.type === "error" && typeof frame.message === "string"
+      ? {
+          ...frame,
+          message: explainProviderRefusal(frame.message, {
+            projectId: run.projectId,
+            modelRef: run.session.model ? modelReference(run.session.model) : undefined,
+          }),
+        }
+      : frame;
+  const priorError = run.session.state.errorMessage;
+  const before = snapshot(run.session);
+  let unsubscribe = () => {};
+  try {
+    unsubscribe = run.session.subscribe((event) => {
+      provenance.observe(event);
+      if (event.type === "turn_end") {
+        const usage = (event.message as { usage?: Parameters<typeof addTurnUsage>[1] }).usage;
+        if (usage) addTurnUsage(turnTally, usage);
+      }
+      const frame = toClientFrame(event, run.paths.sandbox);
+      if (frame) run.handle.publish(withRefusalGuidance(frame));
+      if (event.type === "turn_end") publishContextUsage(run);
+    });
+    if (billingCountsTowardBudget(run.runBilling)) {
+      trackInFlightRun(run.runKey, run.projectId, () =>
+        Math.max(0, snapshot(run.session).costUsd - before.costUsd),
+      );
+    }
+    await run.session.prompt(
+      run.prompt,
+      run.images.length > 0 ? { images: run.images } : undefined,
+    );
+    const errorMessage = run.session.state.errorMessage;
+    if (errorMessage && errorMessage !== priorError) {
+      run.handle.publish(withRefusalGuidance({ type: "error", message: errorMessage }));
+    }
+  } catch (error) {
+    run.handle.publish({ type: "error", message: (error as Error).message });
+  } finally {
+    unsubscribe();
+    try {
+      await provenance.flush();
+    } catch (error) {
+      log.warn({ error }, "failed to flush provenance");
+    }
+    await recordRunAccounting(run, before, turnTally, log);
+  }
+}
+
+async function ownRun(run: PreparedRun, lifecycle: RunLifecycle, log: FastifyRequest["log"]): Promise<void> {
+  try {
+    if (!run.handle.isAbortRequested && !publishBudgetFailure(run)) {
+      await promptAndRecordRun(run, log);
+    }
+  } catch (error) {
+    log.error({ error }, "detached run failed");
+    if (!run.handle.isComplete) {
+      run.handle.publish({ type: "error", message: (error as Error).message });
+    }
+  } finally {
+    lifecycle.complete();
+    lifecycle.cleanup();
+  }
 }
 
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
@@ -507,382 +860,31 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
   app.post<{ Params: { id: string }; Body: RunBody }>(
     "/sessions/:id/run",
     async (req, reply) => {
-      const projectId = currentProjectId();
-      const paths = activePaths();
-      const session = await getSession(projectId, paths, req.params.id);
-      if (!session) {
-        reply.code(404);
-        return { detail: "No such session" };
-      }
-      // One run at a time per session. The frontend blocks sending while a tab
-      // is streaming, so this is a guard against races/double-submits rather
-      // than a normal path. (Pi's followUp queueing returns immediately, which
-      // would orphan the SSE stream and abort the live turn — so we reject.)
-      const sessionId = req.params.id;
-      const runKey = `${projectId}:${sessionId}`;
-      const retained = runBroker.get(projectId, sessionId);
-      if (session.isStreaming || activeRuns.has(runKey) || (retained && !retained.isComplete)) {
-        reply.code(409);
-        return { detail: "Session is already streaming a response", reason: "run_already_active" };
-      }
+      const prepared = await prepareRun(req, reply);
+      if ("failure" in prepared) return prepared.failure;
 
-      const body = req.body ?? {};
-      if (!body.message || !body.message.trim()) {
-        reply.code(400);
-        return { detail: "message is required" };
-      }
-      const prompt = body.message;
-      const parsedImages = parseRunImages(body.images);
-      if ("error" in parsedImages) {
-        reply.code(400);
-        return { detail: parsedImages.error };
-      }
-      // This baseline remains valid through model/thinking setup because Pi
-      // does not append conversation messages until prompt() starts.
-      const historyFile = findSessionFile(paths, sessionId);
-      const baseline = {
-        messages: historyFile ? toHistory(historyFile, paths.sandbox) : [],
-        contextUsage: contextUsageForClient(session) ?? null,
-      };
-      // Claim before the first awaited auth check so concurrent requests cannot
-      // both pass the run guard. Preflight failures release the claim below.
-      activeRuns.add(runKey);
-      // Held for the whole claim, not just while streaming: another tab opening
-      // during model setup could otherwise evict this session out from under us.
-      pinSession(projectId, session.sessionId);
-      const isFusion = Boolean(body.model && body.model.startsWith("fusion/"));
-      let requestedModel: ReturnType<typeof resolveModel>;
-      let runBilling: BillingContext;
+      const lifecycle = createRunLifecycle(prepared, req.log);
       try {
-        requestedModel = body.model
-          ? resolveModel(body.model, getModelRegistry(), body.fusionConfig)
-          : session.model ?? resolveModel(undefined, getModelRegistry());
-        await assertModelAuthentication(requestedModel, getModelRuntime());
-        runBilling = await billingForModel(requestedModel, getModelRuntime());
+        const setupError = await configureRun(prepared, lifecycle, req.log);
+        if (setupError) {
+          reply.code(400);
+          return { detail: setupError };
+        }
+
+        // The detached owner retains the run after the HTTP stream is attached,
+        // so a client disconnect cannot interrupt Pi, accounting, or cleanup.
+        lifecycle.handOff();
+        void ownRun(prepared, lifecycle, req.log);
+        streamRun(req, reply, prepared.handle);
       } catch (error) {
-        unpinSession(projectId, session.sessionId);
-        activeRuns.delete(runKey);
-        reply.code(error instanceof ModelAuthenticationError ? 401 : 400);
-        return {
-          detail:
-            error instanceof Error ? error.message : "The selected model could not be prepared",
-          reason:
-            error instanceof ModelAuthenticationError ? "provider_not_connected" : "invalid_model",
-        };
-      }
-      // One id per run invocation; notebook entries appended during this run
-      // (lead tool + subagent harvest) are stamped with it. Cleared in the
-      // owner cleanup so it covers every exit path.
-      const runId = mintRunId();
-      let handle: RunHandle;
-      try {
-        setSessionRunId(projectId, session.sessionId, runId);
-        handle = runBroker.start(projectId, sessionId, {
-          runId,
-          prompt,
-          images: parsedImages.images.map(({ data, mimeType }) => ({ data, mimeType })),
-          baseline,
-        });
-        // Publish immediately, before any awaited model setup, so refresh recovery
-        // can discover the accepted run during that setup window.
-        handle.publish({ type: "run_start", runId });
-      } catch (err) {
-        // The claim is taken but nothing owns it yet: without this release the
-        // tab stays permanently 409-locked until the process restarts.
-        setSessionRunId(projectId, session.sessionId, null);
-        unpinSession(projectId, session.sessionId);
-        activeRuns.delete(runKey);
-        const failure = runStartFailure(err);
-        reply.code(failure.statusCode);
-        return failure.body;
-      }
-      // For a Fusion run we disable Pi's local tools for the turn (see below).
-      // Remember the real active set so we can restore it in the finally; `null`
-      // means "not a fusion run, nothing to restore".
-      let savedToolNames: string[] | null = null;
-      let detachedOwner = false;
-      const log = req.log;
-      const completeRun = () => {
-        if (handle.isComplete) return;
-        // The broker forgets completed handles after ~30 seconds. Persist the
-        // snapshot before the live `done` frame so a failure is visible to the
-        // caller instead of silently turning a late poll into "unknown run".
-        try {
-          persistTerminalRunResult(projectId, handle);
-        } catch (error) {
-          log.error({ error, runId }, "failed to persist terminal run result");
-          handle.publish({
-            type: "error",
-            message: "Terminal run result could not be persisted; late MCP polling is unavailable.",
-          });
+        if (!lifecycle.wasHandedOff() && !prepared.handle.isComplete) {
+          prepared.handle.publish({ type: "error", message: (error as Error).message });
         }
-        handle.publish({ type: "done" });
-        handle.complete();
-      };
-      const cleanup = () => {
-        // Restore the local tool set disabled for a fusion run. No-op for
-        // non-fusion runs (savedToolNames stays null).
-        if (savedToolNames !== null) {
-          session.setActiveToolsByName(savedToolNames);
-          savedToolNames = null;
-        }
-        setSessionRunId(projectId, session.sessionId, null);
-        // Runs after the ledger row is written (the owner's inner finally),
-        // so the run's spend is never invisible to a concurrent admission.
-        untrackInFlightRun(runKey);
-        unpinSession(projectId, session.sessionId);
-        activeRuns.delete(runKey);
-      };
-      try {
-        // Stash this run's selected compute instance so the modal_run tool uses
-        // it as the default when the agent doesn't name one ("local"/unset clears it).
-        setSessionComputeTarget(projectId, session.sessionId, body.computeTarget ?? null);
-        setSessionComputeOptions(
-          projectId,
-          session.sessionId,
-          body.computeTarget ? body.computeOptions : null,
-        );
-        if (isFusion) {
-          // Fusion is load-bearing for the spend cap: the cost-bearing Model
-          // (priced from the panel sum) and the body-rewrite must be applied
-          // together for THIS run. If resolution fails (e.g. catalogue priced
-          // no panel model), do NOT swallow it and run at the prior model's
-          // cost — abort, since the body would still be rewritten to fusion.
-          try {
-            await session.setModel(requestedModel);
-            setFusionConfig(projectId, session.sessionId, body.fusionConfig ?? null);
-            // Disable Pi's local agentic tools for this turn so OpenRouter Fusion
-            // runs deterministically. Stripping `tools` from the wire body (in
-            // fusion-bridge's before_provider_request) is NOT enough: Pi executes
-            // any tool_call the model returns by name-matching against the live
-            // tool registry (agent.state.tools / the loop's context.tools
-            // snapshot), independent of what the HTTP body advertised. With the
-            // registry non-empty, the model is still offered ls/read/etc. and any
-            // returned tool_call still executes — so the agent keeps looping
-            // instead of producing the single fused answer. setActiveToolsByName
-            // is the supported API: it empties agent.state.tools (so the loop's
-            // snapshot carries no tools and any stray tool_call resolves to "not
-            // found") AND rebuilds the system prompt without tool guidelines.
-            // Restored in the finally so non-fusion runs keep all tools.
-            savedToolNames = session.getActiveToolNames();
-            session.setActiveToolsByName([]);
-          } catch (err) {
-            // Make sure no stale fusion config rewrites this run's body.
-            // (The outer finally releases the activeRuns claim on return.)
-            setFusionConfig(projectId, session.sessionId, null);
-            handle.publish({
-              type: "error",
-              message: `Fusion model could not be prepared: ${(err as Error).message}`,
-            });
-            reply.code(400);
-            return {
-              detail: `Fusion model could not be prepared: ${(err as Error).message}`,
-            };
-          }
-        } else {
-          // Non-fusion run: clear any fusion config so the extension passes the
-          // payload through untouched.
-          setFusionConfig(projectId, session.sessionId, null);
-          if (body.model) {
-            try {
-              await session.setModel(requestedModel);
-            } catch (err) {
-              handle.publish({
-                type: "error",
-                message: `Model could not be selected: ${(err as Error).message}`,
-              });
-              reply.code(400);
-              return {
-                detail: `Model could not be selected: ${(err as Error).message}`,
-              };
-            }
-          }
-        }
-        if (body.thinkingLevel !== undefined) {
-          const level = parseThinkingLevel(body.thinkingLevel);
-          if (level) session.setThinkingLevel(level);
-          else req.log.warn({ thinkingLevel: body.thinkingLevel }, "ignoring invalid thinkingLevel");
-        }
-
-        // Model selection can change the context window. Refresh the baseline
-        // value and publish the configured model's usage before prompt().
-        baseline.contextUsage = contextUsageForClient(session) ?? null;
-        const publishContextUsage = () => {
-          const frame = contextUsageFrame(contextUsageForClient(session));
-          if (frame) handle.publish(frame);
-        };
-        publishContextUsage();
-
-        // The detached task owns the Pi run and every finalizer. HTTP responses
-        // below are observers only, so browser refresh/socket close cannot abort
-        // or skip ledger/tool restoration. projectId/paths/sessionId are already
-        // captured; no AsyncLocalStorage-backed project lookup occurs here.
-        detachedOwner = true;
-        void (async () => {
-          let unsubscribePi: (() => void) | null = null;
-          try {
-            // Explicit POST /abort may have raced with awaited model setup.
-            // In that case abort is authoritative and prompt must never start.
-            if (handle.isAbortRequested) return;
-
-            // Hard budget cap: refuse to run if the project has reached its limit.
-            const budget = isBudgetExceeded(projectId);
-            if (billingCountsTowardBudget(runBilling) && budget.exceeded) {
-              handle.publish({
-                type: "error",
-                kind: "budget",
-                message:
-                  `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
-                  `$${(budget.limitUsd ?? 0).toFixed(2)}). Raise the limit in project ` +
-                  `settings and retry.`,
-              });
-              return;
-            }
-
-            // Usage tallied straight from turn_end events. getSessionStats() is
-            // recomputed from the in-context messages, so auto-compaction mid-run
-            // can shrink the cumulative stats and make the before/after delta lie
-            // low; the per-turn events are immune to that.
-            const turnTally = emptySnapshot();
-            // Observational provenance: binds each tool call to the sandbox
-            // files it actually read and wrote. Constructed before prompt() so
-            // its baseline sandbox walk overlaps the first model round-trip.
-            const provenance = new ProvenanceRecorder({
-              projectId,
-              sessionId,
-              sandboxRoot: paths.sandbox,
-              runId,
-              getModel: () => (session.model ? modelReference(session.model) : undefined),
-              onError: (err) => log.warn({ err }, "provenance recorder step failed"),
-            });
-            // A provider refusal reaches the client as an opaque
-            // "Provider finish_reason: content_filter". Attach what to do about
-            // it, naming the enabled skills known to cause it — the classifier
-            // reads the system prompt, so the user cannot find the cause by
-            // rereading what they typed.
-            const withRefusalGuidance = (frame: ClientFrame): ClientFrame =>
-              frame.type === "error" && typeof frame.message === "string"
-                ? {
-                    ...frame,
-                    message: explainProviderRefusal(frame.message, {
-                      projectId,
-                      modelRef: session.model ? modelReference(session.model) : undefined,
-                    }),
-                  }
-                : frame;
-            unsubscribePi = session.subscribe((ev) => {
-              provenance.observe(ev);
-              if (ev.type === "turn_end") {
-                const usage = (ev.message as {
-                  usage?: Parameters<typeof addTurnUsage>[1];
-                }).usage;
-                if (usage) addTurnUsage(turnTally, usage);
-              }
-              const frame = toClientFrame(ev, paths.sandbox);
-              if (frame) handle.publish(withRefusalGuidance(frame));
-              if (ev.type === "turn_end") publishContextUsage();
-            });
-
-            // errorMessage is sticky on the session; only report it if THIS run set it.
-            const priorError = session.state.errorMessage;
-            const before = snapshot(session);
-            // Publish this run's live spend so a concurrent run in another tab
-            // is admitted against what we are actually spending, not against
-            // the ledger total from before this run started.
-            if (billingCountsTowardBudget(runBilling)) {
-              trackInFlightRun(runKey, projectId, () =>
-                Math.max(0, snapshot(session).costUsd - before.costUsd),
-              );
-            }
-            try {
-              await session.prompt(
-                prompt,
-                parsedImages.images.length > 0 ? { images: parsedImages.images } : undefined,
-              );
-              // Surface a provider/agent error that didn't already stream as a
-              // frame (e.g. auth failure with an empty assistant turn).
-              const errorMessage = session.state.errorMessage;
-              if (errorMessage && errorMessage !== priorError) {
-                handle.publish(
-                  withRefusalGuidance({ type: "error", message: errorMessage }),
-                );
-              }
-            } catch (err) {
-              handle.publish({ type: "error", message: (err as Error).message });
-            } finally {
-              unsubscribePi();
-              unsubscribePi = null;
-              // Drain queued provenance scans before the terminal frames go out,
-              // so a client that reads provenance on `done` sees a complete file.
-              try {
-                await provenance.flush();
-              } catch (err) {
-                log.warn({ err }, "failed to flush provenance");
-              }
-              // Ledger in the finally: a run that threw mid-turn still spent real
-              // tokens. The stats delta catches a partial turn that never reached
-              // turn_end; the tally catches compaction — take the max of the two.
-              try {
-                const run = snapshotMax(snapshotDelta(before, snapshot(session)), turnTally);
-                const entry = recordRun({
-                  sessionId,
-                  projectId,
-                  model: session.model ? modelReference(session.model) : "unknown",
-                  before: emptySnapshot(),
-                  after: run,
-                  billing: runBilling,
-                });
-                const stats = session.getSessionStats();
-                // `cost` is the session's full ledgered spend (subagents included,
-                // restart/compaction-proof); `tokens` is Pi's in-context cumulative;
-                // `runCost`/`runTokens` are the delta for THIS turn.
-                publishContextUsage();
-                handle.publish({
-                  type: "cost",
-                  cost: sessionCostSummary(sessionId, projectId).totalUsd,
-                  tokens: stats.tokens,
-                  runCost: entry?.costUsd ?? 0,
-                  runTokens: run.total,
-                  runBillingMode: runBilling.billingMode,
-                  runProvider: runBilling.provider,
-                  ...(entry?.listPriceUsd !== undefined
-                    ? { runListPriceUsd: entry.listPriceUsd }
-                    : {}),
-                });
-              } catch (err) {
-                log.warn({ err }, "failed to ledger run cost");
-              }
-            }
-          } catch (err) {
-            log.error({ err }, "detached run failed");
-            if (!handle.isComplete) {
-              handle.publish({ type: "error", message: (err as Error).message });
-            }
-          } finally {
-            unsubscribePi?.();
-            if (!handle.isComplete) {
-              completeRun();
-            }
-            cleanup();
-          }
-        })();
-
-        // POST /run remains an SSE endpoint, now subscribed to the same replay
-        // buffer used by reconnecting GET /run/events clients.
-        streamRun(req, reply, handle);
-      } catch (err) {
-        if (!detachedOwner && !handle.isComplete) {
-          handle.publish({ type: "error", message: (err as Error).message });
-        }
-        throw err;
+        throw error;
       } finally {
-        // Once handed off, the detached owner performs cleanup after Pi and
-        // ledger finalization. Preparation failures still clean up here.
-        if (!detachedOwner) {
-          if (!handle.isComplete) {
-            completeRun();
-          }
-          cleanup();
+        if (!lifecycle.wasHandedOff()) {
+          lifecycle.complete();
+          lifecycle.cleanup();
         }
       }
     },

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import packageJson from "../package.json";
 
 import { createProject } from "../src/projects.ts";
 import { createKadyMcpServer } from "../src/mcp-server/server.ts";
@@ -20,6 +21,8 @@ describe("inbound MCP Phase 2 tool contract", () => {
     closeables.push(client, server);
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+
+    expect(client.getServerVersion()).toMatchObject({ version: packageJson.version });
 
     expect((await client.listTools()).tools).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: "list_projects" })]),

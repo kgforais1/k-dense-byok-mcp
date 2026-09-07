@@ -15,6 +15,13 @@ interface McpConnection {
 
 const sessionHeader = "mcp-session-id";
 
+/**
+ * Kept distinct from `/mcp`, which is Kady's existing outbound-connector API.
+ * MCP clients configure this URL directly, so a dedicated endpoint preserves
+ * both directions without a Fastify GET/SSE route collision.
+ */
+export const INBOUND_MCP_PATH = "/mcp-server";
+
 function requestedSessionId(headers: Record<string, string | string[] | undefined>): string | undefined {
   const value = headers[sessionHeader];
   return Array.isArray(value) ? value[0] : value;
@@ -37,7 +44,7 @@ export async function registerInboundMcpRoutes(
 
   const connections = new Map<string, McpConnection>();
 
-  app.all("/mcp", async (req, reply) => {
+  app.all(INBOUND_MCP_PATH, async (req, reply) => {
     const requestedId = requestedSessionId(req.headers);
     let connection = requestedId ? connections.get(requestedId) : undefined;
     let newConnection = false;

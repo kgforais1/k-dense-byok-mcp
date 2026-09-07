@@ -7,10 +7,11 @@
  * the SDK's in-memory transport.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import packageJson from "../../package.json";
 import { listProjects } from "../projects.ts";
 
 export function createKadyMcpServer(): McpServer {
-  const server = new McpServer({ name: "kady", version: "0.9.12" });
+  const server = new McpServer({ name: "kady", version: packageJson.version });
 
   server.registerTool(
     "list_projects",

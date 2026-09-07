@@ -38,7 +38,7 @@ server/test/mcp-server-*.test.ts   NEW — tool-shape, scoping, contract tests
 ## Implementation sequence
 
 - [ ] Scaffold the adapter per Phase 1 transport/process verdicts.
-- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, a bind assertion on the shared Fastify listener — it must bind `127.0.0.1` — and error mapping incl. the distinct budget-403 and the ~30s completed-handle retention reconciliation).
+- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, a bind assertion on the shared Fastify listener — its `127.0.0.1` default only — and error mapping incl. distinguishing the `/steer`-only HTTP 403 from the run's `kind:"budget"` frame on an HTTP-200 stream, plus the ~30s completed-handle retention reconciliation).
 - [ ] End-to-end check from a real external MCP client (OpenCode or Claude Code) against a scratch project.
 - [ ] Record deviations from this stub as Decisions.
 

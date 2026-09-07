@@ -64,7 +64,7 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 - MCP SDK upgrades are deliberate and test-gated (caret-range dep, not in the exact-pin harness set); Phase 1 records the exact resolved version.
 - Cross-platform like the rest of the backend (Windows Git-Bash paths, no `which`).
 - Budgets and caps apply unchanged: MCP-driven runs go through the existing cost-ledger / spend-cap path, and the adapter respects the ≤10-sessions-per-project cap (create-or-reuse, never create-per-call).
-- Local-only, concretely: the MCP route shares the existing Fastify listener (never a separate port), and that listener binds `127.0.0.1` only. Phase 2 adds a test asserting the bind address of the shared server — the MCP route's `reply.hijack()` handoff bypasses Fastify's hooks, so the local-only guarantee belongs to the listener, not the route. (A future `HOST=0.0.0.0` would otherwise expose the MCP surface network-wide.)
+- Local-only, concretely: the MCP route shares the existing Fastify listener (never a separate port), and that listener binds `127.0.0.1` **by default** (`KADY_HOST`, `config.ts`). Phase 2 adds a test asserting the default bind address of the shared server. Two caveats: (1) the MCP route's `reply.hijack()` handoff skips Fastify's CORS/response hooks — it does not skip the `onRequest` scope hook, so project scoping is unaffected; (2) `KADY_HOST` is an existing, supported knob, so an operator setting it to `0.0.0.0` exposes the MCP surface network-wide — hardening must treat non-loopback binds as unsupported while MCP is enabled rather than assume loopback is guaranteed.
 
 ## Acceptance measures
 

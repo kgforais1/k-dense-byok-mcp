@@ -60,15 +60,22 @@ export async function registerInboundMcpRoutes(
       // Register from this callback, rather than only after handleRequest(),
       // so a client that pipelines a follow-up request cannot observe a 404
       // in the small window before the initialize response has completed.
-      let createdConnection: McpConnection | undefined;
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: randomUUID,
         onsessioninitialized: (sessionId) => {
-          if (createdConnection) connections.set(sessionId, createdConnection);
+          if (connection) connections.set(sessionId, connection);
         },
       });
       const server = createKadyMcpServer();
       const projectId = currentProjectId();
+      // Set this before server.connect(): Protocol.connect composes the
+      // transport's existing close hook with its own cleanup. Assigning it
+      // afterwards would replace that SDK hook and make server.close() recurse
+      // through transport.close().
+      transport.onclose = () => {
+        const id = transport.sessionId;
+        if (id) connections.delete(id);
+      };
       try {
         await server.connect(transport);
       } catch (error) {
@@ -78,13 +85,7 @@ export async function registerInboundMcpRoutes(
         throw error;
       }
       connection = { server, transport, projectId };
-      createdConnection = connection;
       newConnection = true;
-      transport.onclose = () => {
-        const id = transport.sessionId;
-        if (id) connections.delete(id);
-        void server.close().catch(() => {});
-      };
     }
 
     // The SDK writes directly to Node's ServerResponse. Fastify must not try

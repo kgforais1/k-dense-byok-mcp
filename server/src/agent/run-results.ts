@@ -16,6 +16,11 @@ export interface DurableRunResult {
   completedAt: string;
 }
 
+interface PersistOptions {
+  /** Snapshot a run immediately before its final `done` frame is published. */
+  terminal?: boolean;
+}
+
 const RESULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_RESULTS_PER_PROJECT = 500;
 
@@ -51,20 +56,34 @@ function resultPath(projectId: string, runId: string): string {
 }
 
 /** Atomically persist the replayable terminal frames for a completed run. */
-export function persistRunResult(projectId: string, handle: RunHandle): DurableRunResult {
-  if (!handle.isComplete) throw new Error("Cannot persist a non-terminal run");
+export function persistRunResult(
+  projectId: string,
+  handle: RunHandle,
+  options: PersistOptions = {},
+): DurableRunResult {
+  if (!handle.isComplete && !options.terminal) {
+    throw new Error("Cannot persist a non-terminal run");
+  }
   const state = handle.state();
   const activityState = handle.activityState;
-  if (activityState === "running" || !state.run) {
+  if ((!handle.isComplete && !options.terminal) || !state.run) {
     throw new Error("Cannot persist an incomplete run state");
   }
-  const status: DurableRunStatus = handle.isAbortRequested ? "aborted" : activityState;
+  const status: DurableRunStatus = handle.isAbortRequested
+    ? "aborted"
+    : activityState === "running"
+      ? "done"
+      : activityState;
+  const frames = [...state.run.frames];
+  if (options.terminal && !handle.isComplete) {
+    frames.push({ type: "done", seq: state.run.lastSeq + 1 });
+  }
   const result: DurableRunResult = {
     runId: handle.runId,
     sessionId: handle.sessionId,
     status,
-    frames: state.run.frames,
-    lastSeq: state.run.lastSeq,
+    frames,
+    lastSeq: frames.at(-1)?.seq ?? state.run.lastSeq,
     completedAt: new Date().toISOString(),
   };
   const file = resultPath(projectId, result.runId);
@@ -83,6 +102,24 @@ export function persistRunResult(projectId: string, handle: RunHandle): DurableR
     }
   }
   return result;
+}
+
+/**
+ * Persist a terminal snapshot before publishing the live `done` frame. A
+ * transient local filesystem failure gets a few synchronous retries; callers
+ * must surface the final failure to the live client rather than silently
+ * claiming late polling is available.
+ */
+export function persistTerminalRunResult(projectId: string, handle: RunHandle): DurableRunResult {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return persistRunResult(projectId, handle, { terminal: true });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Terminal result persistence failed");
 }
 
 /** Return a terminal result by id, distinct from a missing/unknown run. */

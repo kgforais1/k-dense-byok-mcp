@@ -49,7 +49,7 @@ import { MethodsDraftError, runMethodsDraft } from "../agent/methods-draft.ts";
 import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
 import { runBroker, type RunHandle } from "../agent/run-broker.ts";
 import { runStartFailure } from "../agent/run-start-errors.ts";
-import { persistRunResult } from "../agent/run-results.ts";
+import { persistTerminalRunResult } from "../agent/run-results.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
 import { SandboxError } from "../sandbox-fs.ts";
 import {
@@ -596,25 +596,29 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         reply.code(failure.statusCode);
         return failure.body;
       }
-      // The broker intentionally forgets completed handles after ~30 seconds.
-      // Persist the replayable terminal state before that retention window so a
-      // later MCP poll can distinguish a completed run from an unknown id.
-      handle.subscribe({
-        onFrame: () => {},
-        onComplete: () => {
-          try {
-            persistRunResult(projectId, handle);
-          } catch (error) {
-            req.log.error({ error, runId }, "failed to persist terminal run result");
-          }
-        },
-      });
       // For a Fusion run we disable Pi's local tools for the turn (see below).
       // Remember the real active set so we can restore it in the finally; `null`
       // means "not a fusion run, nothing to restore".
       let savedToolNames: string[] | null = null;
       let detachedOwner = false;
       const log = req.log;
+      const completeRun = () => {
+        if (handle.isComplete) return;
+        // The broker forgets completed handles after ~30 seconds. Persist the
+        // snapshot before the live `done` frame so a failure is visible to the
+        // caller instead of silently turning a late poll into "unknown run".
+        try {
+          persistTerminalRunResult(projectId, handle);
+        } catch (error) {
+          log.error({ error, runId }, "failed to persist terminal run result");
+          handle.publish({
+            type: "error",
+            message: "Terminal run result could not be persisted; late MCP polling is unavailable.",
+          });
+        }
+        handle.publish({ type: "done" });
+        handle.complete();
+      };
       const cleanup = () => {
         // Restore the local tool set disabled for a fusion run. No-op for
         // non-fusion runs (savedToolNames stays null).
@@ -857,8 +861,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
           } finally {
             unsubscribePi?.();
             if (!handle.isComplete) {
-              handle.publish({ type: "done" });
-              handle.complete();
+              completeRun();
             }
             cleanup();
           }
@@ -877,8 +880,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         // ledger finalization. Preparation failures still clean up here.
         if (!detachedOwner) {
           if (!handle.isComplete) {
-            handle.publish({ type: "done" });
-            handle.complete();
+            completeRun();
           }
           cleanup();
         }

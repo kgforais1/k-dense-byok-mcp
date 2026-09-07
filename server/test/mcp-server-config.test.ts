@@ -40,6 +40,47 @@ describe("inbound MCP listener guard", () => {
       expect(outbound.json()).toMatchObject({ mcpServers: {}, disabledServers: {} });
       expect(app.hasRoute({ method: "POST", url: "/mcp-server" })).toBe(true);
       expect(app.hasRoute({ method: "GET", url: "/mcp-server" })).toBe(true);
+
+      const initialized = await app.inject({
+        method: "POST",
+        url: "/mcp-server",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        payload: {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-03-26",
+            capabilities: {},
+            clientInfo: { name: "mcp-lifecycle-test", version: "1.0.0" },
+          },
+        },
+      });
+      expect(initialized.statusCode).toBe(200);
+      const mcpSessionId = initialized.headers["mcp-session-id"];
+      expect(typeof mcpSessionId).toBe("string");
+
+      const closed = await app.inject({
+        method: "DELETE",
+        url: "/mcp-server",
+        headers: { "mcp-session-id": String(mcpSessionId) },
+      });
+      expect(closed.statusCode).toBe(200);
+
+      const stale = await app.inject({
+        method: "POST",
+        url: "/mcp-server",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          "mcp-session-id": String(mcpSessionId),
+        },
+        payload: { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      });
+      expect(stale.statusCode).toBe(404);
     } finally {
       await app.close();
     }

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { createProject } from "../src/projects.ts";
-import { readRunResult, persistRunResult } from "../src/agent/run-results.ts";
+import {
+  persistTerminalRunResult,
+  readRunResult,
+  persistRunResult,
+} from "../src/agent/run-results.ts";
 import { RunBroker, type RunMetadata } from "../src/agent/run-broker.ts";
 
 function metadata(runId: string): RunMetadata {
@@ -47,5 +51,18 @@ describe("durable terminal run results", () => {
 
     expect(persistRunResult("aborted-results", handle)).toMatchObject({ status: "aborted" });
     expect(readRunResult("aborted-results", "aborted-result-1")).toMatchObject({ status: "aborted" });
+  });
+
+  it("can snapshot a terminal result before the live done frame is published", () => {
+    createProject({ projectId: "pre-done-results", name: "Pre-done results" });
+    const broker = new RunBroker();
+    const handle = broker.start("pre-done-results", "session-3", metadata("pre-done-result-1"));
+    handle.publish({ type: "cost", cost: 0, tokens: 0 });
+
+    expect(persistTerminalRunResult("pre-done-results", handle)).toMatchObject({
+      status: "done",
+      frames: expect.arrayContaining([expect.objectContaining({ type: "done", seq: 2 })]),
+    });
+    expect(handle.isComplete).toBe(false);
   });
 });

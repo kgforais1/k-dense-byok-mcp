@@ -106,6 +106,35 @@ export function unpinSession(projectId: string, sessionId: string): void {
   pinned.delete(keyFor(projectId, sessionId));
 }
 
+/**
+ * Return the allowlist supplied to Pi when creating a session.
+ *
+ * MCP clients are headless, so their sessions intentionally omit `interview`:
+ * the tool waits for the browser UI to submit an answer. Keeping this as a
+ * pure helper makes that boundary testable without starting a full Pi session.
+ */
+export function sessionToolNames(
+  includeInterview: boolean,
+  mcpToolNames: readonly string[],
+): string[] {
+  return [
+    ...BUILTIN_TOOLS,
+    "subagent",
+    // pi-subagents ≥0.45 registers this alongside `subagent` and enables it by
+    // default. Since 0.47 a workflowScript launch is async by default and
+    // returns a receipt, so without it in this allowlist Pi filters out the
+    // lead's only way to block on the children it just started.
+    "subagent_wait",
+    ...(includeInterview ? ["interview"] : []),
+    "notebook",
+    "scientific_result",
+    ...PDF_ANNOTATION_TOOL_NAMES,
+    ...WEB_ACCESS_TOOLS,
+    ...MODAL_TOOL_NAMES,
+    ...mcpToolNames,
+  ];
+}
+
 /** Dispose the least-recently-used idle sessions for a project over the cap. */
 function evictOverCap(projectId: string): void {
   const prefix = `${projectId}:`;
@@ -216,22 +245,7 @@ async function build(
     modelRuntime,
     sessionManager,
     resourceLoader,
-    tools: [
-      ...BUILTIN_TOOLS,
-      "subagent",
-      // pi-subagents ≥0.45 registers this alongside `subagent` and enables it by
-      // default. Since 0.47 a workflowScript launch is async by default and
-      // returns a receipt, so without it in this allowlist Pi filters out the
-      // lead's only way to block on the children it just started.
-      "subagent_wait",
-      ...(includeInterview ? ["interview"] : []),
-      "notebook",
-      "scientific_result",
-      ...PDF_ANNOTATION_TOOL_NAMES,
-      ...WEB_ACCESS_TOOLS,
-      ...MODAL_TOOL_NAMES,
-      ...mcpTools.map((t) => t.name),
-    ],
+    tools: sessionToolNames(includeInterview, mcpTools.map((t) => t.name)),
     customTools: [
       ...(includeInterview && interviewTool ? [interviewTool] : []),
       notebookTool,

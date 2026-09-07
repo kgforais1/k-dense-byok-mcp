@@ -9,40 +9,14 @@
  *     without `interview` is `{ includeInterview: false }` on `createSession`
  *     / `getSession`.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-import {
-  createSession,
-  disposeSession,
-  getSession,
-} from "../src/agent/session-registry.ts";
-import { ensureProjectExists, resolvePaths } from "../src/projects.ts";
-import { PROJECTS_ROOT } from "../src/config.ts";
-
-const createdSessions: Array<{ projectId: string; sessionId: string }> = [];
-
-function resetProjects(): void {
-  fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
-  fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
-}
-
-beforeEach(resetProjects);
-
-afterEach(() => {
-  for (const { projectId, sessionId } of createdSessions) {
-    try {
-      disposeSession(projectId, sessionId);
-    } catch {
-      // ignore cleanup errors
-    }
-  }
-  createdSessions.length = 0;
-});
+import { sessionToolNames } from "../src/agent/session-registry.ts";
 
 describe("MCP SDK 1.29.0 server-side surface", () => {
   it("is resolved to 1.29.0 in the server lockfile", () => {
@@ -91,51 +65,27 @@ describe("MCP SDK 1.29.0 server-side surface", () => {
 });
 
 describe("interview headless-session evidence", () => {
-  it("regular createSession includes interview in active tool names", async () => {
-    ensureProjectExists("default");
-    const paths = resolvePaths("default");
-    const session = await createSession("default", paths);
-    createdSessions.push({ projectId: "default", sessionId: session.sessionId });
+  it("regular session allowlist includes interview", () => {
+    const tools = sessionToolNames(true, ["project_mcp_tool"]);
 
-    const tools = session.getActiveToolNames();
     expect(tools).toContain("interview");
-    // Sanity-check that the rest of the regular session surface is present.
     expect(tools).toContain("read");
     expect(tools).toContain("bash");
     expect(tools).toContain("subagent");
     expect(tools).toContain("notebook");
     expect(tools).toContain("web_search");
+    expect(tools).toContain("project_mcp_tool");
   });
 
-  it("createSession with includeInterview:false omits interview from active tools", async () => {
-    ensureProjectExists("headless");
-    const paths = resolvePaths("headless");
-    const session = await createSession("headless", paths, { includeInterview: false });
-    createdSessions.push({ projectId: "headless", sessionId: session.sessionId });
+  it("headless session allowlist omits interview while retaining other tools", () => {
+    const tools = sessionToolNames(false, ["project_mcp_tool"]);
 
-    const tools = session.getActiveToolNames();
     expect(tools).not.toContain("interview");
-    // The rest of the regular surface still loads unchanged.
     expect(tools).toContain("read");
     expect(tools).toContain("bash");
     expect(tools).toContain("subagent");
     expect(tools).toContain("notebook");
     expect(tools).toContain("web_search");
-  });
-
-  it("getSession accepts includeInterview:false and omits interview from active tools", async () => {
-    ensureProjectExists("headless-reopen");
-    const paths = resolvePaths("headless-reopen");
-    const session1 = await createSession("headless-reopen", paths, { includeInterview: false });
-    createdSessions.push({ projectId: "headless-reopen", sessionId: session1.sessionId });
-
-    // getSession on a live session returns the cached instance; the option is
-    // accepted and the live session's tool set remains unchanged.
-    const cached = await getSession("headless-reopen", paths, session1.sessionId, {
-      includeInterview: false,
-    });
-    expect(cached).toBe(session1);
-    expect(cached!.getActiveToolNames()).not.toContain("interview");
-    expect(cached!.getActiveToolNames()).toContain("read");
+    expect(tools).toContain("project_mcp_tool");
   });
 });

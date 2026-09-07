@@ -2,7 +2,7 @@
 title: "MCP server Phase 3 — harden and package"
 status: proposed
 created: 2026-09-06
-branch: chore/todo-refresh-mcp-roadmap
+branch: mcp-work
 ---
 
 # MCP Server Phase 3 — Harden, Document, Package (Partial)

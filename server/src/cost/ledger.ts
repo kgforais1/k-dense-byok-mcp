@@ -138,7 +138,14 @@ function costsPath(sessionId: string, projectId?: string): string {
     throw new Error(`Invalid project id: ${projectId}`);
   }
   const paths = projectId ? resolvePaths(projectId) : activePaths();
-  return path.join(paths.runsDir, sessionId, "costs.jsonl");
+  const runsRoot = path.resolve(paths.runsDir);
+  const file = path.resolve(runsRoot, sessionId, "costs.jsonl");
+  // Keep this normalized containment check next to the filesystem sinks. It
+  // protects this boundary even if a future caller broadens either id grammar.
+  if (!file.startsWith(`${runsRoot}${path.sep}`)) {
+    throw new Error("Ledger path escapes the project runs directory");
+  }
+  return file;
 }
 
 /** Append a ledger row for the delta between two cumulative snapshots. */

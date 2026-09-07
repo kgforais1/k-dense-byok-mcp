@@ -74,12 +74,14 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 | Minimal subset covers the loop | Phase 2 tool list exercised end-to-end without raw-HTTP fallback |
 | A new client can connect quickly | Fresh-client walkthrough against `docs/mcp-server.md` |
 
-## Open questions (hinge Phase 2 scope)
+## Resolved Phase 1 decisions (hinge Phase 2 scope)
 
-1. Transport: stdio (npx-style per client) vs StreamableHTTP against the running backend (:8000, reuses scope/auth)?
-2. Process model: in-process with the backend vs sidecar process?
-3. How do long SSE agent runs map to MCP — progress notifications vs poll-style `kdense_get_result`?
-4. Which tool subset is minimal-viable?
-5. Project-scoping/auth UX for external clients (local-first; remote explicitly out of scope for now)?
-6. CLI before or after hardening? Default: after, reusing the adapter — revisit only if Phase 1 finds MCP blocked.
-7. Blocking tools: `interview` blocks a run on a chat-UI answer (the reason it is withheld from subagent child processes) — for MCP-driven sessions, disable it, surface it as MCP elicitation, or map it to a tool result? (Decided in Phase 1a inventory.)
+The decision record and rationale live in the [Phase 1 research plan](2026-09-06-mcp-server-phase-1-research.md#decisions); the Phase 2 plan is the implementation contract.
+
+1. **Transport:** Streamable HTTP on the existing backend listener, via `StreamableHTTPServerTransport`; not stdio.
+2. **Process model:** in-process Fastify routes; not a sidecar or a second listener.
+3. **Run mapping:** durable poll tools (`start_research_run` and `poll_run`), not MCP progress streaming; concurrency uses the typed `RunAlreadyActiveError` rule and completed handles require retention reconciliation.
+4. **Tool subset:** `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, and `poll_run`; the creation tool supplies a fresh client with the Kady session id for its research thread.
+5. **Scoping/auth UX:** local-first Streamable HTTP clients send `X-Project-Id`; remote and browser-origin clients are out of scope, and MCP fails closed on any non-loopback bind.
+6. **CLI ordering:** after MCP hardening, reusing the adapter; revisit only if the implementation is blocked.
+7. **Interview handling:** disable `interview` for MCP-driven sessions and add an MCP-specific prompt/skill note explaining that limitation; do not bridge elicitation in this phase.

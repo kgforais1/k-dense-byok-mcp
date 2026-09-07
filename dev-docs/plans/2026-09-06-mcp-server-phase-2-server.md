@@ -23,9 +23,9 @@ A minimal live loop validates the adapter approach before committing to the full
 
 ## Design decisions
 
-- Thin translation only — tools call existing endpoints; no agent logic in the adapter. (To be confirmed against Phase 1 inventory.)
-- Minimal subset decided in Phase 1: `list_projects`, `get_session_history`, `start_research_run`, `poll_run` (see the Phase 1 Decisions for the transport/process verdicts).
-- Local-only; project scoping via the existing `X-Project-Id` mechanism.
+- Thin translation only — tools call existing endpoints; no agent logic in the adapter.
+- Minimal subset decided in Phase 1: `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, `poll_run` (see the Phase 1 Decisions for the transport/process verdicts). `create_research_session` wraps `POST /sessions`, returns the Kady session id required by the latter three session-scoped tools, and is the provisioning path for a fresh external client.
+- Local-only; project scoping via the existing `X-Project-Id` mechanism. When MCP is enabled, startup rejects every non-loopback `KADY_HOST` value (including `0.0.0.0`) before mounting or serving MCP routes; `127.0.0.1` remains the supported default.
 
 ## Proposed information architecture / file changes
 
@@ -38,7 +38,7 @@ server/test/mcp-server-*.test.ts   NEW — tool-shape, scoping, contract tests
 ## Implementation sequence
 
 - [ ] Scaffold the adapter per Phase 1 transport/process verdicts.
-- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, a bind assertion on the shared Fastify listener — its `127.0.0.1` default only — and error mapping incl. distinguishing the `/steer`-only HTTP 403 from the run's `kind:"budget"` frame on an HTTP-200 stream, plus the ~30s completed-handle retention reconciliation).
+- [ ] Implement the minimal tool subset with contract tests (shape, project scoping, fresh-client `create_research_session` → run/poll flow, a bind assertion that preserves the `127.0.0.1` default and rejects every non-loopback `KADY_HOST` value — including `0.0.0.0` — whenever MCP is enabled, and error mapping). The run-start contract must map **only** `RunAlreadyActiveError` — either via a typed `reason` preserved by `/sessions/:id/run` or by the adapter's direct `runBroker` rule — to the MCP “run already active” response. Its test must force both that concurrent case and an unrelated `start()`/`publish()` failure: the former gets that response; an HTTP 500 unrelated failure preserves its actual mapped failure rather than being mislabeled as concurrency. It must also distinguish the `/steer`-only HTTP 403 from the run's `kind:"budget"` frame on an HTTP-200 stream, plus the ~30s completed-handle retention reconciliation.
 - [ ] End-to-end check from a real external MCP client (OpenCode or Claude Code) against a scratch project.
 - [ ] Record deviations from this stub as Decisions.
 
@@ -61,9 +61,9 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
 
 ## Open questions (for Phase 1 or Phase 2 kickoff)
 
-1. Exact schemas for the four decided tools (`list_projects`, `get_session_history`, `start_research_run`, `poll_run`).
+1. Exact schemas for the five decided tools (`list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, `poll_run`).
 2. Error mapping: HTTP/SSE failures → MCP error responses. Budget-blocked runs surface as a `kind:"budget"` *frame* inside an HTTP-200 SSE stream (not a 403), so the mapping must inspect terminal frames — and `poll_run` needs a durable-result source given no first-class per-run terminal endpoint exists today.
-3. Session lifecycle over MCP (who creates/reaps Pi sessions?) — load-bearing: the decided subset cannot bootstrap a new session, so resolve before the end-to-end loop is implementable.
+3. Session lifecycle over MCP — **resolved:** `create_research_session` is a required session-management tool backed by `POST /sessions`; fresh clients call it once per research thread and pass the returned id to history/start/poll. The adapter never creates a session during a run or poll. It inherits existing lifecycle semantics: live idle sessions are LRU-evicted at the backend's per-project cap, while persisted JSONL transcripts are retained until the existing project lifecycle removes them; Phase 2 adds no adapter-only reaper.
 4. Transport session mode: StreamableHTTP stateful vs stateless, and whether/how the transport session id relates to a Kady Pi session (recorded in Phase 1 Decisions). In stateful mode each request maps to a `StreamableHTTPServerTransport` keyed by the SDK `Mcp-Session-Id` header — the adapter must cache transports per session id (or choose per-request stateless), otherwise stateful mode breaks across requests.
 5. `start_research_run` image attachments: mirror the existing inline `images: [{data, mimeType}]` run body so image content from the MCP client (base64 in its content array) reaches the model; otherwise image-carrying research is silently text-only.
 6. `poll_run` vs `get_session_history` contract: both can read `/sessions/:id/history`; define which returns "new messages since run baseline" vs "whole transcript" to avoid double-fetching and a duplicated tool surface.

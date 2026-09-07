@@ -2,7 +2,7 @@
 title: "MCP server for K-Dense"
 status: proposed
 created: 2026-09-06
-branch: chore/todo-refresh-mcp-roadmap
+branch: mcp-work
 ---
 
 # MCP Server for K-Dense (Kady as a Tool for External Agents) — Master Plan
@@ -28,7 +28,7 @@ Because the backend already exposes project/session/run/file APIs (notes §§ 6�
 - **MCP first, CLI deferred.** Per notes §13 recs 7–8 and the agent-to-agent workflow. The CLI becomes a thin client over the same API/adapter later — it must not fork the tool logic.
 - **Thin adapter over the existing HTTP API.** Translate MCP tool calls into the already-existing project/session/run endpoints (notes §12). No duplicated agent logic in the adapter.
 - **Minimal tool subset first.** Prove the path with a few tools (list/get + one research run) before the full §10 surface (`kdense_research`, `kdense_delegate_specialist`, …).
-- **SDK already a dependency.** `@modelcontextprotocol/sdk` (`^1.29.0`) is in `server/package.json`; current imports are client-side only (`Client`, `StdioClientTransport`, `StreamableHTTPClientTransport` in `server/src/agent/mcp.ts`). Server-side exports (`McpServer`, transports) to be confirmed against the pinned version in Phase 1 — SDK upgrades stay deliberate and test-gated (note: the SDK is a caret-range dep, not part of the exact-pin harness set).
+- **SDK already a dependency.** `@modelcontextprotocol/sdk` (`^1.29.0`) is in `server/package.json`; current imports are client-side only (`Client`, `StdioClientTransport`, `StreamableHTTPClientTransport` in `server/src/agent/mcp.ts`). Server-side exports (the high-level `McpServer` — over its low-level `Server` — plus `StdioServerTransport`/`StreamableHTTPServerTransport`) to be confirmed against the pinned version in Phase 1 — SDK upgrades stay deliberate and test-gated (note: the SDK is a caret-range dep, not part of the exact-pin harness set).
 - **Local-only by default.** Project scoping reuses the existing `X-Project-Id` mechanism (notes §7). Remote/multi-user auth is an open question, not a Phase 2 requirement.
 
 ## Proposed information architecture / file changes
@@ -64,7 +64,7 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 - MCP SDK upgrades are deliberate and test-gated (caret-range dep, not in the exact-pin harness set); Phase 1 records the exact resolved version.
 - Cross-platform like the rest of the backend (Windows Git-Bash paths, no `which`).
 - Budgets and caps apply unchanged: MCP-driven runs go through the existing cost-ledger / spend-cap path, and the adapter respects the ≤10-sessions-per-project cap (create-or-reuse, never create-per-call).
-- Local-only, concretely: any HTTP transport binds `127.0.0.1` only; Phase 2 adds a test asserting the bind address.
+- Local-only, concretely: the MCP route shares the existing Fastify listener (never a separate port), and that listener binds `127.0.0.1` only. Phase 2 adds a test asserting the bind address of the shared server — the MCP route's `reply.hijack()` handoff bypasses Fastify's hooks, so the local-only guarantee belongs to the listener, not the route. (A future `HOST=0.0.0.0` would otherwise expose the MCP surface network-wide.)
 
 ## Acceptance measures
 

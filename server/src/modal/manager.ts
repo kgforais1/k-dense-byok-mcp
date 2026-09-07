@@ -869,8 +869,11 @@ export class DurableModalJobManager {
           settled = true;
         });
       while (!settled) {
-        await checked(sleep(500));
-        await this.syncRemoteLogs(projectId, jobId, sandbox);
+        // Do not add a fixed 500 ms completion delay: it compounds with setup
+        // and filesystem work, making short-lived jobs flaky on slower hosts.
+        // The timer still bounds how often we read remote logs for long runs.
+        await checked(Promise.race([waiter, sleep(500)]));
+        if (!settled) await this.syncRemoteLogs(projectId, jobId, sandbox);
       }
       await checked(waiter);
       await this.syncRemoteLogs(projectId, jobId, sandbox);

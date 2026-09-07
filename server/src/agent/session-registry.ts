@@ -106,6 +106,35 @@ export function unpinSession(projectId: string, sessionId: string): void {
   pinned.delete(keyFor(projectId, sessionId));
 }
 
+/**
+ * Return the allowlist supplied to Pi when creating a session.
+ *
+ * MCP clients are headless, so their sessions intentionally omit `interview`:
+ * the tool waits for the browser UI to submit an answer. Keeping this as a
+ * pure helper makes that boundary testable without starting a full Pi session.
+ */
+export function sessionToolNames(
+  includeInterview: boolean,
+  mcpToolNames: readonly string[],
+): string[] {
+  return [
+    ...BUILTIN_TOOLS,
+    "subagent",
+    // pi-subagents ≥0.45 registers this alongside `subagent` and enables it by
+    // default. Since 0.47 a workflowScript launch is async by default and
+    // returns a receipt, so without it in this allowlist Pi filters out the
+    // lead's only way to block on the children it just started.
+    "subagent_wait",
+    ...(includeInterview ? ["interview"] : []),
+    "notebook",
+    "scientific_result",
+    ...PDF_ANNOTATION_TOOL_NAMES,
+    ...WEB_ACCESS_TOOLS,
+    ...MODAL_TOOL_NAMES,
+    ...mcpToolNames,
+  ];
+}
+
 /** Dispose the least-recently-used idle sessions for a project over the cap. */
 function evictOverCap(projectId: string): void {
   const prefix = `${projectId}:`;
@@ -132,6 +161,7 @@ async function build(
   projectId: string,
   paths: ProjectPaths,
   sessionManager: SessionManager,
+  options?: { includeInterview?: boolean },
 ): Promise<AgentSession> {
   const fallbackModel = defaultModel(modelRegistry);
   const mcpTools = await getMcpTools(projectId, paths);
@@ -194,7 +224,12 @@ async function build(
   await resourceLoader.reload();
   // The interview tool blocks mid-run on answers posted to the HTTP API; it
   // reads the live sessionId through the same holder as the ledger extension.
-  const interviewTool = makeInterviewTool(projectId, () => holder.session?.sessionId ?? "");
+  // It is included by default for regular chat sessions; set includeInterview
+  // to false for headless / MCP-only sessions that must not block on user input.
+  const includeInterview = options?.includeInterview ?? true;
+  const interviewTool = includeInterview
+    ? makeInterviewTool(projectId, () => holder.session?.sessionId ?? "")
+    : undefined;
   // Non-blocking lab-notebook tool: logs the agent's own narrative entries.
   const notebookTool = makeNotebookTool(projectId, () => holder.session?.sessionId ?? "");
   // Typed presentation layer for compact scientific results and artifact links.
@@ -210,24 +245,9 @@ async function build(
     modelRuntime,
     sessionManager,
     resourceLoader,
-    tools: [
-      ...BUILTIN_TOOLS,
-      "subagent",
-      // pi-subagents ≥0.45 registers this alongside `subagent` and enables it by
-      // default. Since 0.47 a workflowScript launch is async by default and
-      // returns a receipt, so without it in this allowlist Pi filters out the
-      // lead's only way to block on the children it just started.
-      "subagent_wait",
-      "interview",
-      "notebook",
-      "scientific_result",
-      ...PDF_ANNOTATION_TOOL_NAMES,
-      ...WEB_ACCESS_TOOLS,
-      ...MODAL_TOOL_NAMES,
-      ...mcpTools.map((t) => t.name),
-    ],
+    tools: sessionToolNames(includeInterview, mcpTools.map((t) => t.name)),
     customTools: [
-      interviewTool,
+      ...(includeInterview && interviewTool ? [interviewTool] : []),
       notebookTool,
       scientificResultTool,
       ...pdfAnnotationTools,
@@ -243,10 +263,11 @@ async function build(
 export async function createSession(
   projectId: string,
   paths: ProjectPaths,
+  options?: { includeInterview?: boolean },
 ): Promise<AgentSession> {
   fs.mkdirSync(paths.sessionsDir, { recursive: true });
   const sm = SessionManager.create(paths.sandbox, paths.sessionsDir);
-  const session = await build(projectId, paths, sm);
+  const session = await build(projectId, paths, sm, options);
   live.set(keyFor(projectId, session.sessionId), session);
   evictOverCap(projectId);
   return session;
@@ -257,6 +278,7 @@ export async function getSession(
   projectId: string,
   paths: ProjectPaths,
   sessionId: string,
+  options?: { includeInterview?: boolean },
 ): Promise<AgentSession | null> {
   const k = keyFor(projectId, sessionId);
   const existing = live.get(k);
@@ -270,7 +292,7 @@ export async function getSession(
   const info = infos.find((i) => i.id === sessionId);
   if (!info) return null;
   const sm = SessionManager.open(info.path, paths.sessionsDir, paths.sandbox);
-  const session = await build(projectId, paths, sm);
+  const session = await build(projectId, paths, sm, options);
   live.set(k, session);
   evictOverCap(projectId);
   return session;

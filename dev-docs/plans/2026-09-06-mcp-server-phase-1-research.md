@@ -2,12 +2,12 @@
 title: "MCP server Phase 1 — research spike"
 status: proposed
 created: 2026-09-06
-branch: chore/todo-refresh-mcp-roadmap
+branch: mcp-work
 ---
 
 # MCP Server Phase 1 — Research Spike and Decisions
 
-**Status:** Proposed
+**Status:** Accepted — spike evidence recorded below
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -29,7 +29,9 @@ Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE �
 ## Proposed information architecture / file changes
 
 ```text
-(no product files; spike code lives in tmp/ or a scratch branch and is discarded)
+(no product surface; executable spike checks are quarantined under `server/test/`)
+server/test/mcp-phase1-spike.test.ts              SDK + headless-session evidence
+server/test/mcp-run-mapping-spike.test.ts         broker poll-contract evidence
 dev-docs/plans/2026-09-06-mcp-server-phase-1-research.md  THIS FILE (+ Decisions)
 dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
 ```
@@ -38,20 +40,20 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 ### Phase 1a — Inventory (read-only)
 
-- [ ] Map the existing MCP-related code — the client bridge (`server/src/agent/mcp.ts`) plus the server-side config API (`server/src/api/mcp.ts`, Fastify settings endpoints for MCP client configs) — and note what transports/patterns already exist in-repo.
-- [ ] Inventory blocking/headless-hostile tools — notably `interview` (blocks a run on a chat-UI answer; withheld from subagent child processes for this reason) — and decide for MCP-driven sessions: disable, surface as MCP elicitation, or map to a tool result.
-- [ ] Confirm server-side exports available at the declared `@modelcontextprotocol/sdk` range against the lockfile-resolved version `1.29.0` (`McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version.
-- [ ] List the HTTP endpoints backing each candidate §10 tool (projects, sessions/run SSE, files, notebook).
+- [x] Map the existing MCP-related code — `server/src/agent/mcp.ts` is an outbound client bridge using `Client` plus stdio/Streamable HTTP client transports; `server/src/api/mcp.ts` is only the project connector-settings API. Neither exposes Kady as an MCP server, so the adapter is new and mounts beside the existing Fastify routes.
+- [x] Inventory blocking/headless-hostile tools — `session-registry.ts` registers `interview` by default and `interview.ts` blocks awaiting the chat UI. The spike proves `{ includeInterview: false }` omits it while preserving the ordinary tool surface; Phase 2 must pair that option with its replacement MCP prompt guidance.
+- [x] Confirm server-side exports available at the declared `@modelcontextprotocol/sdk` range against the lockfile-resolved version `1.29.0` (high-level `McpServer`, stdio + StreamableHTTP transports) and record the exact resolved version: `server/package-lock.json` resolves `@modelcontextprotocol/sdk` to `1.29.0`; import `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js`, the low-level `Server` (whose `elicitInput()` method is needed only for a future elicitation bridge) from `@modelcontextprotocol/sdk/server/index.js`, `StdioServerTransport` from `@modelcontextprotocol/sdk/server/stdio.js`, and `StreamableHTTPServerTransport` from `@modelcontextprotocol/sdk/server/streamableHttp.js`.
+- [x] List the HTTP endpoints backing the minimum candidate tools: `GET /projects`; `POST /sessions`; `GET /sessions/:id/history`; `POST /sessions/:id/run`; and `GET /sessions/:id/run/state`/`events`. The run result must not use the broker alone after expiry; Phase 2 adds the documented persisted per-run lookup.
 
-**Exit criteria:** inventory written down; no open "what exists?" questions remain.
+**Exit criteria:** every Phase 1a inventory item is checked, or explicitly deferred with a reason; no open "what exists?" questions remain.
 
 ### Phase 1b — Prototype (throwaway)
 
-- [ ] Stand up one read-only tool (e.g. project list) over the leading transport candidate.
-- [ ] Attempt one live run-mapping experiment (SSE run → MCP progress or poll) and record what worked.
-- [ ] Record verdicts for master-plan questions 1–7 (answered or explicitly deferred with a reason), including CLI-ordering (Q6) and interview-handling (Q7).
+- [~] Defer a served read-only tool to Phase 2: the SDK spike constructs the actual high-level `McpServer` and proves `registerTool`, but intentionally does not mount a product route or create an adapter-only prototype that would be discarded. This does not change the transport decision; Phase 2's first contract test will serve `list_projects`.
+- [x] Run the poll-mapping experiment in `server/test/mcp-run-mapping-spike.test.ts`: live frames are sequence-pollable; only `RunAlreadyActiveError` is typed concurrency; budget/error/done remain terminal frames; completed handles become `none` after retention. Existing `steer-abort.test.ts` confirms the route's generic start failure is an HTTP 500, so the adapter must use the typed rule or a future typed HTTP reason.
+- [x] Record verdicts for master-plan questions 1–7 (answered or explicitly deferred with a reason), including CLI-ordering (Q6) and interview-handling (Q7).
 
-**Exit criteria:** decision record complete; Phase 2 plan updated to match; spike code discarded or clearly quarantined.
+**Exit criteria:** every Phase 1b prototype item is checked, or explicitly deferred with a reason; decision record updated with its evidence; Phase 2 plan updated to match; spike code discarded or clearly quarantined.
 
 Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
 
@@ -65,18 +67,19 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
 
 | Outcome | Evidence |
 |---|---|
-| Transport + process model decided | Verdict recorded in Decisions with the experiment behind it |
+| Transport + process model decided | Verdict recorded in Decisions with the experiment behind it, or an explicit deferral |
 | Run-mapping approach chosen | Spike transcript or explicit deferral |
-| Phase 2 is implementable | Refined Phase 2 plan references these verdicts |
+| Phase 2 is implementable | All Phase 1a/1b exit criteria met and the refined Phase 2 plan references the evidence |
 
 ## Decisions
 
-Record each master-plan open question as **answered** or **deferred** (with reason) before Phase 2 starts. Include inherited decisions from the master plan (e.g. CLI default: after hardening).
+The entries below are the accepted Phase 1 decision record. The served read-only tool is explicitly deferred to the first Phase 2 contract test; all other evidence is captured by the quarantined spike checks above. Include inherited decisions from the master plan (e.g. CLI default: after hardening).
 
-1. Transport (stdio vs StreamableHTTP): _pending_
-2. Process model (in-process vs sidecar): _pending_
-3. SSE run → MCP mapping (progress vs poll): _pending_
-4. Minimal-viable tool subset: _pending_
-5. Project-scoping/auth UX (local-first; remote out of scope): _pending_
-6. CLI ordering (before vs after hardening): _inherited — after, reusing the adapter; revisit only if Phase 1 finds MCP blocked_
-7. Interview handling for MCP-driven sessions (disable / elicitation / tool result): _pending (Phase 1a)_
+1. Transport (stdio vs StreamableHTTP): **Provisionally answered:** StreamableHTTPServerTransport (SSEServerTransport is deprecated in 1.29.0). Note that mounting this on Fastify requires `reply.hijack()` to pass raw Node.js ServerResponses, which skips Fastify's response-side hooks (CORS headers, logging) — the `onRequest` scope hook still runs, so project scoping is unaffected. The transport has both a stateful mode (session id via response header) and a stateless mode (no session id) — Phase 2 must pick one and record how (or whether) the transport session id relates to a Kady Pi session before implementation.
+2. Process model (in-process vs sidecar): **Provisionally answered:** In-process. By mounting the MCP routes directly on the existing Fastify server, we reuse the `X-Project-Id` scope and avoid duplicating state or budgets. The MCP route shares the existing listener — never a separate port — so the "local-only" guarantee is a property of that shared listener, not of the MCP route.
+3. SSE run → MCP mapping (progress vs poll): **Provisionally answered:** Poll. Prefer a durable-job pattern (`start_research_run` + `poll_run`) over streaming: the SDK does have (experimental) task support and progress notifications, but a poll tool matched to the existing `runBroker` is the thinner adapter. Three guards, mostly provided by the HTTP layer, must be reused rather than re-implemented: (a) concurrent runs — `/sessions/:id/run` rejects a second live run with 409 (`sessions.ts:523`); `runBroker.start` additionally throws `RunAlreadyActiveError` on a narrow race. Today the `/run` catch collapses *any* `start`/`publish` failure into a single HTTP 500 (`sessions.ts:587-595`), so the adapter must not treat every 500 as concurrency — either the HTTP layer must preserve a distinct `reason` for `RunAlreadyActiveError`, or the adapter must call `runBroker` directly and inspect the typed error. (b) completion — `runBroker` retains completed run frames for only ~30s (`DEFAULT_COMPLETED_RETENTION_MS`), so Phase 2 will persist one terminal record per `runId` under the existing project run-data tree and expose a per-run lookup. `poll_run` reads the live broker first, then that durable record after the retention window, returning its terminal status/result rather than treating an expired completed run as unknown. (c) budget — a budget-blocked *run* is not an HTTP error: `/sessions/:id/run` opens the SSE stream (HTTP 200) then publishes a `kind:"budget"` error *frame* (`sessions.ts:711`); the 403 + `reason:"budget"` exists only on `/steer` (`sessions.ts:479`). `start_research_run` therefore cannot surface a spend cap from the HTTP status — `poll_run` must detect it from the terminal frame.
+4. Minimal-viable tool subset and session lifecycle: **Provisionally answered:** `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, `poll_run`. `create_research_session` is the fresh-client provisioning path and directly wraps the existing `POST /sessions` route; it creates one Pi session per client-requested research thread, returns its Kady session id, and must not create a session per run or poll. The client retains that returned id; the adapter adds no deletion because no delete endpoint exists. Lifecycle remains the backend's current, explicit behavior: `SessionManager` persists session JSONL history, while the live in-memory registry LRU-evicts only idle objects over the per-project cap; persistent histories are retained until an existing project-level lifecycle operation removes the project. Phase 2 must document that retention rather than invent a reaper in the adapter.
+5. Project-scoping/auth UX (local-first; remote out of scope): **Provisionally answered:** Pass `X-Project-Id` in the MCP client connection headers, reusing existing scoping (header is first in scope precedence). This only works for StreamableHTTP clients that can set per-request headers — stdio clients have no HTTP headers, and some MCP clients don't expose custom headers, so the supported-client set must be documented. Because `reply.hijack()` skips Fastify's CORS *response* handling, a browser-origin MCP client would fail CORS unless the adapter writes CORS headers manually (as the existing `streamRun` path does via `corsResponseHeaders()`) or browser/remote clients are declared out of scope. Note this does *not* affect scoping — the `onRequest` hook still resolves `X-Project-Id` before the handler.
+6. CLI ordering (before vs after hardening): **Provisionally deferred:** after, reusing the adapter — revisit only if Phase 1 finds MCP blocked.
+7. Interview handling for MCP-driven sessions (disable / elicitation / tool result): **Provisionally answered:** Disable. While MCP SDK 1.29.0 does support elicitation (`elicitInput` — note it lives on the low-level `Server`, not re-exposed on `McpServer`), bridging our Pi-specific React UI and `runBroker` to MCP elicitation is out of scope. Risk: MCP-driven sessions will guess instead of asking clarifying questions. Second-order risk: the `interview` tool ships `promptGuidelines` ("ask clarifying questions as much as possible … do not silently assume") plus a seeded AGENTS.md with the same push, so removing the tool from the allowlist leaves the model still wanting to interview — it will guess *and* has been told not to. **Named Phase 2 prerequisite:** disable the tool only together with an MCP-specific system-prompt/skill note that explains the limitation, and contract-test the resulting MCP session configuration. Only `interview` is withheld; `notebook` and the other custom/inbuilt tools stay enabled for MCP sessions.
+8. SDK version pinning (inherited guardrail, restated): `@modelcontextprotocol/sdk` stays a caret-range dep, deliberately *not* in the exact-pin harness set. Record the upgrade playbook (bump pin, `npm install` in `server/`, typecheck + tests) and re-confirm the server-side class/transport surface after every bump — the `McpServer` vs `Server` split has proven easy to misname.

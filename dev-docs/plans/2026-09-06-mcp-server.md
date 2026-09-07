@@ -2,7 +2,7 @@
 title: "MCP server for K-Dense"
 status: proposed
 created: 2026-09-06
-branch: chore/todo-refresh-mcp-roadmap
+branch: mcp-work
 ---
 
 # MCP Server for K-Dense (Kady as a Tool for External Agents) — Master Plan
@@ -28,7 +28,7 @@ Because the backend already exposes project/session/run/file APIs (notes §§ 6�
 - **MCP first, CLI deferred.** Per notes §13 recs 7–8 and the agent-to-agent workflow. The CLI becomes a thin client over the same API/adapter later — it must not fork the tool logic.
 - **Thin adapter over the existing HTTP API.** Translate MCP tool calls into the already-existing project/session/run endpoints (notes §12). No duplicated agent logic in the adapter.
 - **Minimal tool subset first.** Prove the path with a few tools (list/get + one research run) before the full §10 surface (`kdense_research`, `kdense_delegate_specialist`, …).
-- **SDK already a dependency.** `@modelcontextprotocol/sdk` (`^1.29.0`) is in `server/package.json`; current imports are client-side only (`Client`, `StdioClientTransport`, `StreamableHTTPClientTransport` in `server/src/agent/mcp.ts`). Server-side exports (`McpServer`, transports) to be confirmed against the pinned version in Phase 1 — SDK upgrades stay deliberate and test-gated (note: the SDK is a caret-range dep, not part of the exact-pin harness set).
+- **SDK already a dependency.** `@modelcontextprotocol/sdk` (`^1.29.0`) is in `server/package.json`; current imports are client-side only (`Client`, `StdioClientTransport`, `StreamableHTTPClientTransport` in `server/src/agent/mcp.ts`). Server-side exports (the high-level `McpServer` — over its low-level `Server` — plus `StdioServerTransport`/`StreamableHTTPServerTransport`) to be confirmed against the pinned version in Phase 1 — SDK upgrades stay deliberate and test-gated (note: the SDK is a caret-range dep, not part of the exact-pin harness set).
 - **Local-only by default.** Project scoping reuses the existing `X-Project-Id` mechanism (notes §7). Remote/multi-user auth is an open question, not a Phase 2 requirement.
 
 ## Proposed information architecture / file changes
@@ -64,7 +64,7 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 - MCP SDK upgrades are deliberate and test-gated (caret-range dep, not in the exact-pin harness set); Phase 1 records the exact resolved version.
 - Cross-platform like the rest of the backend (Windows Git-Bash paths, no `which`).
 - Budgets and caps apply unchanged: MCP-driven runs go through the existing cost-ledger / spend-cap path, and the adapter respects the ≤10-sessions-per-project cap (create-or-reuse, never create-per-call).
-- Local-only, concretely: any HTTP transport binds `127.0.0.1` only; Phase 2 adds a test asserting the bind address.
+- Local-only, concretely: the MCP route shares the existing Fastify listener (never a separate port), and that listener binds `127.0.0.1` **by default** (`KADY_HOST`, `config.ts`). Phase 2 adds a test asserting the default bind address of the shared server. Two caveats: (1) the MCP route's `reply.hijack()` handoff skips Fastify's CORS/response hooks — it does not skip the `onRequest` scope hook, so project scoping is unaffected; (2) `KADY_HOST` is an existing, supported knob, so an operator setting it to `0.0.0.0` exposes the MCP surface network-wide — hardening must treat non-loopback binds as unsupported while MCP is enabled rather than assume loopback is guaranteed.
 
 ## Acceptance measures
 
@@ -74,12 +74,14 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 | Minimal subset covers the loop | Phase 2 tool list exercised end-to-end without raw-HTTP fallback |
 | A new client can connect quickly | Fresh-client walkthrough against `docs/mcp-server.md` |
 
-## Open questions (hinge Phase 2 scope)
+## Phase 1 decision record (pending spike validation)
 
-1. Transport: stdio (npx-style per client) vs StreamableHTTP against the running backend (:8000, reuses scope/auth)?
-2. Process model: in-process with the backend vs sidecar process?
-3. How do long SSE agent runs map to MCP — progress notifications vs poll-style `kdense_get_result`?
-4. Which tool subset is minimal-viable?
-5. Project-scoping/auth UX for external clients (local-first; remote explicitly out of scope for now)?
-6. CLI before or after hardening? Default: after, reusing the adapter — revisit only if Phase 1 finds MCP blocked.
-7. Blocking tools: `interview` blocks a run on a chat-UI answer (the reason it is withheld from subagent child processes) — for MCP-driven sessions, disable it, surface it as MCP elicitation, or map it to a tool result? (Decided in Phase 1a inventory.)
+The decision record and rationale live in the [Phase 1 research plan](2026-09-06-mcp-server-phase-1-research.md#decisions). It resolves the intended Phase 2 direction, but remains pending the research spike's unchecked inventory and prototype validation; the Phase 2 plan is the implementation contract once that evidence is recorded.
+
+1. **Transport:** Streamable HTTP on the existing backend listener, via `StreamableHTTPServerTransport`; not stdio.
+2. **Process model:** in-process Fastify routes; not a sidecar or a second listener.
+3. **Run mapping:** durable poll tools (`start_research_run` and `poll_run`), not MCP progress streaming; concurrency uses the typed `RunAlreadyActiveError` rule, and a persisted terminal record keyed by `runId` makes completed results available after broker retention expires.
+4. **Tool subset:** `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, and `poll_run`; the creation tool supplies a fresh client with the Kady session id for its research thread.
+5. **Scoping/auth UX:** local-first Streamable HTTP clients send `X-Project-Id`; remote and browser-origin clients are out of scope, and MCP fails closed on any non-loopback bind.
+6. **CLI ordering:** after MCP hardening, reusing the adapter; revisit only if the implementation is blocked.
+7. **Interview handling:** disable `interview` for MCP-driven sessions and add an MCP-specific prompt/skill note explaining that limitation; do not bridge elicitation in this phase.

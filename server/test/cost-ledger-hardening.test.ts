@@ -13,6 +13,7 @@ import { createProject, ensureProjectExists, resolvePaths } from "../src/project
 import {
   isBudgetExceeded,
   projectCostSummary,
+  recordRun,
   sessionCostSummary,
   trackInFlightRun,
   untrackInFlightRun,
@@ -58,6 +59,25 @@ const row = (over: Partial<CostEntry> = {}): CostEntry => ({
 });
 
 describe("ledger reads survive damaged rows", () => {
+  it("rejects malformed path segments before accessing a project ledger", () => {
+    writeRows("s1", "sibling", [JSON.stringify(row({ costUsd: 3 }))]);
+
+    expect(() => sessionCostSummary("s1", "other/../sibling")).toThrow("Invalid project id");
+    expect(() => sessionCostSummary("s1/../other", "sibling")).toThrow("Invalid session id");
+    expect(() =>
+      recordRun({
+        sessionId: "s1",
+        projectId: "other/../sibling",
+        model: "openrouter/test/model",
+        before: { costUsd: 0, input: 0, output: 0, cacheRead: 0, total: 0 },
+        after: { costUsd: 1, input: 1, output: 0, cacheRead: 0, total: 1 },
+      }),
+    ).toThrow("Invalid project id");
+
+    // A rejected sibling selector cannot read or append to the real ledger.
+    expect(sessionCostSummary("s1", "sibling").totalUsd).toBe(3);
+  });
+
   it("keeps the intact rows when one line is torn", () => {
     writeRows("s1", "default", [
       JSON.stringify(row({ entryId: "a", costUsd: 1.5 })),

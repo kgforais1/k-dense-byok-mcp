@@ -28,7 +28,8 @@ import { seedSandboxFiles } from "./sandbox-seed.ts";
 
 const INDEX_PATH = path.join(PROJECTS_ROOT, "index.json");
 const RESERVED_IDS = new Set(["new", "index", "archive", "..", "."]);
-const ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** Project ids are single, canonical directory names under PROJECTS_ROOT. */
+export const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 export interface ProjectMeta {
   id: string;
@@ -93,7 +94,7 @@ function metaFromDict(data: Record<string, unknown>): ProjectMeta {
 }
 
 function validateId(projectId: string): void {
-  if (!ID_RE.test(projectId) || RESERVED_IDS.has(projectId)) {
+  if (!PROJECT_ID_RE.test(projectId) || RESERVED_IDS.has(projectId)) {
     throw new Error(`Invalid project id: ${projectId}`);
   }
 }

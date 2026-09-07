@@ -48,6 +48,8 @@ import {
 import { MethodsDraftError, runMethodsDraft } from "../agent/methods-draft.ts";
 import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
 import { runBroker, type RunHandle } from "../agent/run-broker.ts";
+import { runStartFailure } from "../agent/run-start-errors.ts";
+import { persistRunResult } from "../agent/run-results.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
 import { SandboxError } from "../sandbox-fs.ts";
 import {
@@ -521,7 +523,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       const retained = runBroker.get(projectId, sessionId);
       if (session.isStreaming || activeRuns.has(runKey) || (retained && !retained.isComplete)) {
         reply.code(409);
-        return { detail: "Session is already streaming a response" };
+        return { detail: "Session is already streaming a response", reason: "run_already_active" };
       }
 
       const body = req.body ?? {};
@@ -590,9 +592,23 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         setSessionRunId(projectId, session.sessionId, null);
         unpinSession(projectId, session.sessionId);
         activeRuns.delete(runKey);
-        reply.code(500);
-        return { detail: (err as Error).message };
+        const failure = runStartFailure(err);
+        reply.code(failure.statusCode);
+        return failure.body;
       }
+      // The broker intentionally forgets completed handles after ~30 seconds.
+      // Persist the replayable terminal state before that retention window so a
+      // later MCP poll can distinguish a completed run from an unknown id.
+      handle.subscribe({
+        onFrame: () => {},
+        onComplete: () => {
+          try {
+            persistRunResult(projectId, handle);
+          } catch (error) {
+            req.log.error({ error, runId }, "failed to persist terminal run result");
+          }
+        },
+      });
       // For a Fusion run we disable Pi's local tools for the turn (see below).
       // Remember the real active set so we can restore it in the finally; `null`
       // means "not a fusion run, nothing to restore".

@@ -4,6 +4,7 @@
 
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [2. Code scanning, security alerts, and Dependabot](#2-code-scanning-security-alerts-and-dependabot)
 - [ ] **Start MCP server work** → [3. Start MCP server work](#3-start-mcp-server-work)
+- [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
 
 ---
 
@@ -47,3 +48,22 @@ Ideas:
 - Decide transport and scope: stdio vs HTTP, project scoping (`X-Project-Id`), auth for a local server.
 - Adapt the existing project/session/run/file/sandbox HTTP APIs as the tool backend rather than building from scratch.
 - Start with a minimal tool subset (e.g. list projects, research prompt, get result) before the full §10 surface.
+
+## 4. Alternate coding-agent engines
+
+These are exploratory integrations, not API-key replacements already supported by
+Kady's Pi OAuth providers. Any adapter must retain Kady's local-only boundary,
+project scoping, cancellation, tool policy, and accounting.
+
+- **OpenCode:** Medium feasibility. Its loopback `opencode serve` OpenAPI server
+  offers sessions, events, and provider auth, but it is a second agent runtime;
+  an adapter would need to reconcile its tools, state, credentials, and costs
+  with Kady rather than treating it as a drop-in model provider.
+- **Antigravity / agy (including a maintained `agy-acp` fork):** Medium-low
+  feasibility pending a stable ACP contract. ACP can bridge an interactive
+  coding agent, but Kady would still need a durable session/event/cancel adapter
+  and explicit ownership of credentials and sandbox policy.
+- **Kiro:** Medium feasibility pending confirmation of a stable headless ACP/API
+  surface. Native ACP makes an integration plausible, but it remains a separate
+  agent engine with its own authentication, tool permissions, and lifecycle—not
+  a direct Pi model-provider entry.

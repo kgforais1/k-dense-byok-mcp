@@ -7,7 +7,7 @@ branch: mcp-work
 
 # MCP Server for K-Dense (Kady as a Tool for External Agents) — Master Plan
 
-**Status:** Accepted — Phase 1 complete (PR #15); Phase 2 in progress.
+**Status:** Accepted — Phases 1 and 2 complete (PRs #15, #17, #18); Phase 3 not started.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -49,7 +49,7 @@ All paths tentative pending Phase 1 findings.
 Detail lives in the phase plans, not here — this master stays at the high level. If any phase grows too large for its file, split its detail into further per-phase plan files and keep this master as the index.
 
 - [x] Phase 1 — Research spike and decisions (completed, PR #15) → [phase plan](completed/2026-09-06-mcp-server-phase-1-research.md)
-- [~] Phase 2 — Minimal MCP server (in progress) → [phase plan](2026-09-06-mcp-server-phase-2-server.md)
+- [x] Phase 2 — Minimal MCP server (completed, PRs #17 and #18) → [phase plan](completed/2026-09-06-mcp-server-phase-2-server.md)
 - [ ] Phase 3 — Harden, document, package → [phase plan](2026-09-06-mcp-server-phase-3-harden.md)
 
 Archive note: phases ship one at a time, and archiving any file in this set breaks the same-directory cross-links above. The archiving PR must rewrite them to `completed/…` and update the `mcp-server-plan` manifest entry in the same PR — `docs:check` validates `dev-docs/**` links.

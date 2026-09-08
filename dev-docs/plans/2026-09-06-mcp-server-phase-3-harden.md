@@ -58,6 +58,13 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   `POST /sessions` has the same unbounded behaviour, but it is human-driven;
   MCP makes it scriptable by an autonomous agent. Decide between a retention
   sweep, a creation cap, and bringing the MCP route inside the rate limit.
+  Wherever it lands, the fix belongs in `session-registry.ts` next to
+  `evictOverCap`, not in the `create_research_session` handler: a quota enforced
+  only on the MCP path would leave `POST /sessions` unbounded, make MCP clients
+  second-class against the browser, and violate this plan's standing guardrail
+  that the adapter translates rather than reimplements. Retention also has to
+  remove both artifacts — the JSONL transcript *and* the headless marker —
+  or a cold open of a swept session silently regains the `interview` tool.
 
 - **A run that produces nothing still reports `done`.** Carried from the Phase 2
   plan's follow-up: `poll_run` cannot distinguish "finished with an answer" from

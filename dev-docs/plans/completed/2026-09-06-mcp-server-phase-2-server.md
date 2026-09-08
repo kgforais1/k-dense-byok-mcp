@@ -1,13 +1,15 @@
 ---
 title: "MCP server Phase 2 — minimal server"
-status: accepted
+status: completed
 created: 2026-09-06
 branch: mcp-phase-2
 ---
 
 # MCP Server Phase 2 — Minimal Server
 
-**Status:** Accepted — implementation started from the Phase 1 decision record. Part of the [master plan](2026-09-06-mcp-server.md).
+**Status:** Completed and merged in PR [#18](https://github.com/kgforais1/k-dense-byok-mcp/pull/18). Part of the [master plan](../2026-09-06-mcp-server.md).
+
+> **Note (PR #18):** the server itself shipped in PR [#17](https://github.com/kgforais1/k-dense-byok-mcp/pull/17). PR #18 closed the remaining Phase 2 work — the headless-session marker, the single run-start path, the external client check — and archives this plan here as its closing act, per `docs/development/workflow.md#archive-lifecycle`.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the

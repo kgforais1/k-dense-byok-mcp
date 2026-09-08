@@ -13,8 +13,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "json-summary", "lcov"],
-      // A floor set a few points under the measured value (72.5% statements,
-      // 61.5% branches at the time of writing), so it catches a real
+      // A floor set a few points under the measured value (72.1% statements,
+      // 61.3% branches at the time of writing), so it catches a real
       // regression without failing on normal drift. Raising it as coverage
       // improves is tracked in
       // `dev-docs/plans/2026-09-08-repo-quality-gates.md`.

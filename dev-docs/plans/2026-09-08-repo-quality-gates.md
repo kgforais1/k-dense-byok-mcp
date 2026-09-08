@@ -32,7 +32,7 @@ Three gaps prompted this, and one of them had already bitten:
 A second workflow rather than new jobs in `Tests`, for one reason: `Tests` carries `paths-ignore` for `docs/**`, `dev-docs/**` and `**/*.md` on pushes to `main`. Those are exactly the paths `docs:check` exists to validate, so folding it into `Tests` would have made it skip the changes it is meant to catch. `Checks` carries no `paths-ignore`.
 
 - **`docs:check`** — runs `npm run docs:check` (which is `repo.mjs verify docs`). No `npm ci` step: the root package has no dependencies, and both `repo.mjs` and `docs-check.mjs` are plain Node.
-- **`gitleaks`** — three scans (`fetch-depth: 0`, so a key committed and later removed on the same branch is still found): one for secrets, one for host paths. See below for why they cannot share a config.
+- **`gitleaks`** — three scans, each with its own config: secrets over history, then lockfiles and vendored files over history (`.gitleaks-lockfiles.toml`, because the upstream defaults refuse to read them), then host paths over the tracked tree (`.gitleaks-paths.toml`). `fetch-depth: 0` so a key committed and later removed on the same branch is still found. See below for why the three cannot share a config.
 
 Gitleaks is installed from the upstream release tarball and verified by SHA-256, not run through `gitleaks-action`. Two reasons: the Action requires a licence key for organisation accounts, and `.github/AGENTS.md` requires third-party Actions to be pinned to a full-length commit SHA — a checksummed binary is a stronger guarantee than a SHA-pinned Action and one fewer thing for Dependabot to chase.
 
@@ -70,6 +70,8 @@ Measured at the time of writing:
 | | statements | branches | functions | lines |
 | --- | --- | --- | --- | --- |
 | `server` (`src/**` + `pi-packages/**`) | 72.12% | 61.30% | 74.06% | 74.05% |
+
+Measured on 2026-09-08 at commit `56076dd`. The `server` row moved from 72.52/61.54/74.98/74.51 when `pi-packages/**` joined the measured surface; re-run `npm run test:coverage` rather than trusting the table if the floors ever look wrong.
 | `web` (non-excluded) | 48.81% | 45.89% | 44.33% | 50.92% |
 
 ## The ratchet backlog (tier 2, deferred)

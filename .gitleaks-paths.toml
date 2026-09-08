@@ -1,6 +1,6 @@
 # Gitleaks configuration for repository hygiene, not secrets.
 #
-# This is a second config, run as a second pass, because it deliberately sets
+# This is a separate config, run as its own pass, because it deliberately sets
 # `useDefault = false`. Gitleaks' bundled default config carries a global
 # allowlist that suppresses `/home/<name>/` paths outright — reasonable for a
 # secret scanner, fatal for a rule whose entire purpose is finding them. With
@@ -10,7 +10,10 @@
 # committed home directory is a portability and privacy problem, not a secret,
 # and unlike `.gitleaks.toml` this pass is not run with `--redact`.
 #
-# Run locally with: gitleaks git --config .gitleaks-paths.toml .
+# Run locally the way CI does — over the tracked tree, not history:
+#
+#   d=$(mktemp -d) && git ls-files -z | tar --null -T - -cf - | tar -x -C "$d"
+#   gitleaks dir --config .gitleaks-paths.toml "$d"
 
 title = "k-dense-byok (paths)"
 
@@ -33,7 +36,11 @@ description = "Absolute path containing a developer's home directory"
 #
 # The name is unbounded in length. An earlier `{0,31}` cap silently exempted
 # anyone with a 33-character username, which is the rule's own subject matter.
-regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]*[/\\]'''
+#
+# The name may be followed by a separator, a string/punctuation terminator, or
+# end of input. Requiring a trailing separator missed the commonest spelling of
+# all — `const home = "/Users/<name>";` — because the path ends at the quote.
+regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]*(?:[/\\]|["'`\s;,:)\]}]|$)'''
 tags = ["privacy", "portability"]
 
 [[rules.allowlists]]
@@ -45,7 +52,7 @@ regexes = [
   # machine, so allowlisting them by name lets a genuine home directory walk
   # straight through the gate this rule exists to be. What is left cannot be a
   # real home directory: the CI runner, and syntactic placeholders.
-  '''[/\\](?:runner|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)[/\\]''',
+  '''[/\\](?:runner|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)(?:[/\\]|["'`\s;,:)\]}]|$)''',
 ]
 
 [[rules.allowlists]]

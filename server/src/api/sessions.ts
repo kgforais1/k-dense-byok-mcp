@@ -154,7 +154,6 @@ function streamRun(
   if (raw.destroyed) unsubscribe();
 }
 
-type RunRequest = FastifyRequest<{ Params: { id: string }; Body: RunBody }>;
 type LiveSession = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 
 interface PreparedRun {
@@ -185,43 +184,54 @@ interface RunLifecycle {
   cleanup(): void;
 }
 
+/**
+ * A run that never started. The status code travels with the body so the run
+ * pipeline stays transport-neutral: the HTTP route turns this into a reply,
+ * while the MCP adapter maps it to a tool result.
+ */
+export interface RunStartRejection {
+  statusCode: number;
+  body: { detail: string; reason?: string };
+}
+
 interface RunPreparationFailure {
-  failure: object;
+  failure: RunStartRejection;
 }
 
 /** Claim a session, validate its inputs, and create its replayable run handle.
  * Every pre-handle failure releases the synchronous claim here. */
 async function prepareRun(
-  req: RunRequest,
-  reply: FastifyReply,
+  sessionId: string,
+  rawBody: RunBody | null | undefined,
 ): Promise<PreparedRun | RunPreparationFailure> {
   const projectId = currentProjectId();
   const paths = activePaths();
-  const sessionId = req.params.id;
   const session = await getSession(projectId, paths, sessionId);
   if (!session) {
-    reply.code(404);
-    return { failure: { detail: "No such session" } };
+    return { failure: { statusCode: 404, body: { detail: "No such session" } } };
   }
 
   const runKey = `${projectId}:${sessionId}`;
   const retained = runBroker.get(projectId, sessionId);
   if (session.isStreaming || activeRuns.has(runKey) || (retained && !retained.isComplete)) {
-    reply.code(409);
     return {
-      failure: { detail: "Session is already streaming a response", reason: "run_already_active" },
+      failure: {
+        statusCode: 409,
+        body: {
+          detail: "Session is already streaming a response",
+          reason: "run_already_active",
+        },
+      },
     };
   }
 
-  const body = req.body ?? {};
+  const body = rawBody ?? {};
   if (!body.message || !body.message.trim()) {
-    reply.code(400);
-    return { failure: { detail: "message is required" } };
+    return { failure: { statusCode: 400, body: { detail: "message is required" } } };
   }
   const parsedImages = parseRunImages(body.images);
   if ("error" in parsedImages) {
-    reply.code(400);
-    return { failure: { detail: parsedImages.error } };
+    return { failure: { statusCode: 400, body: { detail: parsedImages.error } } };
   }
 
   const historyFile = findSessionFile(paths, sessionId);
@@ -243,12 +253,15 @@ async function prepareRun(
   } catch (error) {
     unpinSession(projectId, session.sessionId);
     activeRuns.delete(runKey);
-    reply.code(error instanceof ModelAuthenticationError ? 401 : 400);
     return {
       failure: {
-        detail: error instanceof Error ? error.message : "The selected model could not be prepared",
-        reason:
-          error instanceof ModelAuthenticationError ? "provider_not_connected" : "invalid_model",
+        statusCode: error instanceof ModelAuthenticationError ? 401 : 400,
+        body: {
+          detail:
+            error instanceof Error ? error.message : "The selected model could not be prepared",
+          reason:
+            error instanceof ModelAuthenticationError ? "provider_not_connected" : "invalid_model",
+        },
       },
     };
   }
@@ -283,9 +296,7 @@ async function prepareRun(
     setSessionRunId(projectId, session.sessionId, null);
     unpinSession(projectId, session.sessionId);
     activeRuns.delete(runKey);
-    const failure = runStartFailure(error);
-    reply.code(failure.statusCode);
-    return { failure: failure.body };
+    return { failure: runStartFailure(error) };
   }
 }
 
@@ -504,6 +515,47 @@ async function ownRun(run: PreparedRun, lifecycle: RunLifecycle, log: FastifyReq
   } finally {
     lifecycle.complete();
     lifecycle.cleanup();
+  }
+}
+
+/**
+ * Claim a session, configure it, and hand the run to its detached owner.
+ *
+ * This is the single run-start path. Both the SSE route and the MCP adapter
+ * call it and differ only in what they do with the returned handle: the route
+ * attaches an HTTP observer via `streamRun`, while MCP returns the run id and
+ * lets the client poll. Nothing about starting, owning, billing, or completing
+ * a run is duplicated for MCP.
+ */
+export async function beginRun(
+  sessionId: string,
+  body: RunBody | null | undefined,
+  log: FastifyRequest["log"],
+): Promise<PreparedRun | RunPreparationFailure> {
+  const prepared = await prepareRun(sessionId, body);
+  if ("failure" in prepared) return prepared;
+
+  const lifecycle = createRunLifecycle(prepared, log);
+  try {
+    const setupError = await configureRun(prepared, lifecycle, log);
+    if (setupError) {
+      return { failure: { statusCode: 400, body: { detail: setupError } } };
+    }
+    lifecycle.handOff();
+    void ownRun(prepared, lifecycle, log);
+    return prepared;
+  } catch (error) {
+    if (!lifecycle.wasHandedOff() && !prepared.handle.isComplete) {
+      prepared.handle.publish({ type: "error", message: (error as Error).message });
+    }
+    throw error;
+  } finally {
+    // Reached on the setup-error return as well: that run was claimed but never
+    // handed off, so its claim, pin, and handle must be released here.
+    if (!lifecycle.wasHandedOff()) {
+      lifecycle.complete();
+      lifecycle.cleanup();
+    }
   }
 }
 
@@ -860,33 +912,15 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
   app.post<{ Params: { id: string }; Body: RunBody }>(
     "/sessions/:id/run",
     async (req, reply) => {
-      const prepared = await prepareRun(req, reply);
-      if ("failure" in prepared) return prepared.failure;
-
-      const lifecycle = createRunLifecycle(prepared, req.log);
-      try {
-        const setupError = await configureRun(prepared, lifecycle, req.log);
-        if (setupError) {
-          reply.code(400);
-          return { detail: setupError };
-        }
-
-        // The detached owner retains the run after the HTTP stream is attached,
-        // so a client disconnect cannot interrupt Pi, accounting, or cleanup.
-        lifecycle.handOff();
-        void ownRun(prepared, lifecycle, req.log);
-        streamRun(req, reply, prepared.handle);
-      } catch (error) {
-        if (!lifecycle.wasHandedOff() && !prepared.handle.isComplete) {
-          prepared.handle.publish({ type: "error", message: (error as Error).message });
-        }
-        throw error;
-      } finally {
-        if (!lifecycle.wasHandedOff()) {
-          lifecycle.complete();
-          lifecycle.cleanup();
-        }
+      const started = await beginRun(req.params.id, req.body, req.log);
+      if ("failure" in started) {
+        reply.code(started.failure.statusCode);
+        return started.failure.body;
       }
+      // The detached owner already retains the run, so attaching this stream is
+      // pure observation: a client disconnect cannot interrupt Pi, accounting,
+      // or cleanup.
+      streamRun(req, reply, started.handle);
     },
   );
 }

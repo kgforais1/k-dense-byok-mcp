@@ -24,6 +24,7 @@ import type { ProjectPaths } from "../projects.ts";
 import { getMcpTools } from "./mcp.ts";
 import { defaultModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
+import { isHeadlessSession, markHeadlessSession } from "./headless-sessions.ts";
 import { makeInterviewTool } from "./interview.ts";
 import { makeNotebookTool } from "./notebook.ts";
 import { makeScientificResultTool } from "./scientific-result.ts";
@@ -105,6 +106,35 @@ export function pinSession(projectId: string, sessionId: string): void {
 export function unpinSession(projectId: string, sessionId: string): void {
   pinned.delete(keyFor(projectId, sessionId));
 }
+
+/**
+ * Replacement guidance for sessions that lose the `interview` tool.
+ *
+ * Dropping the tool also drops its `promptGuidelines`, but the sandbox
+ * `AGENTS.md` seeded by `sandbox-seed.ts` has its own "Clarifying questions —
+ * ask, don't assume" section naming `interview` directly. That file is shared
+ * with the browser UI, where the tool genuinely exists, so it must not be
+ * edited. Instead this note is appended to the system prompt of headless
+ * sessions only, which is what stops the model being told to call a tool it
+ * cannot see and then guessing anyway.
+ */
+export const HEADLESS_PROMPT_NOTE = [
+  "## Headless session — no interactive interview",
+  "",
+  "You are running for an external MCP client, not a human watching a chat UI.",
+  "The `interview` tool is NOT available in this session, so the sandbox",
+  "AGENTS.md guidance about asking the user clarifying questions through an",
+  "interview form does not apply here. There is no one to answer a form.",
+  "",
+  "When a request is ambiguous or underspecified, do not stall waiting for",
+  "clarification and do not silently guess. Instead:",
+  "",
+  "- Choose the most reasonable interpretation and proceed.",
+  "- State the interpretation you chose, and the alternatives you rejected, in",
+  "  your response, so the calling agent can correct you and re-run.",
+  "- Record assumptions that affect the result in the lab notebook via the",
+  "  `notebook` tool, which is available and does not block.",
+].join("\n");
 
 /**
  * Return the allowlist supplied to Pi when creating a session.
@@ -230,6 +260,14 @@ async function build(
   const interviewTool = includeInterview
     ? makeInterviewTool(projectId, () => holder.session?.sessionId ?? "")
     : undefined;
+  if (!includeInterview) {
+    // Patch the instance rather than subclassing: the loader is created and
+    // consumed entirely within this function, and overriding the method here
+    // keeps `this` bound to the real loader, so every other resource it
+    // resolved during `reload()` above is returned unchanged.
+    const inherited = resourceLoader.getAppendSystemPrompt();
+    resourceLoader.getAppendSystemPrompt = () => [...inherited, HEADLESS_PROMPT_NOTE];
+  }
   // Non-blocking lab-notebook tool: logs the agent's own narrative entries.
   const notebookTool = makeNotebookTool(projectId, () => holder.session?.sessionId ?? "");
   // Typed presentation layer for compact scientific results and artifact links.
@@ -268,6 +306,11 @@ export async function createSession(
   fs.mkdirSync(paths.sessionsDir, { recursive: true });
   const sm = SessionManager.create(paths.sandbox, paths.sessionsDir);
   const session = await build(projectId, paths, sm, options);
+  // Persist the headless choice before the session can be evicted, so a later
+  // cold open rebuilds it without `interview` (see headless-sessions.ts).
+  if (options?.includeInterview === false) {
+    markHeadlessSession(projectId, session.sessionId);
+  }
   live.set(keyFor(projectId, session.sessionId), session);
   evictOverCap(projectId);
   return session;
@@ -292,7 +335,13 @@ export async function getSession(
   const info = infos.find((i) => i.id === sessionId);
   if (!info) return null;
   const sm = SessionManager.open(info.path, paths.sessionsDir, paths.sandbox);
-  const session = await build(projectId, paths, sm, options);
+  // Cold open: an explicit caller option wins, but a session created headless
+  // must not silently regain the blocking `interview` tool just because it was
+  // evicted from the live map and rebuilt here.
+  const session = await build(projectId, paths, sm, {
+    ...options,
+    includeInterview: options?.includeInterview ?? !isHeadlessSession(projectId, sessionId),
+  });
   live.set(k, session);
   evictOverCap(projectId);
   return session;

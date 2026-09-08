@@ -5,6 +5,7 @@
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [2. Code scanning, security alerts, and Dependabot](#2-code-scanning-security-alerts-and-dependabot)
 - [ ] **Start MCP server work** → [3. Start MCP server work](#3-start-mcp-server-work)
 - [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
+- [ ] **Fix the local-model context window** → [5. Local-model context window is hardcoded to 32K](#5-local-model-context-window-is-hardcoded-to-32k)
 
 ---
 
@@ -77,3 +78,21 @@ project scoping, cancellation, tool policy, and accounting.
   supports headless execution, sessions, and CI. It remains a separate agent
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
+
+## 5. Local-model context window is hardcoded to 32K
+
+`buildOllamaModel` and `buildOpenAICompatibleModel` (`server/src/agent/models.ts:223`, `:246`) both hardcode `contextWindow: 32_768`. The comment explains the choice honestly — the OpenAI-compatible `/v1/models` endpoint carries no context length — but the default is now wrong in a way that breaks the local path outright.
+
+Measured on 2026-09-08 while running the MCP Phase 2 external-client check against LM Studio:
+
+- Kady's own prompt for one trivial request was **44,409 tokens** (system prompt + seeded `AGENTS.md` + the full tool surface). That is already **above** the declared 32,768 window, so no local model can run Kady within its declared budget — the floor exceeds the ceiling.
+- The model actually loaded (`qwen/qwen3.8-27b`) reports `max_context_length: 262144`, loaded at the full 262,144. The declared value is 8× too low.
+- Observed effect: the model returned an empty assistant message and the run still completed as `done`, with no error frame and nothing logged. See the Phase 3 follow-up in the [Phase 2 plan](plans/completed/2026-09-06-mcp-server-phase-2-server.md).
+
+It does not need to be this low, and the value is discoverable rather than merely configurable:
+
+- **Cheap fix:** `OPENAI_COMPATIBLE_CONTEXT_WINDOW` / `OLLAMA_CONTEXT_WINDOW` env knobs beside the existing `*_BASE_URL` ones in `config.ts`, defaulting to today's 32K.
+- **Better fix:** probe the server. LM Studio's native `GET /api/v0/models` returns `max_context_length` and `loaded_context_length` per model; Ollama's `POST /api/show` returns the equivalent. Probe on model resolution, fall back to the env knob, then to 32K.
+- Whichever lands, raise the fallback: 32K is below Kady's own prompt floor.
+
+Note the two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:238`), so a fix touches both.

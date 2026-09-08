@@ -1,13 +1,13 @@
 ---
 title: "MCP server for K-Dense"
-status: proposed
+status: accepted
 created: 2026-09-06
 branch: mcp-work
 ---
 
 # MCP Server for K-Dense (Kady as a Tool for External Agents) — Master Plan
 
-**Status:** Proposed
+**Status:** Accepted — Phases 1 and 2 complete (PRs #15, #17, #18); Phase 3 not started.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -48,8 +48,8 @@ All paths tentative pending Phase 1 findings.
 
 Detail lives in the phase plans, not here — this master stays at the high level. If any phase grows too large for its file, split its detail into further per-phase plan files and keep this master as the index.
 
-- [ ] Phase 1 — Research spike and decisions → [phase plan](2026-09-06-mcp-server-phase-1-research.md)
-- [~] Phase 2 — Minimal MCP server (in progress) → [phase plan](2026-09-06-mcp-server-phase-2-server.md)
+- [x] Phase 1 — Research spike and decisions (completed, PR #15) → [phase plan](completed/2026-09-06-mcp-server-phase-1-research.md)
+- [x] Phase 2 — Minimal MCP server (completed, PRs #17 and #18) → [phase plan](completed/2026-09-06-mcp-server-phase-2-server.md)
 - [ ] Phase 3 — Harden, document, package → [phase plan](2026-09-06-mcp-server-phase-3-harden.md)
 
 Archive note: phases ship one at a time, and archiving any file in this set breaks the same-directory cross-links above. The archiving PR must rewrite them to `completed/…` and update the `mcp-server-plan` manifest entry in the same PR — `docs:check` validates `dev-docs/**` links.
@@ -74,9 +74,9 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 | Minimal subset covers the loop | Phase 2 tool list exercised end-to-end without raw-HTTP fallback |
 | A new client can connect quickly | Fresh-client walkthrough against `docs/mcp-server.md` |
 
-## Phase 1 decision record (pending spike validation)
+## Phase 1 decision record (accepted)
 
-The decision record and rationale live in the [Phase 1 research plan](2026-09-06-mcp-server-phase-1-research.md#decisions). It resolves the intended Phase 2 direction, but remains pending the research spike's unchecked inventory and prototype validation; the Phase 2 plan is the implementation contract once that evidence is recorded.
+The decision record and rationale live in the [Phase 1 research plan](completed/2026-09-06-mcp-server-phase-1-research.md#decisions). The spike's inventory and prototype items are all discharged, so these verdicts are accepted rather than provisional, and the Phase 2 plan is the implementation contract.
 
 1. **Transport:** Streamable HTTP on the existing backend listener, via `StreamableHTTPServerTransport`; not stdio.
 2. **Process model:** in-process Fastify routes; not a sidecar or a second listener.

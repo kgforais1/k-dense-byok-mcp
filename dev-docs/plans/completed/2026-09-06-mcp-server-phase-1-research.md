@@ -1,13 +1,19 @@
 ---
 title: "MCP server Phase 1 — research spike"
-status: proposed
+status: completed
 created: 2026-09-06
 branch: mcp-work
 ---
 
 # MCP Server Phase 1 — Research Spike and Decisions
 
-**Status:** Accepted — spike evidence recorded below
+**Status:** Completed and merged in PR [#15](https://github.com/kgforais1/k-dense-byok-mcp/pull/15).
+
+> **Note (PR #18):** the spike shipped in PR #15, but that PR did not run
+> the closing checklist, so this file stayed in `dev-docs/plans/` past its
+> completion. It was archived here in the Phase 2 continuation PR instead.
+> The rule it missed is `docs/development/workflow.md#archive-lifecycle` —
+> the archive ships in the implementing PR, before merge.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -15,7 +21,7 @@ branch: mcp-work
 > its closing checklist — never after merge. See
 > `docs/development/workflow.md#archive-lifecycle`.
 
-**Goal:** Answer the master plan's open questions with a timeboxed spike so Phase 2 has a decided transport, process model, and tool subset. Part of the [master plan](2026-09-06-mcp-server.md).
+**Goal:** Answer the master plan's open questions with a timeboxed spike so Phase 2 has a decided transport, process model, and tool subset. Part of the [master plan](../2026-09-06-mcp-server.md).
 
 ## Why this work
 
@@ -32,7 +38,7 @@ Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE �
 (no product surface; executable spike checks are quarantined under `server/test/`)
 server/test/mcp-phase1-spike.test.ts              SDK + headless-session evidence
 server/test/mcp-run-mapping-spike.test.ts         broker poll-contract evidence
-dev-docs/plans/2026-09-06-mcp-server-phase-1-research.md  THIS FILE (+ Decisions)
+dev-docs/plans/completed/2026-09-06-mcp-server-phase-1-research.md  THIS FILE (+ Decisions)
 dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
 ```
 
@@ -49,13 +55,18 @@ dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 v
 
 ### Phase 1b — Prototype (throwaway)
 
-- [~] Defer a served read-only tool to Phase 2: the SDK spike constructs the actual high-level `McpServer` and proves `registerTool`, but intentionally does not mount a product route or create an adapter-only prototype that would be discarded. This does not change the transport decision; Phase 2's first contract test will serve `list_projects`.
+- [x] Defer a served read-only tool to Phase 2: the SDK spike constructs the actual high-level `McpServer` and proves `registerTool`, but intentionally does not mount a product route or create an adapter-only prototype that would be discarded. This did not change the transport decision. **Discharged in PR #17:** Phase 2 mounts `/mcp-server` and serves `list_projects` under `server/test/mcp-server-tools.test.ts`.
 - [x] Run the poll-mapping experiment in `server/test/mcp-run-mapping-spike.test.ts`: live frames are sequence-pollable; only `RunAlreadyActiveError` is typed concurrency; budget/error/done remain terminal frames; completed handles become `none` after retention. Existing `steer-abort.test.ts` confirms the route's generic start failure is an HTTP 500, so the adapter must use the typed rule or a future typed HTTP reason.
 - [x] Record verdicts for master-plan questions 1–7 (answered or explicitly deferred with a reason), including CLI-ordering (Q6) and interview-handling (Q7).
 
 **Exit criteria:** every Phase 1b prototype item is checked, or explicitly deferred with a reason; decision record updated with its evidence; Phase 2 plan updated to match; spike code discarded or clearly quarantined.
 
-Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
+Archive note (discharged): this file is archived. The master plan's two links
+to it were rewritten to `completed/…` in the same commit. The spike checks
+`server/test/mcp-phase1-spike.test.ts` and `server/test/mcp-run-mapping-spike.test.ts`
+are retained as quarantined evidence, per this plan's "discarded or clearly
+quarantined" exit criterion — their filenames mark them as spike-only and they
+assert SDK/broker behavior the Phase 2 adapter depends on.
 
 ## Guardrails
 

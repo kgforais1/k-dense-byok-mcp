@@ -1,38 +1,319 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { FastifyBaseLogger } from "fastify";
 import packageJson from "../package.json";
 
 import { createProject } from "../src/projects.ts";
+import { withActiveProject } from "../src/scope.ts";
+import { RunBroker, runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
+import { persistRunResult } from "../src/agent/run-results.ts";
 import { createKadyMcpServer } from "../src/mcp-server/server.ts";
+import { beginRun } from "../src/api/sessions.ts";
+
+vi.mock("../src/api/sessions.ts", () => ({ beginRun: vi.fn() }));
+
+const PHASE_2_TOOLS = [
+  "list_projects",
+  "create_research_session",
+  "get_session_history",
+  "start_research_run",
+  "poll_run",
+];
 
 const closeables: Array<{ close(): Promise<void> }> = [];
 
+/** The adapter only ever forwards this to `beginRun`; nothing calls it in tests. */
+const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as FastifyBaseLogger;
+
+function metadata(runId: string): RunMetadata {
+  return { runId, prompt: "test", images: [], baseline: { messages: [], contextUsage: null } };
+}
+
+async function connect(): Promise<Client> {
+  const server = createKadyMcpServer(log);
+  const client = new Client({ name: "kady-mcp-contract-test", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  closeables.push(client, server);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return client;
+}
+
+/** Every tool answers with one JSON text block; this is the only decoding rule. */
+function payload(result: { content: unknown }): Record<string, unknown> {
+  const content = result.content as Array<{ type: string; text?: string }>;
+  const text = content.find((item) => item.type === "text");
+  expect(text).toMatchObject({ type: "text" });
+  return JSON.parse(text?.text ?? "") as Record<string, unknown>;
+}
+
 afterEach(async () => {
   await Promise.all(closeables.splice(0).map((item) => item.close()));
+  runBroker.clear();
+  vi.mocked(beginRun).mockReset();
 });
 
 describe("inbound MCP Phase 2 tool contract", () => {
-  it("serves list_projects through the SDK server contract", async () => {
-    createProject({ projectId: "mcp-contract", name: "MCP contract" });
-    const server = createKadyMcpServer();
-    const client = new Client({ name: "kady-mcp-contract-test", version: "1.0.0" });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    closeables.push(client, server);
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+  it("serves the whole decided Phase 2 tool subset", async () => {
+    const client = await connect();
 
     expect(client.getServerVersion()).toMatchObject({ version: packageJson.version });
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(PHASE_2_TOOLS));
+  });
 
-    expect((await client.listTools()).tools).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "list_projects" })]),
-    );
+  it("serves list_projects through the SDK server contract", async () => {
+    createProject({ projectId: "mcp-contract", name: "MCP contract" });
+    const client = await connect();
 
     const result = await client.callTool({ name: "list_projects" });
-    const text = result.content.find((item) => item.type === "text");
-    expect(text).toMatchObject({ type: "text" });
-    expect(JSON.parse((text as { text: string }).text)).toMatchObject({
+    expect(payload(result)).toMatchObject({
       projects: expect.arrayContaining([expect.objectContaining({ id: "mcp-contract" })]),
     });
+  });
+
+  it("declares an images parameter on start_research_run so runs are not text-only", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find(
+      (candidate) => candidate.name === "start_research_run",
+    );
+
+    const properties = tool?.inputSchema.properties as Record<string, unknown> | undefined;
+    expect(Object.keys(properties ?? {})).toEqual(
+      expect.arrayContaining(["sessionId", "message", "images"]),
+    );
+    expect(tool?.inputSchema.required).toEqual(
+      expect.arrayContaining(["sessionId", "message"]),
+    );
+  });
+
+  it("reports a missing session rather than inventing one", async () => {
+    createProject({ projectId: "mcp-history", name: "MCP history" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-history", () =>
+      client.callTool({ name: "get_session_history", arguments: { sessionId: "nope" } }),
+    );
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ error: "No such session" });
+  });
+});
+
+describe("start_research_run failure mapping", () => {
+  it("returns the run id without waiting for the run to finish", async () => {
+    vi.mocked(beginRun).mockResolvedValue({ runId: "run-mcp-1" } as never);
+    const client = await connect();
+
+    const result = await client.callTool({
+      name: "start_research_run",
+      arguments: { sessionId: "session-1", message: "survey the literature" },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(payload(result)).toMatchObject({ runId: "run-mcp-1", status: "running" });
+  });
+
+  it("forwards image attachments to the shared run path", async () => {
+    vi.mocked(beginRun).mockResolvedValue({ runId: "run-mcp-img" } as never);
+    const client = await connect();
+
+    await client.callTool({
+      name: "start_research_run",
+      arguments: {
+        sessionId: "session-1",
+        message: "read this figure",
+        images: [{ data: "aGk=", mimeType: "image/png" }],
+      },
+    });
+    expect(vi.mocked(beginRun).mock.calls[0]?.[1]).toMatchObject({
+      images: [{ data: "aGk=", mimeType: "image/png" }],
+    });
+  });
+
+  it("maps only the typed concurrency rejection to the run-already-active answer", async () => {
+    vi.mocked(beginRun).mockResolvedValue({
+      failure: {
+        statusCode: 409,
+        body: { detail: "Session is already streaming a response", reason: "run_already_active" },
+      },
+    } as never);
+    const client = await connect();
+
+    const result = await client.callTool({
+      name: "start_research_run",
+      arguments: { sessionId: "session-1", message: "again" },
+    });
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ reason: "run_already_active" });
+  });
+
+  it("preserves an unrelated start failure instead of mislabelling it as concurrency", async () => {
+    vi.mocked(beginRun).mockResolvedValue({
+      failure: { statusCode: 500, body: { detail: "publish exploded" } },
+    } as never);
+    const client = await connect();
+
+    const result = await client.callTool({
+      name: "start_research_run",
+      arguments: { sessionId: "session-1", message: "again" },
+    });
+    expect(result.isError).toBe(true);
+    const body = payload(result);
+    expect(body).toMatchObject({ error: "publish exploded" });
+    expect(body.reason).toBeUndefined();
+  });
+
+  it("keeps a provider/auth rejection distinct from both of those", async () => {
+    vi.mocked(beginRun).mockResolvedValue({
+      failure: {
+        statusCode: 401,
+        body: { detail: "Anthropic is not connected", reason: "provider_not_connected" },
+      },
+    } as never);
+    const client = await connect();
+
+    const result = await client.callTool({
+      name: "start_research_run",
+      arguments: { sessionId: "session-1", message: "go" },
+    });
+    expect(payload(result)).toMatchObject({
+      error: "Anthropic is not connected",
+      reason: "provider_not_connected",
+    });
+  });
+});
+
+describe("poll_run", () => {
+  it("reads the live broker while the run is in flight and honours the cursor", async () => {
+    createProject({ projectId: "mcp-poll", name: "MCP poll" });
+    const handle = runBroker.start("mcp-poll", "session-live", metadata("run-live"));
+    handle.publish({ type: "run_start", runId: "run-live" });
+    handle.publish({ type: "text", text: "thinking" } as never);
+    const client = await connect();
+
+    const first = await withActiveProject("mcp-poll", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-live", runId: "run-live" },
+      }),
+    );
+    const firstBody = payload(first);
+    expect(firstBody).toMatchObject({ status: "running", lastSeq: 2 });
+    expect(firstBody.frames).toHaveLength(2);
+
+    const second = await withActiveProject("mcp-poll", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-live", runId: "run-live", after: 2 },
+      }),
+    );
+    expect(payload(second).frames).toHaveLength(0);
+  });
+
+  it("surfaces a budget-blocked run from its terminal frame, not an HTTP status", async () => {
+    createProject({ projectId: "mcp-budget", name: "MCP budget" });
+    const handle = runBroker.start("mcp-budget", "session-budget", metadata("run-budget"));
+    handle.publish({ type: "error", kind: "budget", message: "Project spend limit reached" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-budget", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-budget", runId: "run-budget" },
+      }),
+    );
+    const body = payload(result);
+    expect(body).toMatchObject({ status: "blocked" });
+    expect(body.frames).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "error", kind: "budget" })]),
+    );
+  });
+
+  it("falls back to the durable record once the broker has dropped the run", async () => {
+    createProject({ projectId: "mcp-durable", name: "MCP durable" });
+    // A separate broker stands in for the global one having already expired the
+    // handle: the global broker below knows nothing about this run.
+    const expired = new RunBroker({ completedRetentionMs: 1 });
+    const handle = expired.start("mcp-durable", "session-durable", metadata("run-durable"));
+    handle.publish({ type: "done" });
+    handle.complete();
+    persistRunResult("mcp-durable", handle);
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-durable", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-durable", runId: "run-durable" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({
+      runId: "run-durable",
+      sessionId: "session-durable",
+      status: "done",
+    });
+  });
+
+  it("keeps an unknown run id distinct from an expired completed one", async () => {
+    createProject({ projectId: "mcp-unknown", name: "MCP unknown" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-unknown", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-x", runId: "never-existed" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "unknown", frames: [], lastSeq: 0 });
+  });
+});
+
+describe("poll_run session binding", () => {
+  it("does not hand back another session's run when the session id does not match", async () => {
+    createProject({ projectId: "mcp-crossed", name: "MCP crossed" });
+    const expired = new RunBroker({ completedRetentionMs: 1 });
+    const handle = expired.start("mcp-crossed", "session-owner", metadata("run-crossed"));
+    handle.publish({ type: "done" });
+    handle.complete();
+    persistRunResult("mcp-crossed", handle);
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-crossed", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-intruder", runId: "run-crossed" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "unknown", frames: [] });
+  });
+});
+
+describe("poll_run abort reporting", () => {
+  it("reports an aborted run the same way before and after the broker expires it", async () => {
+    createProject({ projectId: "mcp-abort", name: "MCP abort" });
+    const handle = runBroker.start("mcp-abort", "session-abort", metadata("run-abort"));
+    handle.publish({ type: "run_start", runId: "run-abort" });
+    handle.requestAbort();
+    handle.complete();
+    const client = await connect();
+
+    // Live: the broker still holds the handle.
+    const live = await withActiveProject("mcp-abort", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-abort", runId: "run-abort" },
+      }),
+    );
+    expect(payload(live)).toMatchObject({ status: "aborted" });
+
+    // Durable: what the same poll returns once retention has expired.
+    persistRunResult("mcp-abort", handle);
+    runBroker.clear();
+    const durable = await withActiveProject("mcp-abort", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-abort", runId: "run-abort" },
+      }),
+    );
+    expect(payload(durable)).toMatchObject({ status: "aborted" });
   });
 });

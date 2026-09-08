@@ -66,7 +66,7 @@ export async function registerInboundMcpRoutes(
           if (connection) connections.set(sessionId, connection);
         },
       });
-      const server = createKadyMcpServer();
+      const server = createKadyMcpServer(app.log);
       const projectId = currentProjectId();
       // Set this before server.connect(): Protocol.connect composes the
       // transport's existing close hook with its own cleanup. Assigning it

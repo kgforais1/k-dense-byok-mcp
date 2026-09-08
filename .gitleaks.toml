@@ -9,27 +9,11 @@
 title = "k-dense-byok"
 
 [extend]
-# Start from the upstream rule set (provider keys, private keys, tokens) and
-# add only what is specific to this repository below.
+# The upstream rule set (provider keys, private keys, tokens) is the whole
+# content of this pass. Repository-specific path hygiene lives in
+# `.gitleaks-paths.toml`, which must run with `useDefault = false` — see the
+# comment there for why the two cannot share one config.
 useDefault = true
-
-[[rules]]
-id = "local-home-directory-path"
-description = "Absolute path containing a developer's home directory"
-# Committed host paths leak the machine's username and break for every other
-# contributor. Anything genuinely user-specific belongs behind `resolvePaths`
-# or an environment variable, never in a tracked file.
-# Gitleaks compiles rules with RE2, which has no lookaround, so the
-# placeholder exclusions live in the allowlist below rather than in the match.
-regex = '''(?:/Users/|/home/|[A-Za-z]:\\Users\\)[A-Za-z][A-Za-z0-9._-]{1,31}[/\\]'''
-tags = ["privacy", "portability"]
-
-[rules.allowlist]
-description = "CI runners and documentation placeholders are not real users"
-regexTarget = "match"
-regexes = [
-  '''[/\\](?:runner|user|username|USERNAME|you|youruser|me|someone|root|test|node|ubuntu|admin|home|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)[/\\]''',
-]
 
 [allowlist]
 description = "Repository-wide false positives"

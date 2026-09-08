@@ -32,17 +32,24 @@ Three gaps prompted this, and one of them had already bitten:
 A second workflow rather than new jobs in `Tests`, for one reason: `Tests` carries `paths-ignore` for `docs/**`, `dev-docs/**` and `**/*.md` on pushes to `main`. Those are exactly the paths `docs:check` exists to validate, so folding it into `Tests` would have made it skip the changes it is meant to catch. `Checks` carries no `paths-ignore`.
 
 - **`docs:check`** — runs `npm run docs:check` (which is `repo.mjs verify docs`). No `npm ci` step: the root package has no dependencies, and both `repo.mjs` and `docs-check.mjs` are plain Node.
-- **`gitleaks`** — full-history secret scan (`fetch-depth: 0`, so a key committed and later removed on the same branch is still found).
+- **`gitleaks`** — two full-history scans (`fetch-depth: 0`, so a key committed and later removed on the same branch is still found): one for secrets, one for host paths. See below for why they cannot share a config.
 
 Gitleaks is installed from the upstream release tarball and verified by SHA-256, not run through `gitleaks-action`. Two reasons: the Action requires a licence key for organisation accounts, and `.github/AGENTS.md` requires third-party Actions to be pinned to a full-length commit SHA — a checksummed binary is a stronger guarantee than a SHA-pinned Action and one fewer thing for Dependabot to chase.
 
-### Gitleaks configuration (`.gitleaks.toml`)
+### Gitleaks configuration (two configs, two passes)
 
-Extends the upstream default rule set and adds one repository-specific rule, `local-home-directory-path`, matching `/Users/<name>/`, `/home/<name>/` and `C:\Users\<name>\`. Committed host paths leak the machine's username and break for every other contributor. CI runners and documentation placeholders (`/Users/runner/`, `/home/${USER}/`, `<your-name>`) are allowlisted.
+`.gitleaks.toml` extends the upstream default rule set and does nothing else. `.gitleaks-paths.toml` holds one repository-specific rule, `local-home-directory-path`, matching `/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\` and `C:/Users/<name>/`. Committed host paths leak the machine's username and break for every other contributor.
 
-Note that Gitleaks compiles rules with RE2, which has no lookaround, so the exclusions live in the rule's allowlist rather than as a negative lookahead in the match.
+**The split is not cosmetic.** Gitleaks' bundled default config carries a global allowlist that suppresses `/home/<name>/` outright — sensible for a secret scanner, fatal for a rule whose entire purpose is finding them. Under `[extend] useDefault = true` the `/home/` branch matched nothing at all, silently: a green gate checking nothing. The path rules therefore run as a second pass with `useDefault = false`. The split is also honest about the concepts, since a committed home directory is a portability and privacy problem rather than a secret, which is why the second pass does not run with `--redact`.
 
-Verified: clean across all 467 commits of history; the new rule fires on a real home path and stays quiet on `/Users/runner/`; the upstream rules still catch a synthetic high-entropy Anthropic key and GitHub PAT.
+Two further details worth recording, both of which were wrong in a first draft:
+
+- Gitleaks compiles rules with RE2, which has no lookaround, so the exclusions live in the rule's allowlist rather than as a negative lookahead in the match. That allowlist is matched against the rule's own *match string*, so listing `home` as a placeholder username suppressed every `/home/...` finding — the allowlist ate the rule.
+- A Windows path in JavaScript source has its backslashes escaped (`C:\\Users\\me\\`), so the separator has to accept a run rather than a single character. `C:/Users/<name>/` is also ordinary in JS and needs the forward-slash form.
+
+CI runners, test fixtures and documentation placeholders are allowlisted: `/Users/runner/`, `/home/${USER}/`, `<your-name>`, and single-letter names, which this repository uses as fixtures in `server/test/backend.test.ts`, `server/test/win-portability.test.ts` and `web/src/lib/skill-invocation.test.ts`. Allowing single letters by name is a deliberate trade — a real home directory is never one letter.
+
+Verified: both passes clean across all 469 commits of history; the rule fires on all four host-path forms and stays quiet on all six allowlisted forms; the upstream rules still catch a synthetic high-entropy Anthropic key and GitHub PAT.
 
 ### Backend ESLint (`server/eslint.config.mjs`)
 
@@ -86,6 +93,7 @@ Every item here is a threshold set at today's worst offender. They stop new code
 - Do not add `paths-ignore` to `Checks`. Its entire purpose is running on the documentation changes `Tests` skips.
 - Do not raise a ratchet threshold to make a change pass. Lowering them is the direction; if a new file needs 1300 lines, split the file.
 - Keep the gitleaks binary's version and SHA-256 together in `checks.yml`. Bumping one without the other fails the checksum, which is the intended behaviour.
+- Do not merge `.gitleaks-paths.toml` back into `.gitleaks.toml`. It needs `useDefault = false`, and folding it in re-breaks the `/home/` branch without failing anything.
 
 ## Closing checklist
 

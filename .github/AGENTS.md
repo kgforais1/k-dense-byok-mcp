@@ -38,11 +38,16 @@ automation deltas.
   Do not change the matrix without updating this file and the
   verification doc.
 - The `Checks` workflow (`workflows/checks.yml`) carries the
-  repository-hygiene gates: `npm run docs:check` and a full-history
-  gitleaks scan. It is deliberately a second workflow rather than extra
+  repository-hygiene gates: `npm run docs:check` and two full-history
+  gitleaks scans. It is deliberately a second workflow rather than extra
   jobs in `Tests`, because `Tests` skips docs-only pushes to `main` via
   `paths-ignore` — exactly the changes `docs:check` exists to validate.
   **Never add `paths-ignore` to `Checks`.**
+- The two gitleaks passes use two configs and cannot be merged.
+  `.gitleaks.toml` extends the upstream rules; `.gitleaks-paths.toml`
+  finds committed host paths and must keep `useDefault = false`, because
+  the bundled defaults globally allowlist `/home/<name>/` and would
+  silently disable that branch of the rule.
 - Coverage thresholds live in `server/vitest.config.ts` and
   `web/vitest.config.ts`, and run on `ubuntu-latest` only: the floor is
   platform-independent and the Windows legs are already the slowest in

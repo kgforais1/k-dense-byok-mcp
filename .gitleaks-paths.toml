@@ -1,0 +1,54 @@
+# Gitleaks configuration for repository hygiene, not secrets.
+#
+# This is a second config, run as a second pass, because it deliberately sets
+# `useDefault = false`. Gitleaks' bundled default config carries a global
+# allowlist that suppresses `/home/<name>/` paths outright — reasonable for a
+# secret scanner, fatal for a rule whose entire purpose is finding them. With
+# `[extend] useDefault = true` the `/home/` branch below matches nothing at all,
+# silently, which is exactly the kind of gate that looks green and checks
+# nothing. Keeping the two passes separate is also honest about the split: a
+# committed home directory is a portability and privacy problem, not a secret,
+# and unlike `.gitleaks.toml` this pass is not run with `--redact`.
+#
+# Run locally with: gitleaks git --config .gitleaks-paths.toml .
+
+title = "k-dense-byok (paths)"
+
+[extend]
+useDefault = false
+
+[[rules]]
+id = "local-home-directory-path"
+description = "Absolute path containing a developer's home directory"
+# Committed host paths leak the machine's username and break for every other
+# contributor. Anything genuinely user-specific belongs behind `resolvePaths`
+# or an environment variable, never in a tracked file.
+# Gitleaks compiles rules with RE2, which has no lookaround, so the
+# placeholder exclusions live in the allowlist below rather than in the match.
+#
+# The drive-letter branch accepts either separator: `C:/Users/name/` is a
+# perfectly ordinary Windows path in JavaScript source, and matching only the
+# backslash form would miss it. The name itself is one character or more, so a
+# short username is caught too; the single-letter names this repository uses as
+# test fixtures are allowlisted below by name rather than excluded by length.
+regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]{0,31}[/\\]'''
+tags = ["privacy", "portability"]
+
+[rules.allowlist]
+description = "CI runners, test fixtures and documentation placeholders are not real users"
+regexTarget = "match"
+regexes = [
+  '''[/\\](?:runner|user|username|USERNAME|you|youruser|me|someone|root|test|node|ubuntu|admin|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)[/\\]''',
+  # Single-letter names are fixtures, not people: `server/test/backend.test.ts`
+  # and `web/src/lib/skill-invocation.test.ts` use `/Users/x/`, and
+  # `server/test/win-portability.test.ts` uses `C:\Users\u\`. Allowing them by
+  # name is the deliberate trade — a real home directory is never one letter.
+  '''[/\\][A-Za-z][/\\]''',
+]
+
+[allowlist]
+description = "Repository-wide false positives"
+paths = [
+  # Lockfiles legitimately carry upstream paths from other people's machines.
+  '''(^|/)package-lock\.json$''',
+]

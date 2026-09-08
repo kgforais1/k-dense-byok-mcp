@@ -61,3 +61,10 @@ jobs:
           rm gitleaks.tar.gz
       - name: Scan for committed secrets
         run: ./gitleaks git --no-banner --redact --config .gitleaks.toml .
+      # A second pass, not a second rule in the first config. The path rules
+      # need `useDefault = false`, because gitleaks' bundled defaults globally
+      # allowlist `/home/<name>/` — see `.gitleaks-paths.toml`. Not redacted:
+      # a committed home directory is a portability problem, and the whole
+      # point of the finding is being able to read which path it is.
+      - name: Scan for committed host paths
+        run: ./gitleaks git --no-banner --config .gitleaks-paths.toml .

@@ -49,7 +49,10 @@ export default tseslint.config(
 
       // Ceilings, not targets. Current worst: complexity 62
       // (`agent/notebook-export.ts`), 1137 lines (`modal/manager.ts`), and a
-      // 639-line function (`api/sandbox.ts`).
+      // 639-line function (`api/sandbox.ts`). Those are physical line counts;
+      // `skipBlankLines`/`skipComments` means the rules count effective code
+      // lines, so the limits below bite sooner than the numbers suggest. That
+      // is the intent — the concern is code bulk, not file size.
       complexity: ["error", 65],
       "max-lines": ["error", { max: 1200, skipBlankLines: true, skipComments: true }],
       "max-lines-per-function": [

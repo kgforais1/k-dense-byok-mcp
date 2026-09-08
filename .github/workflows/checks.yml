@@ -59,8 +59,10 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           rm gitleaks.tar.gz
+      # `--verbose` because without it a failure prints only "leaks found: N",
+      # with no file, line or match to act on.
       - name: Scan for committed secrets
-        run: ./gitleaks git --no-banner --redact --config .gitleaks.toml .
+        run: ./gitleaks git --no-banner --no-color --verbose --redact --config .gitleaks.toml .
       # A second pass, not a second rule in the first config. The path rules
       # need `useDefault = false`, because gitleaks' bundled defaults globally
       # allowlist `/home/<name>/` — see `.gitleaks-paths.toml`. Not redacted:
@@ -81,4 +83,4 @@ jobs:
           rm -rf "${RUNNER_TEMP}/tracked"
           mkdir -p "${RUNNER_TEMP}/tracked"
           git ls-files -z | tar --null -T - -cf - | tar -x -C "${RUNNER_TEMP}/tracked"
-          ./gitleaks dir --no-banner --config .gitleaks-paths.toml "${RUNNER_TEMP}/tracked"
+          ./gitleaks dir --no-banner --no-color --verbose --config .gitleaks-paths.toml "${RUNNER_TEMP}/tracked"

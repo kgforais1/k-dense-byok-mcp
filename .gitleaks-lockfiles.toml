@@ -1,0 +1,57 @@
+# Gitleaks configuration for the files the default rule set refuses to look at.
+#
+# `.gitleaks.toml` runs with `[extend] useDefault = true`, which silently
+# inherits gitleaks' bundled `[allowlist] paths` — and that list skips
+# `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `node_modules`, `vendor`,
+# Python virtualenvs, and binary assets. There is no supported way to un-inherit
+# it: an empty `paths = []` is rejected outright, and no flag disables it.
+#
+# For a bring-your-own-key application that is the wrong blind spot to accept.
+# Both lockfiles are churned by automation — Dependabot opens PRs against them
+# weekly, and one branch here moved `server/package-lock.json` by 1,960 lines.
+# A key pasted into one of those diffs is invisible to the main pass. Verified:
+# an identical synthetic Anthropic key is caught in a `.ts` file and missed in
+# `package-lock.json`.
+#
+# So this third pass sets `useDefault = false` and carries a small, deliberately
+# high-precision rule set for the credential shapes this repository actually
+# handles. It is not a replacement for the upstream rules and does not try to
+# be — it exists so the two files most likely to carry an accidental token are
+# not exempt from every rule at once.
+#
+# Run locally with: gitleaks git --redact --config .gitleaks-lockfiles.toml .
+
+title = "k-dense-byok (lockfiles and vendored files)"
+
+[extend]
+useDefault = false
+
+[[rules]]
+id = "provider-api-key"
+description = "Provider API key with a recognisable prefix"
+# The providers this backend reads from the environment: Anthropic, OpenAI,
+# Google/Gemini, OpenRouter, NVIDIA, Perplexity, Exa, GitHub, Modal.
+regex = '''\b(?:sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{32,}|sk-[A-Za-z0-9]{32,}|nvapi-[A-Za-z0-9_-]{32,}|pplx-[A-Za-z0-9]{32,}|AIza[A-Za-z0-9_-]{35}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b'''
+tags = ["key", "provider"]
+
+[[rules]]
+id = "registry-auth-token"
+description = "npm registry auth token in a lockfile or rc file"
+# The realistic way a credential reaches a lockfile: a private registry line
+# carrying `_auth`/`_authToken`, or basic auth embedded in a resolved URL.
+#
+# The value must be quoted, or the key must be the unambiguous `_authToken`.
+# A first draft accepted any 16-character run and matched the Python statement
+# `_auth = _has_static_auth` in this repository — an identifier, not a secret.
+regex = '''(?i)(?:_auth(?:Token)?["']?\s*[:=]\s*["'][A-Za-z0-9+/=_-]{16,}["']|_authToken\s*=\s*[A-Za-z0-9+/=_-]{16,}|https?://[^\s"'/@]+:[^\s"'/@]{8,}@)'''
+tags = ["token", "registry"]
+
+[[rules]]
+id = "private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----'''
+tags = ["key", "private"]
+
+[[rules.allowlists]]
+description = "This file has to be able to spell the patterns it matches on"
+paths = ['''(^|/)\.gitleaks-lockfiles\.toml$''']

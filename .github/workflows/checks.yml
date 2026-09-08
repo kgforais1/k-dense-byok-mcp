@@ -68,6 +68,14 @@ jobs:
       # allowlist `/home/<name>/` — see `.gitleaks-paths.toml`. Not redacted:
       # a committed home directory is a portability problem, and the whole
       # point of the finding is being able to read which path it is.
+      # A third pass, over history, for the files the first one is not allowed
+      # to read. `useDefault = true` silently inherits gitleaks' bundled path
+      # allowlist, which skips both lockfiles, `node_modules` and `vendor`, and
+      # there is no supported way to un-inherit it. Dependabot churns those
+      # lockfiles weekly, so leaving them exempt from every rule at once is the
+      # wrong blind spot for a BYOK app. See `.gitleaks-lockfiles.toml`.
+      - name: Scan lockfiles and vendored files for secrets
+        run: ./gitleaks git --no-banner --no-color --verbose --redact --config .gitleaks-lockfiles.toml .
       #
       # This pass scans the tracked tree, not history, which is the one real
       # difference from the secret scan above. A key that reached any commit is

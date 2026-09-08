@@ -53,9 +53,14 @@ automation deltas.
   landed, but a host path only matters where it currently is — scanning
   history there would fail the build forever over a path already removed.
   Do not "simplify" the two into one invocation.
-- Do not add a blanket file allowlist to either gitleaks config. A
+- Do not add a blanket file allowlist to any gitleaks config. A
   `package-lock.json` exemption was tried and removed: it suppressed every
   finding in both lockfiles, including a real key, and was hiding nothing.
+- There is a third config, `.gitleaks-lockfiles.toml`. `useDefault = true`
+  inherits gitleaks' bundled path allowlist, which skips both lockfiles,
+  `node_modules` and `vendor`, and cannot be un-inherited. That pass sets
+  `useDefault = false` so the files Dependabot churns weekly are not
+  exempt from every rule at once. Do not fold it into the others.
 - Coverage thresholds live in `server/vitest.config.ts` and
   `web/vitest.config.ts`, and run on `ubuntu-latest` only: the floor is
   platform-independent and the Windows legs are already the slowest in

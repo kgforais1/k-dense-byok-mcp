@@ -14,11 +14,3 @@ title = "k-dense-byok"
 # `.gitleaks-paths.toml`, which must run with `useDefault = false` — see the
 # comment there for why the two cannot share one config.
 useDefault = true
-
-[allowlist]
-description = "Repository-wide false positives"
-paths = [
-  # Lockfiles carry upstream integrity hashes that trip the generic
-  # high-entropy rules; the dependency set itself is reviewed by Dependabot.
-  '''(^|/)package-lock\.json$''',
-]

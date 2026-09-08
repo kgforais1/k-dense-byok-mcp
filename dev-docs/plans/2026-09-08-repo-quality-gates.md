@@ -42,14 +42,18 @@ Gitleaks is installed from the upstream release tarball and verified by SHA-256,
 
 **The split is not cosmetic.** Gitleaks' bundled default config carries a global allowlist that suppresses `/home/<name>/` outright — sensible for a secret scanner, fatal for a rule whose entire purpose is finding them. Under `[extend] useDefault = true` the `/home/` branch matched nothing at all, silently: a green gate checking nothing. The path rules therefore run as a second pass with `useDefault = false`. The split is also honest about the concepts, since a committed home directory is a portability and privacy problem rather than a secret, which is why the second pass does not run with `--redact`.
 
-Two further details worth recording, both of which were wrong in a first draft:
+Four further details worth recording, every one of which was wrong in an earlier draft:
 
 - Gitleaks compiles rules with RE2, which has no lookaround, so the exclusions live in the rule's allowlist rather than as a negative lookahead in the match. That allowlist is matched against the rule's own *match string*, so listing `home` as a placeholder username suppressed every `/home/...` finding — the allowlist ate the rule.
-- A Windows path in JavaScript source has its backslashes escaped (`C:\\Users\\me\\`), so the separator has to accept a run rather than a single character. `C:/Users/<name>/` is also ordinary in JS and needs the forward-slash form.
+- A Windows path in JavaScript source has its backslashes escaped (`C:\\Users\\<name>\\`), so the separator has to accept a run rather than a single character. `C:/Users/<name>/` is also ordinary in JS and needs the forward-slash form.
+- The allowlist originally excused `root`, `admin`, `node`, `ubuntu`, `user`, `test` and `me`. Every one of those is a real account name on some machine, so a genuine `/home/admin/` walked straight through the gate. Only the CI runner and syntactic placeholders (`<name>`, `${VAR}`, `%VAR%`) are excused now; the few real fixture paths are allowlisted as exact strings rather than by username, and single-letter names are no longer blanket-excused for the same reason.
+- A `{0,31}` bound on the username silently exempted anyone with a 33-character name — the rule's own subject matter. It is unbounded now.
 
-CI runners, test fixtures and documentation placeholders are allowlisted: `/Users/runner/`, `/home/${USER}/`, `<your-name>`, and single-letter names, which this repository uses as fixtures in `server/test/backend.test.ts`, `server/test/win-portability.test.ts` and `web/src/lib/skill-invocation.test.ts`. Allowing single letters by name is a deliberate trade — a real home directory is never one letter.
+**The path pass scans the tracked tree; the secret pass scans history.** That difference is deliberate. A key that reached any commit is still a live credential and must be found wherever it is. A host path only matters where it currently sits, and scanning history would mean a path removed three commits ago fails the build forever — which is exactly what happened when this plan's own text quoted an example path. The tree is exported with `git ls-files` rather than scanned in place, because `gitleaks dir .` walks gitignored content: locally that is the 2 GB `projects/` directory, full of real host paths that are not ours to police. Exported, the scan covers 13.7 MB in 198 ms.
 
-Verified: both passes clean across all 469 commits of history; the rule fires on all four host-path forms and stays quiet on all six allowlisted forms; the upstream rules still catch a synthetic high-entropy Anthropic key and GitHub PAT.
+There is no repository-wide `package-lock.json` allowlist. One was added on the assumption that upstream integrity hashes would trip the entropy rules; scanning without it found nothing, so it was pure suppression — it would have hidden a real provider key committed to a lockfile and bought nothing in exchange. The only blanket path exemption left is `.gitleaks-paths.toml` itself, which has to be able to spell the patterns it matches on.
+
+Verified: the secret pass is clean across all 471 commits; the path pass is clean over the tracked tree; the rule fires on all four host-path forms plus a real `/home/admin/`, and stays quiet on the CI-runner, variable and fixture forms; the upstream rules still catch a synthetic high-entropy Anthropic key and GitHub PAT.
 
 ### Backend ESLint (`server/eslint.config.mjs`)
 

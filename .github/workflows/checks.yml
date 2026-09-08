@@ -66,5 +66,19 @@ jobs:
       # allowlist `/home/<name>/` — see `.gitleaks-paths.toml`. Not redacted:
       # a committed home directory is a portability problem, and the whole
       # point of the finding is being able to read which path it is.
+      #
+      # This pass scans the tracked tree, not history, which is the one real
+      # difference from the secret scan above. A key that reached any commit is
+      # still a live credential and has to be found wherever it is; a host path
+      # only matters where it currently sits. Scanning history here would mean
+      # a path removed three commits ago fails the build forever. The tree is
+      # exported with `git ls-files` rather than scanned in place, because
+      # `gitleaks dir .` walks gitignored content too — locally that is the
+      # 2 GB `projects/` directory, full of real host paths that are not ours.
       - name: Scan for committed host paths
-        run: ./gitleaks git --no-banner --config .gitleaks-paths.toml .
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/tracked"
+          mkdir -p "${RUNNER_TEMP}/tracked"
+          git ls-files -z | tar --null -T - -cf - | tar -x -C "${RUNNER_TEMP}/tracked"
+          ./gitleaks dir --no-banner --config .gitleaks-paths.toml "${RUNNER_TEMP}/tracked"

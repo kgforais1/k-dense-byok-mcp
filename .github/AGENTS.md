@@ -48,6 +48,14 @@ automation deltas.
   finds committed host paths and must keep `useDefault = false`, because
   the bundled defaults globally allowlist `/home/<name>/` and would
   silently disable that branch of the rule.
+- The secret pass scans git history; the path pass scans only the tracked
+  tree, exported with `git ls-files`. A leaked key stays live wherever it
+  landed, but a host path only matters where it currently is — scanning
+  history there would fail the build forever over a path already removed.
+  Do not "simplify" the two into one invocation.
+- Do not add a blanket file allowlist to either gitleaks config. A
+  `package-lock.json` exemption was tried and removed: it suppressed every
+  finding in both lockfiles, including a real key, and was hiding nothing.
 - Coverage thresholds live in `server/vitest.config.ts` and
   `web/vitest.config.ts`, and run on `ubuntu-latest` only: the floor is
   platform-independent and the Windows legs are already the slowest in

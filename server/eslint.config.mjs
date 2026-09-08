@@ -48,23 +48,27 @@ export default tseslint.config(
       "max-params": ["error", 6],
 
       // Ceilings, not targets, set at exactly the current worst offender:
-      // complexity 62 (`agent/notebook-export.ts`), 1137 lines
+      // complexity 62 (`agent/notebook-export.ts`), 1136 lines
       // (`modal/manager.ts`), and a 639-line function (`api/sandbox.ts`).
+      // Re-measure after touching those files: this config's own lint fix
+      // deleted a dead import from `manager.ts` and moved the number.
       //
       // Exactly, not rounded up. A limit above the worst thing in the tree is
       // a gate nobody can trip: at `max-lines: 1200` a new 1199-line file
       // passes, and new code gets modelled on the files that already sit near
       // the line. At the worst offender, anything worse than the worst thing
       // here fails, which is the weakest claim actually worth enforcing.
+      // ESLint errors only when the count *exceeds* the limit, so the worst
+      // file passes at its own size and one line more does not.
       //
       // Physical lines, deliberately. `skipBlankLines`/`skipComments` would
-      // count effective lines instead, and since `manager.ts` is 1137 physical
+      // count effective lines instead, and since `manager.ts` is 1136 physical
       // but ~1049 effective, that makes the limit *looser* than the number
       // reads — it would admit a ~1300-line file. Counting physical lines
       // keeps the number honest, and this codebase should never be discouraged
       // from adding a comment.
       complexity: ["error", 62],
-      "max-lines": ["error", 1137],
+      "max-lines": ["error", 1136],
       "max-lines-per-function": ["error", 639],
     },
   },

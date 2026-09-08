@@ -26,29 +26,46 @@ description = "Absolute path containing a developer's home directory"
 # Gitleaks compiles rules with RE2, which has no lookaround, so the
 # placeholder exclusions live in the allowlist below rather than in the match.
 #
-# The drive-letter branch accepts either separator: `C:/Users/name/` is a
+# The drive-letter branch accepts either separator: `C:/Users/<name>/` is a
 # perfectly ordinary Windows path in JavaScript source, and matching only the
-# backslash form would miss it. The name itself is one character or more, so a
-# short username is caught too; the single-letter names this repository uses as
-# test fixtures are allowlisted below by name rather than excluded by length.
-regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]{0,31}[/\\]'''
+# backslash form would miss it. Separators repeat because a Windows path
+# written in JS source has its backslashes escaped.
+#
+# The name is unbounded in length. An earlier `{0,31}` cap silently exempted
+# anyone with a 33-character username, which is the rule's own subject matter.
+regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]*[/\\]'''
 tags = ["privacy", "portability"]
 
-[rules.allowlist]
-description = "CI runners, test fixtures and documentation placeholders are not real users"
+[[rules.allowlists]]
+description = "CI runners and documentation placeholders only"
 regexTarget = "match"
 regexes = [
-  '''[/\\](?:runner|user|username|USERNAME|you|youruser|me|someone|root|test|node|ubuntu|admin|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)[/\\]''',
-  # Single-letter names are fixtures, not people: `server/test/backend.test.ts`
-  # and `web/src/lib/skill-invocation.test.ts` use `/Users/x/`, and
-  # `server/test/win-portability.test.ts` uses `C:\Users\u\`. Allowing them by
-  # name is the deliberate trade — a real home directory is never one letter.
-  '''[/\\][A-Za-z][/\\]''',
+  # Deliberately short. `root`, `admin`, `node`, `ubuntu`, `user`, `test` and
+  # `me` were all here and are all removed: each is a real account name on some
+  # machine, so allowlisting them by name lets a genuine home directory walk
+  # straight through the gate this rule exists to be. What is left cannot be a
+  # real home directory: the CI runner, and syntactic placeholders.
+  '''[/\\](?:runner|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)[/\\]''',
 ]
 
-[allowlist]
-description = "Repository-wide false positives"
-paths = [
-  # Lockfiles legitimately carry upstream paths from other people's machines.
-  '''(^|/)package-lock\.json$''',
+[[rules.allowlists]]
+description = "The specific fixture paths this repository commits on purpose"
+# Allowlisted as exact strings rather than by username. Suppressing every
+# single-letter name would re-open the same hole as `admin` above, just for a
+# smaller set of people.
+regexTarget = "line"
+regexes = [
+  # server/test/backend.test.ts and web/src/lib/skill-invocation.test.ts, which
+  # use a single-letter fixture name under `projects` and under `.pi`.
+  '''/Users/x/(?:projects/p/sandbox|\.pi/agent/skills/)''',
+  # server/test/win-portability.test.ts, which spells the same fixture root both
+  # with escaped backslashes and with forward slashes.
+  '''C:[\\\\/]+Users[\\\\/]+u[\\\\/]+projects''',
 ]
+
+[[rules.allowlists]]
+description = "This file has to be able to spell the patterns it matches on"
+# Narrow on purpose: one file, the one that defines the rule. A rule that
+# flags its own configuration is unfixable without either this exemption or
+# writing the patterns in an obfuscated form nobody can review.
+paths = ['''(^|/)\.gitleaks-paths\.toml$''']

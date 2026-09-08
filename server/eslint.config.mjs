@@ -38,10 +38,13 @@ export default tseslint.config(
         },
       ],
 
-      // 34 occurrences today, concentrated in the Pi SDK boundary where the
-      // upstream types are genuinely loose. Turning it on now would be 34
-      // speculative type assertions, so it is a ratchet item, not a gate.
-      "@typescript-eslint/no-explicit-any": "off",
+      // On for shipped code. The count that made this look expensive — 36
+      // occurrences — was 31 test files plus five real sites, and a global
+      // "off" to spare the fixtures hid the five that matter. Each of those
+      // five now carries a line-level disable stating why, which is a claim a
+      // reviewer can check; "off" was not. Tests keep the escape hatch in the
+      // `test/**` block below, where mock casts are the point.
+      "@typescript-eslint/no-explicit-any": "error",
 
       // Already tight: nothing in `src/` or `test/` exceeds either today.
       "max-depth": ["error", 6],
@@ -78,6 +81,10 @@ export default tseslint.config(
     files: ["test/**"],
     rules: {
       "max-lines-per-function": "off",
+      // 31 of the 36 `any`s are here: mock casts, `JSON.parse` results, and
+      // partial SDK fixtures. Typing a stub precisely is busywork that makes
+      // the test harder to read without making it check more.
+      "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-require-imports": "off",
       "@typescript-eslint/no-this-alias": "off",
     },

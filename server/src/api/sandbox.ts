@@ -275,7 +275,7 @@ export async function registerSandboxRoutes(app: FastifyInstance): Promise<void>
     const staged: { filename: string; temp: string }[] = [];
     const relPaths: string[] = [];
     try {
-      const parts = (req as FastifyRequest & { parts: () => AsyncIterable<any> }).parts();
+      const parts = (req as FastifyRequest & { parts: () => AsyncIterable<any> }).parts(); // eslint-disable-line @typescript-eslint/no-explicit-any -- @fastify/multipart augments FastifyRequest by declaration merging; part.type narrows below
       for await (const part of parts) {
         if (part.type === "file") {
           if (!part.filename) {

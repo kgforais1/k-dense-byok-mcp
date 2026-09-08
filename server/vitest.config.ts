@@ -24,7 +24,12 @@ export default defineConfig({
         functions: 72,
         lines: 72,
       },
-      include: ["src/**/*.ts"],
+      // `pi-packages/**` is in scope deliberately. It was outside this list
+      // while ESLint was linting it, so 576 lines of shipped code running in
+      // child `pi` processes — notebook, modal and annotation tools — could
+      // have gone to zero coverage without tripping the gate. Including it
+      // costs 0.4 points.
+      include: ["src/**/*.ts", "pi-packages/**/*.ts"],
       exclude: [
         // A vendored Python virtualenv, not backend source.
         "src/helpers/.venv/**",

@@ -56,6 +56,11 @@ function result(value: unknown, details: Record<string, unknown> = {}) {
 export function makeChildPdfAnnotationTools(
   sandboxRoot = process.cwd(),
   author: PdfAnnotationAuthor = childAuthor(),
+// `ToolDefinition` is generic over each tool's own parameter schema, so an
+// array holding tools with different schemas has no common instantiation.
+// It is the Pi SDK's own idiom for a tool list, and narrowing it needs a
+// union rebuilt on every add.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ToolDefinition<any>[] {
   const add: ToolDefinition<typeof AddPdfAnnotationParams> = {
     name: "add_pdf_annotation",

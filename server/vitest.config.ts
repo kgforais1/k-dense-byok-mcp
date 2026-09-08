@@ -10,6 +10,29 @@ export default defineConfig({
     // beforeEach/afterAll; running files concurrently races on it (ENOTEMPTY,
     // files vanishing mid-assertion). Run test files serially to avoid that.
     fileParallelism: false,
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "json-summary", "lcov"],
+      // A floor set a few points under the measured value (72.5% statements,
+      // 61.5% branches at the time of writing), so it catches a real
+      // regression without failing on normal drift. Raising it as coverage
+      // improves is tracked in
+      // `dev-docs/plans/2026-09-08-repo-quality-gates.md`.
+      thresholds: {
+        statements: 70,
+        branches: 59,
+        functions: 72,
+        lines: 72,
+      },
+      include: ["src/**/*.ts"],
+      exclude: [
+        // A vendored Python virtualenv, not backend source.
+        "src/helpers/.venv/**",
+        // Process entry points; exercised by the launcher smoke test instead.
+        "src/index.ts",
+        "src/prep.ts",
+      ],
+    },
     // Each run gets an isolated projects root under the OS temp dir.
     env: {
       KADY_PROJECTS_ROOT:

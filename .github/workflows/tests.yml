@@ -41,7 +41,17 @@ jobs:
       - name: Typecheck
         working-directory: server
         run: npm run typecheck
+      - name: Lint
+        working-directory: server
+        run: npm run lint
+      # Coverage carries a threshold floor (see server/vitest.config.ts) and is
+      # platform-independent, so it runs once rather than on every matrix leg.
+      - name: Run tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: server
+        run: npm run test:coverage
       - name: Run tests
+        if: matrix.os != 'ubuntu-latest'
         working-directory: server
         run: npm test
 
@@ -80,7 +90,12 @@ jobs:
           name: next-build-failure-${{ matrix.os }}
           path: web/.next/
           retention-days: 7
+      - name: Run tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: web
+        run: npm run test:coverage
       - name: Run tests
+        if: matrix.os != 'ubuntu-latest'
         working-directory: web
         run: npm run test
 

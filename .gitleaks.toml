@@ -1,0 +1,40 @@
+# Gitleaks configuration for k-dense-byok.
+#
+# This repository's whole purpose is handling bring-your-own-key provider
+# credentials, so a key pasted into a fixture or a doc is the realistic
+# failure mode — not one CodeQL or Dependabot would ever look for.
+#
+# Run locally with: gitleaks git --redact --config .gitleaks.toml .
+
+title = "k-dense-byok"
+
+[extend]
+# Start from the upstream rule set (provider keys, private keys, tokens) and
+# add only what is specific to this repository below.
+useDefault = true
+
+[[rules]]
+id = "local-home-directory-path"
+description = "Absolute path containing a developer's home directory"
+# Committed host paths leak the machine's username and break for every other
+# contributor. Anything genuinely user-specific belongs behind `resolvePaths`
+# or an environment variable, never in a tracked file.
+# Gitleaks compiles rules with RE2, which has no lookaround, so the
+# placeholder exclusions live in the allowlist below rather than in the match.
+regex = '''(?:/Users/|/home/|[A-Za-z]:\\Users\\)[A-Za-z][A-Za-z0-9._-]{1,31}[/\\]'''
+tags = ["privacy", "portability"]
+
+[rules.allowlist]
+description = "CI runners and documentation placeholders are not real users"
+regexTarget = "match"
+regexes = [
+  '''[/\\](?:runner|user|username|USERNAME|you|youruser|me|someone|root|test|node|ubuntu|admin|home|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)[/\\]''',
+]
+
+[allowlist]
+description = "Repository-wide false positives"
+paths = [
+  # Lockfiles carry upstream integrity hashes that trip the generic
+  # high-entropy rules; the dependency set itself is reviewed by Dependabot.
+  '''(^|/)package-lock\.json$''',
+]

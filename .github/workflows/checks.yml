@@ -1,0 +1,63 @@
+name: Checks
+
+# Repository-hygiene gates that are cheap and must run even on
+# documentation-only changes. `Tests` deliberately skips docs-only pushes to
+# `main`; these checks are precisely the ones a docs-only change can break, so
+# this workflow carries no `paths-ignore`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docs:
+    name: docs:check
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # The root package has no dependencies, so there is nothing to install:
+      # `scripts/repo.mjs` and `scripts/docs-check.mjs` are plain Node.
+      - name: Run documentation checks
+        run: npm run docs:check
+
+  secrets:
+    name: gitleaks
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Gitleaks scans history, not just the tree. Without full depth it
+          # would only ever see the tip commit and miss a key that was
+          # committed and then removed in a later commit on the same branch.
+          fetch-depth: 0
+      # Installed from the upstream release rather than `gitleaks-action`:
+      # the Action requires a licence key for organisation accounts and would
+      # have to be SHA-pinned, while the binary is verified here by checksum.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o gitleaks.tar.gz "$url"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          rm gitleaks.tar.gz
+      - name: Scan for committed secrets
+        run: ./gitleaks git --no-banner --redact --config .gitleaks.toml .

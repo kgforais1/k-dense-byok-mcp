@@ -416,7 +416,7 @@ export function removeSkill(ref: SkillScopeRef, name: string): RemoveResult {
   if (origin === "catalogue") {
     const archiveRoot = archivedSkillsDir(root);
     fs.mkdirSync(archiveRoot, { recursive: true });
-    let destination = path.join(archiveRoot, name);
+    const destination = path.join(archiveRoot, name);
     if (fs.existsSync(destination)) {
       fs.rmSync(destination, { recursive: true, force: true });
     }

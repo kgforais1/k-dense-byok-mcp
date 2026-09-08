@@ -5,20 +5,28 @@
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [2. Code scanning, security alerts, and Dependabot](#2-code-scanning-security-alerts-and-dependabot)
 - [ ] **Start MCP server work** → [3. Start MCP server work](#3-start-mcp-server-work)
 - [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
+- [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
 
 ---
 
-## 1. CI and hooks (optional future enhancements)
+## 1. CI and hooks
 
-Baseline in place (PR #8, `.githooks/pre-push`, `tests`/`release`/`harness-update-check` workflows, active `dependabot.yml`). What remains is enhancement-track only — pick up if/when it pays for itself, not as blocking setup work:
-- pre-commit / pre-push hook coverage beyond the fork push guard (`.githooks/`)
-- status checks required before merge
-- test coverage
-- complexity
-- file line count
-- broken links
-- absolute paths
-- privacy protection
+Baseline in place (PR #8, `.githooks/pre-push`, `tests`/`release`/`harness-update-check` workflows, active `dependabot.yml`). The gates listed here as future work were implemented on branch `ci-hardening` — see the plan, [Repository quality gates](plans/2026-09-08-repo-quality-gates.md), for what each one does and why the rest were rejected.
+
+Done:
+
+- **broken links / docs structure** — `npm run docs:check` now runs in CI (`Checks` workflow). It never did before, and a `git mv` during MCP Phase 2 broke relative links with nothing to catch it.
+- **absolute paths / privacy protection** — a `local-home-directory-path` gitleaks rule blocks `/Users/<name>/`-style paths, alongside a full-history secret scan.
+- **test coverage** — thresholds on both `server` and `web`, enforced on `ubuntu-latest`.
+- **complexity / file line count** — backend ESLint (`server/eslint.config.mjs`), which the backend had entirely lacked.
+
+Still open:
+
+- **Bring the ratchets down.** The complexity, `max-lines` and `max-lines-per-function` limits are set at today's worst offender, and `@typescript-eslint/no-explicit-any` is off with 34 occurrences. The frontend has no size limits at all, because a useful value cannot be set while `file-preview-panel.tsx` is 2238 lines. Full backlog with current numbers is in the plan's [ratchet backlog](plans/2026-09-08-repo-quality-gates.md).
+- **Raise the coverage floors**, particularly on the frontend (48.8% statements vs the backend's 72.5%).
+- **Semgrep rules for this repository's own invariants** — not a generic ruleset, which would duplicate CodeQL. Candidates are recorded in the plan.
+- **Required status checks before merge.** The branch ruleset gates on CodeQL today; the new `Checks` jobs are not yet in the required set.
+- **Pre-commit hook coverage** beyond the fork push guard (`.githooks/`).
 
 ## 2. Code scanning, security alerts, and Dependabot
 

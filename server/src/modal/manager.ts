@@ -12,7 +12,6 @@ import {
 import {
   DEFAULT_INSTANCE_ID,
   hourlyEstimate,
-  resolveInstance,
   validateInstanceChain,
   worstCaseReservationUsd,
 } from "./catalog.ts";

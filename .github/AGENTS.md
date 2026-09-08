@@ -23,7 +23,12 @@ automation deltas.
 - Pin third-party GitHub Actions to a full-length commit SHA, not a tag.
   Use Dependabot (`dependabot.yml`) to keep those pins current. Do not
   pin first-party `actions/*` to a SHA; a major version tag is acceptable
-  for `actions/checkout` and similar.
+  for `actions/checkout` and similar. Where a tool ships a plain
+  release binary, installing it with a pinned version and a verified
+  SHA-256 is preferred over wrapping it in a third-party Action at all —
+  that is why `checks.yml` fetches `gitleaks` directly rather than using
+  `gitleaks-action`. Keep the version and its checksum together; bumping
+  one without the other must fail.
 - Use `concurrency:` with a workflow+ref group and
   `cancel-in-progress: ${{ github.event_name == 'pull_request' }}` for
   any per-PR job, so superseded pushes don't pile up.
@@ -32,6 +37,19 @@ automation deltas.
   `windows-latest` for backend) is the source of cross-platform coverage.
   Do not change the matrix without updating this file and the
   verification doc.
+- The `Checks` workflow (`workflows/checks.yml`) carries the
+  repository-hygiene gates: `npm run docs:check` and a full-history
+  gitleaks scan. It is deliberately a second workflow rather than extra
+  jobs in `Tests`, because `Tests` skips docs-only pushes to `main` via
+  `paths-ignore` — exactly the changes `docs:check` exists to validate.
+  **Never add `paths-ignore` to `Checks`.**
+- Coverage thresholds live in `server/vitest.config.ts` and
+  `web/vitest.config.ts`, and run on `ubuntu-latest` only: the floor is
+  platform-independent and the Windows legs are already the slowest in
+  the matrix. Do not lower a floor to make a change pass.
+- Rationale for every gate, plus the ratchet backlog and the tools that
+  were considered and rejected, is in
+  [`../dev-docs/plans/2026-09-08-repo-quality-gates.md`](../dev-docs/plans/2026-09-08-repo-quality-gates.md).
 
 ## Secrets
 

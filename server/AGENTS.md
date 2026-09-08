@@ -58,7 +58,9 @@ npm run dev                 # tsx watch on port 8000
 npm run start               # run backend (tsx)
 npm run prep                # ensure default project + seed scientific skills
 npm run typecheck           # tsc --noEmit
+npm run lint                # eslint
 npm test                    # vitest
+npm run test:coverage       # vitest with coverage thresholds
 ```
 
 The cross-platform launcher `start.mjs` (wrapped by `./start.sh` on

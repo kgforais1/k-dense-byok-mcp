@@ -263,6 +263,37 @@ describe("poll_run", () => {
     );
   });
 
+  it("reports a provider refusal as `error`, not `blocked`", async () => {
+    // Only `kind: "budget"` maps to `blocked` (run-broker.ts:132). A refusal
+    // frame has no `kind`, so it is an `error`. The two mean different things
+    // to a calling agent -- a cap is fixed by raising the limit, a refusal is
+    // not -- and poll_run's own description promises that split.
+    createProject({ projectId: "mcp-refusal", name: "MCP refusal" });
+    const handle = runBroker.start("mcp-refusal", "session-refusal", metadata("run-refusal"));
+    handle.publish({ type: "error", message: "Provider refused the request" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-refusal", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-refusal", runId: "run-refusal" },
+      }),
+    );
+    const body = payload(result);
+    expect(body).toMatchObject({ status: "error" });
+    expect(body.status).not.toBe("blocked");
+  });
+
+  it("documents the blocked/error split the broker actually implements", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find((t) => t.name === "poll_run");
+    const description = tool?.description ?? "";
+
+    // The description is read by other AI agents, so a wrong one is a defect.
+    expect(description).toMatch(/`blocked` means a project spend cap/);
+    expect(description).toMatch(/`error` means anything else failed, including a provider refusal/);
+  });
+
   it("falls back to the durable record once the broker has dropped the run", async () => {
     createProject({ projectId: "mcp-durable", name: "MCP durable" });
     // A separate broker stands in for the global one having already expired the

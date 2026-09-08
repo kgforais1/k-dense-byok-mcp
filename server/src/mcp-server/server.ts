@@ -168,7 +168,9 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
       title: "Poll a Kady research run",
       description: [
         "Return a run's status and the frames produced since `after`.",
-        "Statuses: `running` (poll again), `done`, `error`, `blocked` (a cap or refusal stopped it — read the terminal frame's `kind` and `message`), `aborted`, or `unknown` (no such run in this project).",
+        "Statuses: `running` (poll again), `done`, `aborted`, `unknown` (no such run in this project), or one of two distinct failures.",
+        "`blocked` means a project spend cap stopped the run: its terminal frame is `{type:\"error\", kind:\"budget\"}` and raising the limit is what unblocks it.",
+        "`error` means anything else failed, including a provider refusal — that frame has no `kind`, and its `message` already carries the guidance for what to do about it. Read the terminal frame's `message` in both cases.",
         "Pass the returned `lastSeq` back as `after` on the next call to receive only new frames.",
         "This keeps working after the in-memory broker drops the run: completed runs are also persisted durably.",
       ].join(" "),

@@ -47,18 +47,25 @@ export default tseslint.config(
       "max-depth": ["error", 6],
       "max-params": ["error", 6],
 
-      // Ceilings, not targets. Current worst: complexity 62
-      // (`agent/notebook-export.ts`), 1137 lines (`modal/manager.ts`), and a
-      // 639-line function (`api/sandbox.ts`). Those are physical line counts;
-      // `skipBlankLines`/`skipComments` means the rules count effective code
-      // lines, so the limits below bite sooner than the numbers suggest. That
-      // is the intent — the concern is code bulk, not file size.
-      complexity: ["error", 65],
-      "max-lines": ["error", { max: 1200, skipBlankLines: true, skipComments: true }],
-      "max-lines-per-function": [
-        "error",
-        { max: 650, skipBlankLines: true, skipComments: true },
-      ],
+      // Ceilings, not targets, set at exactly the current worst offender:
+      // complexity 62 (`agent/notebook-export.ts`), 1137 lines
+      // (`modal/manager.ts`), and a 639-line function (`api/sandbox.ts`).
+      //
+      // Exactly, not rounded up. A limit above the worst thing in the tree is
+      // a gate nobody can trip: at `max-lines: 1200` a new 1199-line file
+      // passes, and new code gets modelled on the files that already sit near
+      // the line. At the worst offender, anything worse than the worst thing
+      // here fails, which is the weakest claim actually worth enforcing.
+      //
+      // Physical lines, deliberately. `skipBlankLines`/`skipComments` would
+      // count effective lines instead, and since `manager.ts` is 1137 physical
+      // but ~1049 effective, that makes the limit *looser* than the number
+      // reads — it would admit a ~1300-line file. Counting physical lines
+      // keeps the number honest, and this codebase should never be discouraged
+      // from adding a comment.
+      complexity: ["error", 62],
+      "max-lines": ["error", 1137],
+      "max-lines-per-function": ["error", 639],
     },
   },
   {

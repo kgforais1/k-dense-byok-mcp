@@ -10,7 +10,6 @@ import { createKadyMcpServer } from "./server.ts";
 interface McpConnection {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
-  projectId: string;
 }
 
 const sessionHeader = "mcp-session-id";
@@ -32,9 +31,15 @@ function requestedSessionId(headers: Record<string, string | string[] | undefine
  *
  * Streamable HTTP is stateful here: an MCP transport session is an adapter
  * connection only, while Kady research sessions are explicitly created by the
- * `create_research_session` tool added later in Phase 2. Capture the project
- * id at initialization so future stateful tools can bind it to the connection;
- * the current project-independent `list_projects` tool does not consume it.
+ * `create_research_session` tool.
+ *
+ * Project scope is deliberately NOT a property of the connection. Every tool
+ * resolves `currentProjectId()` from the `X-Project-Id` on its own request,
+ * exactly as the REST API does, so one connection can address several projects
+ * and a client that sends no header gets the default. An earlier version
+ * cached the initializing request's project id here; nothing consumed it, and
+ * keeping it invited a future handler to trust a value that can disagree with
+ * the request actually being served.
  */
 export async function registerInboundMcpRoutes(
   app: FastifyInstance,
@@ -67,7 +72,6 @@ export async function registerInboundMcpRoutes(
         },
       });
       const server = createKadyMcpServer(app.log);
-      const projectId = currentProjectId();
       // Set this before server.connect(): Protocol.connect composes the
       // transport's existing close hook with its own cleanup. Assigning it
       // afterwards would replace that SDK hook and make server.close() recurse
@@ -84,7 +88,7 @@ export async function registerInboundMcpRoutes(
         await Promise.allSettled([transport.close(), server.close()]);
         throw error;
       }
-      connection = { server, transport, projectId };
+      connection = { server, transport };
       newConnection = true;
     }
 
@@ -104,7 +108,7 @@ export async function registerInboundMcpRoutes(
         newConnection = false;
       }
     } catch (error) {
-      req.log.error({ error, projectId: connection.projectId }, "MCP request failed");
+      req.log.error({ error, projectId: currentProjectId() }, "MCP request failed");
       if (newConnection) {
         // An initial request may fail after the SDK has allocated a transport
         // session but before it is cached. Close it here so neither the

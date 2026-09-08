@@ -10,6 +10,7 @@ import { RunBroker, runBroker, type RunMetadata } from "../src/agent/run-broker.
 import { persistRunResult } from "../src/agent/run-results.ts";
 import { createKadyMcpServer } from "../src/mcp-server/server.ts";
 import { beginRun } from "../src/api/sessions.ts";
+import { createSession } from "../src/agent/session-registry.ts";
 
 vi.mock("../src/api/sessions.ts", () => ({ beginRun: vi.fn() }));
 // A real Pi session needs a model runtime; the adapter contract under test is
@@ -116,10 +117,31 @@ describe("inbound MCP Phase 2 tool contract", () => {
       client.callTool({ name: "create_research_session" }),
     );
     expect(created.isError).toBeFalsy();
-    expect(payload(created)).toMatchObject({
-      sessionId: "session-headless",
-      interviewDisabled: true,
-    });
+    const body = payload(created);
+    expect(body).toMatchObject({ sessionId: "session-headless", interviewDisabled: true });
+    // No absolute host path in the tool result.
+    expect(body.sessionFile).toBeUndefined();
+  });
+
+  it("scopes every call to its own request header, not to the connection", async () => {
+    // One MCP connection can address several projects: scope is resolved
+    // per-request from `X-Project-Id`, exactly as the REST API does. Pinning
+    // this in a test because the transport used to cache the initializing
+    // request's project id, which nothing consumed and which could disagree
+    // with the request actually being served.
+    createProject({ projectId: "mcp-scope-a", name: "Scope A" });
+    createProject({ projectId: "mcp-scope-b", name: "Scope B" });
+    const client = await connect();
+
+    const underA = await withActiveProject("mcp-scope-a", () =>
+      client.callTool({ name: "poll_run", arguments: { sessionId: "s", runId: "r" } }),
+    );
+    const underB = await withActiveProject("mcp-scope-b", () =>
+      client.callTool({ name: "create_research_session" }),
+    );
+    expect(payload(underA)).toMatchObject({ status: "unknown" });
+    expect(underB.isError).toBeFalsy();
+    expect(vi.mocked(createSession).mock.calls.at(-1)?.[0]).toBe("mcp-scope-b");
   });
 
   it("reports a missing session rather than inventing one", async () => {

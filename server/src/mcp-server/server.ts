@@ -94,11 +94,10 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
       const session = await createSession(currentProjectId(), activePaths(), {
         includeInterview: false,
       });
-      return json({
-        sessionId: session.sessionId,
-        sessionFile: session.sessionFile,
-        interviewDisabled: true,
-      });
+      // Deliberately not `session.sessionFile`. It is an absolute host path,
+      // the client only ever echoes `sessionId` back to the other tools, and
+      // the guardrail is that tools return no more host detail than they must.
+      return json({ sessionId: session.sessionId, interviewDisabled: true });
     },
   );
 

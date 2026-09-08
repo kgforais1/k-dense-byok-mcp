@@ -30,7 +30,14 @@ function isSafeSessionId(sessionId: string): boolean {
 
 function markerPath(projectId: string, sessionId: string): string | null {
   if (!isSafeSessionId(sessionId)) return null;
-  return path.join(resolvePaths(projectId).kadyDir, "headless-sessions", `${sessionId}.json`);
+  const markerRoot = path.resolve(resolvePaths(projectId).kadyDir, "headless-sessions");
+  const file = path.resolve(markerRoot, `${sessionId}.json`);
+  // Keep this normalized containment check next to the filesystem sinks, as
+  // `cost/ledger.ts` does. The grammar above already blocks traversal, but this
+  // protects the boundary even if a future caller broadens that grammar — and
+  // it is the form static analysis can actually see.
+  if (!file.startsWith(`${markerRoot}${path.sep}`)) return null;
+  return file;
 }
 
 /** Record that `sessionId` was created headless and must stay that way. */

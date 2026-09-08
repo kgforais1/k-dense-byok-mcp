@@ -84,7 +84,10 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         "Do not call it per run or per poll: each project keeps at most 10 live sessions.",
         "The session is headless — the interactive `interview` tool is disabled because no human is watching a chat UI to answer it.",
       ].join(" "),
-      inputSchema: {},
+      // Deliberately no `inputSchema`. An empty shape (`{}`) is not the same as
+      // omitting the key: the SDK builds a validating object schema from it and
+      // then rejects a call that sends no arguments at all, which is exactly how
+      // a client invokes a no-argument tool.
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async () => {

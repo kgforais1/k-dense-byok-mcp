@@ -12,6 +12,15 @@ import { createKadyMcpServer } from "../src/mcp-server/server.ts";
 import { beginRun } from "../src/api/sessions.ts";
 
 vi.mock("../src/api/sessions.ts", () => ({ beginRun: vi.fn() }));
+// A real Pi session needs a model runtime; the adapter contract under test is
+// only that it asks for a headless one and returns the id it gets back.
+vi.mock("../src/agent/session-registry.ts", () => ({
+  createSession: vi.fn(async () => ({
+    sessionId: "session-headless",
+    sessionFile: "/tmp/session-headless.jsonl",
+  })),
+  getSession: vi.fn(async () => null),
+}));
 
 const PHASE_2_TOOLS = [
   "list_projects",
@@ -86,6 +95,31 @@ describe("inbound MCP Phase 2 tool contract", () => {
     expect(tool?.inputSchema.required).toEqual(
       expect.arrayContaining(["sessionId", "message"]),
     );
+  });
+
+  it("lets a client invoke the no-argument tools with no arguments at all", async () => {
+    // Regression: `inputSchema: {}` is not the same as omitting the key. The
+    // SDK builds a validating object schema from an empty shape and then
+    // rejects a call that sends no `arguments` — which is exactly how a real
+    // client invokes a no-argument tool. The in-memory contract tests missed
+    // this originally because they only *listed* these tools; the external
+    // client check caught it. So this calls them.
+    createProject({ projectId: "mcp-noargs", name: "MCP no args" });
+    const client = await connect();
+
+    const listed = await withActiveProject("mcp-noargs", () =>
+      client.callTool({ name: "list_projects" }),
+    );
+    expect(listed.isError).toBeFalsy();
+
+    const created = await withActiveProject("mcp-noargs", () =>
+      client.callTool({ name: "create_research_session" }),
+    );
+    expect(created.isError).toBeFalsy();
+    expect(payload(created)).toMatchObject({
+      sessionId: "session-headless",
+      interviewDisabled: true,
+    });
   });
 
   it("reports a missing session rather than inventing one", async () => {

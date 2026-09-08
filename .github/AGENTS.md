@@ -38,21 +38,23 @@ automation deltas.
   Do not change the matrix without updating this file and the
   verification doc.
 - The `Checks` workflow (`workflows/checks.yml`) carries the
-  repository-hygiene gates: `npm run docs:check` and two full-history
-  gitleaks scans. It is deliberately a second workflow rather than extra
-  jobs in `Tests`, because `Tests` skips docs-only pushes to `main` via
+  repository-hygiene gates: `npm run docs:check` and three gitleaks
+  scans. It is deliberately a second workflow rather than extra jobs in
+  `Tests`, because `Tests` skips docs-only pushes to `main` via
   `paths-ignore` — exactly the changes `docs:check` exists to validate.
   **Never add `paths-ignore` to `Checks`.**
-- The two gitleaks passes use two configs and cannot be merged.
-  `.gitleaks.toml` extends the upstream rules; `.gitleaks-paths.toml`
-  finds committed host paths and must keep `useDefault = false`, because
-  the bundled defaults globally allowlist `/home/<name>/` and would
-  silently disable that branch of the rule.
-- The secret pass scans git history; the path pass scans only the tracked
-  tree, exported with `git ls-files`. A leaked key stays live wherever it
-  landed, but a host path only matters where it currently is — scanning
-  history there would fail the build forever over a path already removed.
-  Do not "simplify" the two into one invocation.
+- The three gitleaks passes use three configs and cannot be merged:
+  - `.gitleaks.toml` — upstream rules (`useDefault = true`), over history.
+  - `.gitleaks-lockfiles.toml` — over history, for the files the pass
+    above is not allowed to read. `useDefault = true` inherits gitleaks'
+    bundled path allowlist, which skips both lockfiles, `node_modules`
+    and `vendor`, and cannot be un-inherited.
+  - `.gitleaks-paths.toml` — committed host paths, over the **tracked
+    tree** exported with `git ls-files`, not history.
+- The scope difference is deliberate. A leaked key stays live wherever it
+  landed, so it is hunted through history. A host path only matters where
+  it currently is; scanning history for it would fail the build forever
+  over a path already removed. Do not "simplify" the three into one.
 - Do not add a blanket file allowlist to any gitleaks config. A
   `package-lock.json` exemption was tried and removed: it suppressed every
   finding in both lockfiles, including a real key, and was hiding nothing.

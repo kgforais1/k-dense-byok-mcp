@@ -31,7 +31,23 @@ id = "provider-api-key"
 description = "Provider API key with a recognisable prefix"
 # The providers this backend reads from the environment: Anthropic, OpenAI,
 # Google/Gemini, OpenRouter, NVIDIA, Perplexity, Exa, GitHub, Modal.
-regex = '''\b(?:sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{32,}|sk-[A-Za-z0-9]{32,}|nvapi-[A-Za-z0-9_-]{32,}|pplx-[A-Za-z0-9]{32,}|AIza[A-Za-z0-9_-]{35}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})\b'''
+regex = '''\b(?:sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{32,}|sk-[A-Za-z0-9]{32,}|nvapi-[A-Za-z0-9_-]{32,}|pplx-[A-Za-z0-9]{32,}|AIza[A-Za-z0-9_-]{35}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,}|a[ks]-[A-Za-z0-9]{20,})\b'''
+tags = ["key", "provider"]
+
+[[rules]]
+id = "kady-credential-assignment"
+description = "A credential this backend reads, assigned a literal value"
+# Prefix matching only covers providers that use one. Modal's `ak-`/`as-` pair
+# is above, but Exa hands out bare UUIDs and several others have no recognisable
+# shape at all, so a prefix list alone leaves holes that are invisible until
+# someone finds them the hard way.
+#
+# This rule keys on the variable names instead — the ones read in
+# `server/src/config.ts` and `server/src/api/credentials.ts` — and fires when
+# one is assigned a literal rather than read from the environment. The value
+# must be quoted and at least 12 characters, which is what keeps
+# `process.env.MODAL_TOKEN_ID &&` and `envVar: "MODAL_TOKEN_ID"` quiet.
+regex = '''(?:ANTHROPIC|OPENAI|GEMINI|GOOGLE|NVIDIA|OPENROUTER|OR|PERPLEXITY|EXA)_API_KEY\s*[:=]\s*["'][^"']{12,}["']|MODAL_TOKEN_(?:ID|SECRET)\s*[:=]\s*["'][^"']{12,}["']|(?:GITHUB|PACKAGE)_TOKEN\s*[:=]\s*["'][^"']{12,}["']'''
 tags = ["key", "provider"]
 
 [[rules]]
@@ -52,6 +68,18 @@ description = "PEM private key block"
 regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----'''
 tags = ["key", "private"]
 
-[[rules.allowlists]]
+[[allowlists]]
+description = "Obvious test placeholders, not credentials"
+# `server/test/speech.test.ts` sets `OPENROUTER_API_KEY = "test-openrouter-key"`.
+# Matched on the value's own prefix rather than by exempting the test tree, so a
+# real key pasted into a test is still caught. File-level, not `[[rules.allowlists]]`:
+# that form binds to the preceding rule only, which is a quiet way to write an
+# allowlist that never applies to the rule you meant.
+regexTarget = "match"
+regexes = [
+  '''["'](?i:test|fake|dummy|sample|example|placeholder|changeme|redacted|xxx|your)[-_]''',
+]
+
+[[allowlists]]
 description = "This file has to be able to spell the patterns it matches on"
 paths = ['''(^|/)\.gitleaks-lockfiles\.toml$''']

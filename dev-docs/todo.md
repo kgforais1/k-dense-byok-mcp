@@ -4,6 +4,7 @@
 
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [2. Code scanning, security alerts, and Dependabot](#2-code-scanning-security-alerts-and-dependabot)
 - [ ] **Start MCP server work** → [3. Start MCP server work](#3-start-mcp-server-work)
+- [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
 
 ---
 
@@ -47,3 +48,32 @@ Ideas:
 - Decide transport and scope: stdio vs HTTP, project scoping (`X-Project-Id`), auth for a local server.
 - Adapt the existing project/session/run/file/sandbox HTTP APIs as the tool backend rather than building from scratch.
 - Start with a minimal tool subset (e.g. list projects, research prompt, get result) before the full §10 surface.
+
+## 4. Alternate coding-agent engines
+
+These are exploratory integrations, not API-key replacements already supported by
+Kady's Pi OAuth providers. Any adapter must retain Kady's local-only boundary,
+project scoping, cancellation, tool policy, and accounting.
+
+- **OpenCode:** Medium feasibility. Checked 2026-09-07 against
+  [`anomalyco/opencode@ecbc6cc`](https://github.com/anomalyco/opencode/tree/ecbc6ccac85b3e8087b6445e584318419b9e2b34)
+  and its [server documentation](https://opencode.ai/docs/server): loopback
+  `opencode serve` exposes an OpenAPI server with sessions and events. It is a
+  second agent runtime, so an adapter must reconcile tools, state, credentials,
+  and costs with Kady rather than treating it as a drop-in model provider.
+- **Antigravity / agy:** Medium-low feasibility. The evaluation target is the
+  currently active fork
+  [`kgrizz-git/agy-acp@743ee45`](https://github.com/kgrizz-git/agy-acp/tree/743ee4534bb77d3bcdd88ce5526e1e9ed343dd10),
+  checked 2026-09-07 and observed pushed that day; it is a fork of
+  [`hicder/agy-acp@858041c`](https://github.com/hicder/agy-acp/tree/858041c957e79d8308412d1b71a8dded27c11f22).
+  This records no maintenance commitment. Native agy ACP support is unverified;
+  the candidate is an ACP adapter, so Kady would still need a durable
+  session/event/cancel adapter and explicit ownership of credentials and
+  sandbox policy.
+- **Kiro:** Medium feasibility. Checked 2026-09-07 against Kiro's
+  [ACP documentation](https://kiro.dev/docs/cli/acp/) (whose protocol example
+  identifies `kiro-cli` 1.5.0) and [CLI overview](https://kiro.dev/docs/):
+  `kiro-cli acp` is a documented stdio JSON-RPC ACP server, while the CLI also
+  supports headless execution, sessions, and CI. It remains a separate agent
+  engine with its own authentication, tool permissions, and lifecycle—not a
+  direct Pi model-provider entry.

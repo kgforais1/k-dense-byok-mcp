@@ -12,7 +12,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { activePaths, getProject, resolvePaths } from "../projects.ts";
+import { activePaths, getProject, PROJECT_ID_RE, resolvePaths } from "../projects.ts";
 import {
   billingForProvider,
   normalizeUsageCost,
@@ -131,8 +131,21 @@ function costsPath(sessionId: string, projectId?: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId)) {
     throw new Error(`Invalid session id: ${sessionId}`);
   }
+  // A project id is also a path segment. Check it here, immediately before
+  // the dynamic ledger path is assembled, rather than relying on callers to
+  // have passed it through request-scope validation.
+  if (projectId && !PROJECT_ID_RE.test(projectId)) {
+    throw new Error(`Invalid project id: ${projectId}`);
+  }
   const paths = projectId ? resolvePaths(projectId) : activePaths();
-  return path.join(paths.runsDir, sessionId, "costs.jsonl");
+  const runsRoot = path.resolve(paths.runsDir);
+  const file = path.resolve(runsRoot, sessionId, "costs.jsonl");
+  // Keep this normalized containment check next to the filesystem sinks. It
+  // protects this boundary even if a future caller broadens either id grammar.
+  if (!file.startsWith(`${runsRoot}${path.sep}`)) {
+    throw new Error("Ledger path escapes the project runs directory");
+  }
+  return file;
 }
 
 /** Append a ledger row for the delta between two cumulative snapshots. */

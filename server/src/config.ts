@@ -59,6 +59,28 @@ export const DEFAULT_PROJECT_ID = "default";
 export const PORT = Number(process.env.KADY_PORT ?? process.env.PORT ?? 8000);
 export const HOST = process.env.KADY_HOST ?? "127.0.0.1";
 
+/**
+ * Explicit opt-in for Kady's inbound MCP server. The existing `mcp` routes
+ * configure outbound connectors; this gate is only for exposing Kady itself
+ * as an MCP server on the shared Fastify listener.
+ */
+export const MCP_ENABLED = process.env.KADY_MCP_ENABLED === "1";
+
+/**
+ * The MCP server has no remote authentication story in Phase 2. Its shared
+ * listener must therefore be a literal loopback address whenever enabled.
+ * Do not accept `localhost`: its resolution is host-configurable, whereas
+ * these literals are unambiguously local on every supported platform.
+ */
+export function assertMcpLoopbackHost(host = HOST, enabled = MCP_ENABLED): void {
+  if (!enabled) return;
+  const normalized = host.trim().toLowerCase();
+  if (normalized === "127.0.0.1" || normalized === "::1") return;
+  throw new Error(
+    `KADY_MCP_ENABLED requires a loopback KADY_HOST; received ${JSON.stringify(host)}`,
+  );
+}
+
 /** Default orchestrator model, routed through Pi's OpenRouter provider. */
 export const DEFAULT_MODEL_PROVIDER =
   process.env.DEFAULT_MODEL_PROVIDER ?? "openrouter";

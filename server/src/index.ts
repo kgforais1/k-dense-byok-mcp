@@ -13,7 +13,13 @@ import fastifyCors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyRequest } from "fastify";
-import { DEFAULT_PROJECT_ID, HOST, PORT, modalConfigured } from "./config.ts";
+import {
+  DEFAULT_PROJECT_ID,
+  HOST,
+  PORT,
+  assertMcpLoopbackHost,
+  modalConfigured,
+} from "./config.ts";
 import { isCorsOriginAllowed } from "./cors.ts";
 import { ensureProjectExists, getProject } from "./projects.ts";
 import { withActiveProject } from "./scope.ts";
@@ -28,6 +34,7 @@ import { registerAgentRoutes } from "./api/agents.ts";
 import { registerSpeechRoutes } from "./api/speech.ts";
 import { registerModalRoutes } from "./api/modal.ts";
 import { registerModelProviderRoutes } from "./api/model-providers.ts";
+import { registerInboundMcpRoutes } from "./mcp-server/http.ts";
 import { startAutomaticSkillSync } from "./agent/skills-sync.ts";
 import { modalJobManager } from "./modal/manager.ts";
 import { syncHelperVenv } from "./helpers-env.ts";
@@ -62,6 +69,9 @@ function resolveProjectId(req: FastifyRequest): string {
 }
 
 export async function buildApp() {
+  // Phase 2 MCP is opt-in and has no remote authentication mechanism. Fail
+  // before Fastify mounts any route rather than relying on a default bind.
+  assertMcpLoopbackHost();
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? "info" },
     // Inline image attachments ride the JSON run body as base64 (up to 12 ×
@@ -146,6 +156,7 @@ export async function buildApp() {
   await registerSpeechRoutes(app);
   await registerModalRoutes(app);
   await registerModelProviderRoutes(app);
+  await registerInboundMcpRoutes(app);
 
   // Reattach durable jobs after routes are available. Recovery schedules
   // active jobs in the background and immediately reconciles any terminal job

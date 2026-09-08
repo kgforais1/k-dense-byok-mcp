@@ -1,13 +1,13 @@
 ---
 title: "MCP server Phase 2 — minimal server"
-status: proposed
+status: accepted
 created: 2026-09-06
-branch: mcp-work
+branch: mcp-phase-2
 ---
 
-# MCP Server Phase 2 — Minimal Server (Partial)
+# MCP Server Phase 2 — Minimal Server
 
-**Status:** Proposed — deliberately partial. This phase hinges on Phase 1 verdicts (transport, process model, run-mapping, tool subset) and must be refined against them before implementation starts. Part of the [master plan](2026-09-06-mcp-server.md).
+**Status:** Accepted — implementation started from the Phase 1 decision record. Part of the [master plan](2026-09-06-mcp-server.md).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -25,7 +25,7 @@ A minimal live loop validates the adapter approach before committing to the full
 
 - Thin translation only — tools call existing endpoints; no agent logic in the adapter.
 - Minimal subset decided in Phase 1: `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, `poll_run` (see the Phase 1 Decisions for the transport/process verdicts). `create_research_session` wraps `POST /sessions`, returns the Kady session id required by the latter three session-scoped tools, and is the provisioning path for a fresh external client.
-- Local-only; project scoping via the existing `X-Project-Id` mechanism. When MCP is enabled, startup rejects every non-loopback `KADY_HOST` value (including `0.0.0.0`) before mounting or serving MCP routes; `127.0.0.1` remains the supported default.
+- Local-only; project scoping via the existing `X-Project-Id` mechanism. `KADY_MCP_ENABLED=1` opts into Kady's inbound MCP server. When it is enabled, startup rejects every non-loopback `KADY_HOST` value (including `0.0.0.0`) before mounting or serving MCP routes; `127.0.0.1` remains the supported default.
 
 ## Proposed information architecture / file changes
 
@@ -38,9 +38,10 @@ server/test/mcp-server-*.test.ts   NEW — tool-shape, scoping, contract tests
 
 ## Implementation sequence
 
-- [ ] Scaffold the adapter per Phase 1 transport/process verdicts.
+- [x] Establish the opt-in `KADY_MCP_ENABLED` gate and fail-closed shared-listener assertion; contract-test the `127.0.0.1` default and non-loopback rejection before MCP routes exist.
+- [~] Scaffold the adapter per Phase 1 transport/process verdicts: stateful Streamable HTTP now mounts at opt-in `/mcp-server` (kept distinct from the existing outbound-connector `/mcp` API) and serves the contract-tested `list_projects` tool; the remaining four tools follow in this phase.
 - [ ] Before exposing MCP runs, disable `interview` for MCP-created sessions and add the MCP-specific system-prompt/skill note required by Phase 1; contract-test that the tool is absent and the replacement guidance is present.
-- [ ] Add a durable terminal-result record keyed by `runId` under the existing per-project run-data tree and a lookup that returns its terminal status/result after the broker's ~30s retention expires; `poll_run` must read the broker while live and the persisted record afterward.
+- [x] Add a durable terminal-result record keyed by `runId` under the existing per-project run-data tree and a lookup that returns its terminal status/result after the broker's ~30s retention expires. The snapshot is intentionally an atomic synchronous write for every completed local run: that small completion-path cost guarantees the record exists before broker expiry; records are bounded to 500 per project and seven days; Phase 2 does not add a second, MCP-only run path.
 - [ ] Implement the minimal tool subset with contract tests (shape, project scoping, fresh-client `create_research_session` → run/poll flow, a bind assertion that preserves the `127.0.0.1` default and rejects every non-loopback `KADY_HOST` value — including `0.0.0.0` — whenever MCP is enabled, durable terminal-result lookup, and error mapping). The run-start contract must map **only** `RunAlreadyActiveError` — either via a typed `reason` preserved by `/sessions/:id/run` or by the adapter's direct `runBroker` rule — to the MCP “run already active” response. Its test must force both that concurrent case and an unrelated `start()`/`publish()` failure: the former gets that response; an HTTP 500 unrelated failure preserves its actual mapped failure rather than being mislabeled as concurrency. It must also distinguish the `/steer`-only HTTP 403 from the run's `kind:"budget"` frame on an HTTP-200 stream, plus a post-expiry poll that retrieves the durable terminal record.
 - [ ] End-to-end check from a real external MCP client (OpenCode or Claude Code) against a scratch project.
 - [ ] Record deviations from this stub as Decisions.

@@ -95,6 +95,19 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   agent never emits (`agent/events.ts:311` is the real mapping). That is now a
   named regression test.
 
+## Open, recorded rather than fixed
+
+- **`DELETE /sessions/:id` sits outside the sandbox rate-limit scope.** So does
+  every other session route: the scope in `server/src/index.ts` wraps the
+  filesystem-touching sandbox routes only. Bringing session routes inside it is
+  a change to that scope's meaning, not a one-line fix, and this is a loopback
+  single-user app. Recorded so the next person does not rediscover it.
+
+- **Cost ledger entries outlive the chat they belong to.** Deliberate: the money
+  was spent. Deleting a chat must not silently refund the project's budget
+  tracking. Everything else keyed by the session id — notebook, PDF
+  annotations, provenance — is removed with the transcript.
+
 ## Carried in from the CI-hardening review (PR #19)
 
 Two of the three "guardrails enforced only by prose" turn out to want tests, not

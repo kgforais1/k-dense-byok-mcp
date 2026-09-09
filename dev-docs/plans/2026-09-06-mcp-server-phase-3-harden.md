@@ -39,7 +39,7 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 
 - [x] Write `docs/kady-as-mcp-server.md` and validate with a fresh-client walkthrough. Register the new doc per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
 - [ ] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts.
-- [ ] Add or explicitly defer remaining §10 tools.
+- [ ] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`.
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
@@ -49,6 +49,44 @@ the documentation item and the carried-in review work; packaging, the remaining
 §10 tools, and the CLI reuse map are a second pass, and the fresh-client
 walkthrough transcript that backs the "installable by a third party" acceptance
 measure has not been produced yet. Do not archive this plan until they are.
+
+## Next chunk: session management over MCP
+
+An MCP client can create sessions it cannot enumerate or remove. The five
+Phase 2 tools cover one research loop and nothing around it, so a scripted
+client accumulates sessions and has to open a browser to clean them up. That is
+the same asymmetry this phase rejected when it chose delete-and-label over a
+creation cap: the browser must not be the only interface that can manage its
+own data.
+
+Both endpoints already exist and both already behave identically for the two
+callers, so these are translation only — no new logic in the adapter, per the
+standing guardrail.
+
+- **`list_research_sessions`** wraps `GET /sessions`. Returns `sessionId`,
+  `name`, `created`, `modified`, `messageCount`, `firstMessage` and `headless`.
+  Rename `id` to `sessionId` on the way out so it matches the field name every
+  other tool takes as input; that mismatch is the kind of thing a calling agent
+  gets wrong once and then works around forever. `firstMessage` is user prose
+  from the transcript, so it is the one field worth re-checking against the
+  no-host-path property test.
+- **`delete_research_session`** wraps `DELETE /sessions/:id`. Keep the REST
+  behaviour exactly: 404 becomes a "No such session" tool error, and a run in
+  flight becomes the same `run_already_active` reason `start_research_run`
+  already returns, so a client learns one vocabulary rather than two. Mark it
+  `destructiveHint: true` in the tool annotations — it is the first inbound tool
+  that destroys anything, and a client that surfaces annotations should be able
+  to prompt for it.
+- Both need the Phase 2 contract tests: scope resolved per request, and a case
+  in `mcp-adapter-guardrails.test.ts` (which fails today if a tool has no case,
+  so this is enforced rather than remembered).
+- Once they land, drop the "no way to delete a session through MCP" entry from
+  the Limits section of `docs/kady-as-mcp-server.md` and describe the two tools
+  in the tool table.
+
+Deliberately still out: no abort tool. Aborting is a live-run operation with
+ownership implications, not a translation, and `docs/kady-as-mcp-server.md`
+discloses the gap.
 
 Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
 
@@ -108,6 +146,25 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   filesystem-touching sandbox routes only. Bringing session routes inside it is
   a change to that scope's meaning, not a one-line fix, and this is a loopback
   single-user app. Recorded so the next person does not rediscover it.
+
+- **Deleting a session leaves two things behind on purpose, and one by
+  omission.** On purpose: the cost ledger (below), and the per-PDF annotation
+  sidecars in `server/src/pdf-annotations-store.ts`, which are keyed by PDF
+  rather than by session and outlive any single chat. Worth naming the
+  consequence, because it is a decision and not a cleanup: markup authored from
+  a deleted chat survives, but the provenance that linked it to that chat does
+  not, so it becomes unattributable. By omission: `methods_draft_<sessionId>.md`
+  files written into the sandbox (`server/src/agent/methods-draft.ts`). Those
+  are user-visible sandbox files the user can delete themselves, which is the
+  argument for leaving them, but nobody actually made that call.
+
+- **A tab whose session is deleted elsewhere has no steady-state recovery.**
+  The web guard is preventive — the history menu disables delete for a session
+  open in any tab. It cannot cover a session deleted through MCP or a second
+  browser window. `useSessionRestore`'s `onUnavailable` only runs at mount, so a
+  live tab keeps its in-memory transcript and fails every later send with a
+  generic error. Wanted: a 404-on-send handler that tells the tab its session is
+  gone.
 
 - **`producedOutput` counts any successful `tool_end`, including a pure read.**
   A run that read one file and then finished silently reports `true`, which is

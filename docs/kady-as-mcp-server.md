@@ -62,7 +62,7 @@ JSON form many of them share:
 }
 ```
 
-With Claude Code you can do the same from the command line:
+With Claude Code you can do the same from the command line (check `claude mcp add --help` for the current flag names):
 
 ```bash
 claude mcp add --transport http kady http://127.0.0.1:8000/mcp-server \

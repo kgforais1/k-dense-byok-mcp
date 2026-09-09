@@ -193,6 +193,30 @@ function release(projectId: string, key: string, session: AgentSession): void {
   clearSessionCompute(projectId, key.slice(projectId.length + 1));
 }
 
+/**
+ * Confirm a transcript really belongs to `sessionId` before unlinking it.
+ *
+ * `findSessionFile` matches on a filename *suffix*, which is fine for reads
+ * but not for a delete: the id `23` also matches `subagent-123.jsonl`, so a
+ * short id could destroy an unrelated transcript. Pi writes a `{"type":
+ * "session", "id": ...}` header as the first row, and that is authoritative.
+ * A file with no readable header is accepted only on an exact filename match.
+ */
+function ownsSessionFile(file: string, sessionId: string): boolean {
+  if (path.basename(file) === `${sessionId}.jsonl`) return true;
+  try {
+    for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const row = JSON.parse(trimmed) as { type?: string; id?: string };
+      return row.type === "session" && row.id === sessionId;
+    }
+  } catch {
+    // Unreadable or malformed: fall through to the exact-name rule above.
+  }
+  return false;
+}
+
 export type DeleteSessionResult = "deleted" | "not_found" | "run_active";
 
 /**
@@ -210,7 +234,7 @@ export function deleteSession(
   sessionId: string,
 ): DeleteSessionResult {
   const file = findSessionFile(paths, sessionId);
-  if (!file) return "not_found";
+  if (!file || !ownsSessionFile(file, sessionId)) return "not_found";
 
   // Deleting the transcript out from under a running agent would leave the run
   // writing to a file nobody can read.

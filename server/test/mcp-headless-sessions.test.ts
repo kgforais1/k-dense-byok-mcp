@@ -48,6 +48,21 @@ describe("deleteSession", () => {
     expect(isHeadlessSession(projectId, sessionId)).toBe(false);
   });
 
+  it("does not delete a different session whose filename merely ends with the id", () => {
+    // `findSessionFile` matches on a filename suffix, so the id `23` also
+    // matches `subagent-123.jsonl`. Harmless for a read, destructive here.
+    const projectId = "delete-session-collide";
+    createProject({ projectId, name: "Delete session collide" });
+    const paths = resolvePaths(projectId);
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    const other = path.join(paths.sessionsDir, "subagent-123.jsonl");
+    fs.writeFileSync(other, `${JSON.stringify({ type: "session", id: "subagent-123" })}\n`);
+
+    expect(deleteSession(projectId, paths, "23")).toBe("not_found");
+    expect(fs.existsSync(other)).toBe(true);
+  });
+
   it("returns not_found when the transcript is missing", () => {
     const projectId = "delete-session-missing";
     createProject({ projectId, name: "Delete session missing" });

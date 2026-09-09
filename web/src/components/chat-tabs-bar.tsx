@@ -9,10 +9,12 @@ import {
   PencilIcon,
   PlusIcon,
   TerminalIcon,
+  Trash2Icon,
   WorkflowIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import {
   DropdownMenu,
@@ -22,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { apiFetch } from "@/lib/projects";
 import { cn } from "@/lib/utils";
@@ -59,6 +62,8 @@ interface SessionListItem {
   modified: string | number;
   messageCount: number;
   firstMessage?: string | null;
+  /** Created by an MCP client, so this session has no `interview` tool. */
+  headless?: boolean;
 }
 
 function sessionTitle(s: SessionListItem): string {
@@ -90,6 +95,38 @@ function HistoryMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
+  // Clicking the trash icon must not also reopen the chat. Radix fires the
+  // item's onSelect for a click anywhere inside it, so the button records its
+  // intent here and onSelect defers to it.
+  const deletingRef = useRef<string | null>(null);
+
+  async function deleteSession(session: SessionListItem, title: string) {
+    const confirmed = window.confirm(
+      `Delete "${title}"? Its transcript will be permanently removed. This cannot be undone.`,
+    );
+    if (!confirmed) return;
+    try {
+      const res = await apiFetch(
+        `/sessions/${encodeURIComponent(session.id)}`,
+        { method: "DELETE" },
+        projectId,
+      );
+      if (res.status === 409) {
+        toast.error("That chat is still running. Wait for it to finish.");
+        return;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.detail ?? "Could not delete that chat");
+        return;
+      }
+      setSessions((current) =>
+        current ? current.filter((entry) => entry.id !== session.id) : current,
+      );
+    } catch (exc) {
+      toast.error(exc instanceof Error ? exc.message : "Could not delete that chat");
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -151,7 +188,15 @@ function HistoryMenu({
             return (
               <DropdownMenuItem
                 key={s.id}
-                onClick={() => onOpenSession(s.id, title)}
+                className="group"
+                onSelect={(event) => {
+                  if (deletingRef.current === s.id) {
+                    deletingRef.current = null;
+                    event.preventDefault();
+                    return;
+                  }
+                  onOpenSession(s.id, title);
+                }}
               >
                 <MessageSquareTextIcon className="size-4 shrink-0" />
                 <div className="flex min-w-0 flex-col">
@@ -161,6 +206,42 @@ function HistoryMenu({
                     {s.messageCount === 1 ? "" : "s"}
                   </span>
                 </div>
+                {s.headless ? (
+                  <InfoTooltip
+                    content={
+                      <>
+                        <b>Started by an MCP client</b>
+                        <br />
+                        You can reopen and continue it here, but this chat
+                        cannot ask you a clarifying question — the interview
+                        tool stays off for the life of the session.
+                      </>
+                    }
+                  >
+                    <Badge variant="secondary" className="ml-auto shrink-0 text-[10px]">
+                      MCP
+                    </Badge>
+                  </InfoTooltip>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label={`Delete ${title}`}
+                  className={cn(
+                    "shrink-0 rounded p-1 text-muted-foreground opacity-0 transition",
+                    "hover:bg-destructive/10 hover:text-destructive",
+                    "focus-visible:opacity-100 group-hover:opacity-100",
+                    s.headless ? "" : "ml-auto",
+                  )}
+                  onPointerDown={() => {
+                    deletingRef.current = s.id;
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void deleteSession(s, title);
+                  }}
+                >
+                  <Trash2Icon className="size-3.5" />
+                </button>
               </DropdownMenuItem>
             );
           })

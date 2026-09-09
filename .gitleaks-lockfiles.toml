@@ -13,18 +13,34 @@
 # an identical synthetic Anthropic key is caught in a `.ts` file and missed in
 # `package-lock.json`.
 #
-# So this third pass sets `useDefault = false` and carries a small, deliberately
-# high-precision rule set for the credential shapes this repository actually
-# handles. It is not a replacement for the upstream rules and does not try to
-# be — it exists so the two files most likely to carry an accidental token are
-# not exempt from every rule at once.
+# So this pass extends the upstream rule set from a *copy* with that `paths`
+# array removed, rather than from the bundled default. `[extend] path` takes a
+# local file, so CI fetches `config/gitleaks.toml` at the pinned gitleaks tag,
+# verifies its SHA-256 alongside the binary's, deletes the `paths` array from
+# its global `[allowlist]`, and writes `.gitleaks-base.toml`. Everything else in
+# the upstream config — every rule, and the stopword `regexes` that keep
+# `true`/`false`/`${VAR}` quiet — is kept.
 #
-# Run locally with: gitleaks git --redact --config .gitleaks-lockfiles.toml .
+# A first attempt hand-rolled four rules here instead, on the assumption that
+# the inherited exclusions could not be undone. They cannot be undone in place,
+# but extending a modified copy sidesteps that, and the hand-rolled set silently
+# gave up AWS, Stripe, Slack, GCP and everything else upstream knows about.
+# Verified: a synthetic Anthropic key in `package-lock.json` is caught here and
+# missed by `.gitleaks.toml`.
+#
+# The rules below are the ones upstream does not have: this backend's own
+# provider set, and the shapes a credential actually takes in a lockfile.
+#
+# Run locally (regenerate the base first, see `.github/workflows/checks.yml`):
+#   gitleaks git --redact --config .gitleaks-lockfiles.toml .
 
 title = "k-dense-byok (lockfiles and vendored files)"
 
 [extend]
-useDefault = false
+# Not `useDefault = true`. That form inherits the bundled `[allowlist] paths`
+# and there is no supported way to drop it — an empty `paths = []` is rejected
+# outright. This file is the same rule set with that one array removed.
+path = ".gitleaks-base.toml"
 
 [[rules]]
 id = "provider-api-key"

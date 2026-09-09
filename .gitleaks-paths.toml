@@ -44,15 +44,17 @@ regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]*(
 tags = ["privacy", "portability"]
 
 [[rules.allowlists]]
-description = "CI runners and documentation placeholders only"
+description = "Syntactic placeholders only"
 regexTarget = "match"
 regexes = [
-  # Deliberately short. `root`, `admin`, `node`, `ubuntu`, `user`, `test` and
-  # `me` were all here and are all removed: each is a real account name on some
-  # machine, so allowlisting them by name lets a genuine home directory walk
-  # straight through the gate this rule exists to be. What is left cannot be a
-  # real home directory: the CI runner, and syntactic placeholders.
-  '''[/\\](?:runner|<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)(?:[/\\]|["'`\s;,:)\]}]|$)''',
+  # Syntactic placeholders only — `<name>`, `${VAR}`, `%VAR%`. Nothing that
+  # could also be somebody's account. `root`, `admin`, `node`, `ubuntu`,
+  # `user`, `test` and `me` were all here once and are all gone: allowlisting
+  # a name by name lets a genuine home directory walk through the gate this
+  # rule exists to be. `runner` went the same way — `git grep` finds no
+  # `/home/runner` or `/Users/runner` in any tracked file, so exempting the CI
+  # runner's name was paying a real risk for nothing.
+  '''[/\\](?:<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)(?:[/\\]|["'`\s;,:)\]}]|$)''',
 ]
 
 [[rules.allowlists]]

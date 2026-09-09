@@ -52,6 +52,7 @@ jobs:
         env:
           GITLEAKS_VERSION: 8.30.1
           GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          GITLEAKS_CONFIG_SHA256: e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf
         run: |
           set -euo pipefail
           url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -59,6 +60,23 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           rm gitleaks.tar.gz
+          # The lockfile pass extends the upstream rules from a copy of the
+          # default config with its global `[allowlist] paths` array deleted —
+          # that array is what makes lockfiles unreadable, and it cannot be
+          # un-inherited via `useDefault = true`. Same version tag as the
+          # binary, verified by its own checksum; bumping one without the other
+          # must fail.
+          curl -fsSL -o base.toml \
+            "https://raw.githubusercontent.com/gitleaks/gitleaks/v${GITLEAKS_VERSION}/config/gitleaks.toml"
+          echo "${GITLEAKS_CONFIG_SHA256}  base.toml" | sha256sum -c -
+          python3 - <<'PY'
+          s = open("base.toml").read()
+          i = s.index("[allowlist]")
+          j = s.index("paths = [", i)
+          k = s.index("\n]\n", j) + 3
+          open(".gitleaks-base.toml", "w").write(s[:j] + s[k:])
+          PY
+          rm base.toml
       # `--verbose` because without it a failure prints only "leaks found: N",
       # with no file, line or match to act on.
       - name: Scan for committed secrets

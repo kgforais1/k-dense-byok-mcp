@@ -89,9 +89,12 @@ function relativeTime(value: string | number): string {
 function HistoryMenu({
   projectId,
   onOpenSession,
+  openSessionId,
 }: {
   projectId: string;
   onOpenSession: (sessionId: string, title: string) => void;
+  /** Session showing in the active tab; it cannot be deleted from under itself. */
+  openSessionId?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
@@ -225,17 +228,36 @@ function HistoryMenu({
                 ) : null}
                 <button
                   type="button"
+                  disabled={s.id === openSessionId}
+                  title={
+                    s.id === openSessionId
+                      ? "This chat is open. Close its tab first."
+                      : undefined
+                  }
                   aria-label={`Delete ${title}`}
                   className={cn(
                     "shrink-0 rounded p-1 text-muted-foreground opacity-0 transition",
                     "hover:bg-destructive/10 hover:text-destructive",
                     "focus-visible:opacity-100 group-hover:opacity-100",
+                    "disabled:cursor-not-allowed disabled:hover:bg-transparent",
+                    "disabled:hover:text-muted-foreground",
                     s.headless ? "" : "ml-auto",
                   )}
-                  onPointerDown={() => {
+                  onKeyDown={(event) => {
+                    // Radix handles Enter/Space on the menu *item*, so without
+                    // this the keyboard path reopens the chat instead of
+                    // deleting it. Stop the key before the item ever sees it.
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
                     deletingRef.current = s.id;
+                    void deleteSession(s, title);
                   }}
                   onClick={(event) => {
+                    // Set here rather than on pointerdown so the same handler
+                    // covers mouse and touch; it still runs before the item's
+                    // onSelect sees the bubbled click.
+                    deletingRef.current = s.id;
                     event.stopPropagation();
                     void deleteSession(s, title);
                   }}
@@ -504,7 +526,11 @@ export function ChatTabsBar({
             <PlusIcon className="size-3.5" />
           </button>
         </InfoTooltip>
-        <HistoryMenu projectId={projectId} onOpenSession={onOpenSession} />
+        <HistoryMenu
+          projectId={projectId}
+          onOpenSession={onOpenSession}
+          openSessionId={activeSessionId}
+        />
       </div>
 
       <div className="shrink-0 flex items-center gap-1 pl-2 border-l">

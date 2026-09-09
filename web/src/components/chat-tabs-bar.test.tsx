@@ -41,7 +41,7 @@ const SESSIONS = [
 
 const onOpenSession = vi.fn();
 
-function renderBar() {
+function renderBar(activeSessionId?: string) {
   return render(
     <TooltipProvider>
       <ChatTabsBar
@@ -56,6 +56,7 @@ function renderBar() {
         onRename={vi.fn()}
         onSelectWorkflows={vi.fn()}
         onOpenSession={onOpenSession}
+        activeSessionId={activeSessionId}
       />
     </TooltipProvider>,
   );
@@ -102,6 +103,29 @@ describe("history menu", () => {
     });
     expect(onOpenSession).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText("Browser chat")).not.toBeInTheDocument());
+  });
+
+  it("will not let the open chat be deleted from under itself", async () => {
+    renderBar("from-browser");
+    await openHistory();
+
+    expect(screen.getByLabelText("Delete Browser chat")).toBeDisabled();
+    expect(screen.getByLabelText("Delete MCP chat")).toBeEnabled();
+  });
+
+  it("deletes from the keyboard without also reopening the chat", async () => {
+    // A keyboard Enter fires no pointer event, so anything that keys off
+    // pointerdown drops the user into the chat it just deleted.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBar();
+    const user = await openHistory();
+
+    apiFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ deleted: true }) });
+    screen.getByLabelText("Delete Browser chat").focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
+    expect(onOpenSession).not.toHaveBeenCalled();
   });
 
   it("does not delete when the user cancels the confirmation", async () => {

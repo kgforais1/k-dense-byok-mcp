@@ -31,14 +31,34 @@ describe("deleteSession", () => {
     runBroker.clear();
   });
 
+  /**
+   * A transcript in Pi's real shape, in both respects that deletion cares
+   * about: named `<timestamp>_<id>.jsonl`, and carrying a `session` header
+   * row. A fixture written as a bare `<id>.jsonl` full of `{}` takes the
+   * exact-name shortcut and never exercises the lookup at all, which is how
+   * a suffix collision hid here for two review rounds.
+   */
+  function writeSessionFile(
+    sessionsDir: string,
+    sessionId: string,
+    options?: { name?: string; rows?: unknown[] },
+  ): string {
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const file = path.join(sessionsDir, options?.name ?? `20260909-101500_${sessionId}.jsonl`);
+    const rows = options?.rows ?? [
+      { type: "session", version: 3, id: sessionId, timestamp: new Date().toISOString() },
+    ];
+    fs.writeFileSync(file, rows.map((row) => `${JSON.stringify(row)}\n`).join(""));
+    return file;
+  }
+
   it("removes both the transcript and the headless marker", () => {
     const projectId = "delete-session-cleanup";
     createProject({ projectId, name: "Delete session cleanup" });
     const paths = resolvePaths(projectId);
     const sessionId = "session-to-delete";
 
-    fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    writeSessionFile(paths.sessionsDir, sessionId);
 
     markHeadlessSession(projectId, sessionId);
 
@@ -72,8 +92,7 @@ describe("deleteSession", () => {
     const paths = resolvePaths(projectId);
     const sessionId = "session-with-artifacts";
 
-    fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    writeSessionFile(paths.sessionsDir, sessionId);
     fs.mkdirSync(paths.notebookDir, { recursive: true });
     const notebook = path.join(paths.notebookDir, `${sessionId}.jsonl`);
     const annotations = path.join(paths.notebookDir, `${sessionId}.annotations.json`);
@@ -97,8 +116,7 @@ describe("deleteSession", () => {
     const paths = resolvePaths(projectId);
     const sessionId = "session-with-runs";
 
-    fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    writeSessionFile(paths.sessionsDir, sessionId);
     const expired = new RunBroker({ completedRetentionMs: 1 });
     const handle = expired.start(projectId, sessionId, metadata("run-kept"));
     handle.publish({ type: "done" });
@@ -120,8 +138,7 @@ describe("deleteSession", () => {
     const paths = resolvePaths(projectId);
     const sessionId = "marker-locked";
 
-    fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    writeSessionFile(paths.sessionsDir, sessionId);
     markHeadlessSession(projectId, sessionId);
     const expired = new RunBroker({ completedRetentionMs: 1 });
     const handle = expired.start(projectId, sessionId, metadata("run-marker"));
@@ -154,15 +171,53 @@ describe("deleteSession", () => {
     createProject({ projectId, name: "Delete session both" });
     const paths = resolvePaths(projectId);
 
-    fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    const wanted = path.join(paths.sessionsDir, "23.jsonl");
-    const neighbour = path.join(paths.sessionsDir, "subagent-123.jsonl");
-    fs.writeFileSync(wanted, "{}");
-    fs.writeFileSync(neighbour, `${JSON.stringify({ type: "session", id: "subagent-123" })}\n`);
+    const wanted = writeSessionFile(paths.sessionsDir, "23", { name: "23.jsonl" });
+    const neighbour = writeSessionFile(paths.sessionsDir, "subagent-123", {
+      name: "subagent-123.jsonl",
+    });
 
     expect(deleteSession(projectId, paths, "23")).toBe("deleted");
     expect(fs.existsSync(wanted)).toBe(false);
     expect(fs.existsSync(neighbour)).toBe(true);
+  });
+
+  it("refuses a file named for the session whose header names another", () => {
+    // The name is not proof. A transcript literally called `23.jsonl` whose
+    // header says it belongs to `other` is not session `23`, and deleting it
+    // destroys a transcript the caller never asked about.
+    const projectId = "delete-session-header-lies";
+    createProject({ projectId, name: "Delete session header lies" });
+    const paths = resolvePaths(projectId);
+
+    const impostor = writeSessionFile(paths.sessionsDir, "other", { name: "23.jsonl" });
+
+    expect(deleteSession(projectId, paths, "23")).toBe("not_found");
+    expect(fs.existsSync(impostor)).toBe(true);
+  });
+
+  it("refuses an empty file, and does not strip the real session's artifacts", () => {
+    // Pi writes the header when it creates the file, so an empty transcript is
+    // not a session that has yet to be written to — it is not a session. If
+    // the name alone were enough, a stray `<id>.jsonl` beside the real
+    // `<timestamp>_<id>.jsonl` would take `deleteSession`'s exact-name
+    // shortcut, report success, and take the notebook and run records with it
+    // while the real transcript stayed on disk.
+    const projectId = "delete-session-shadow";
+    createProject({ projectId, name: "Delete session shadow" });
+    const paths = resolvePaths(projectId);
+
+    const real = writeSessionFile(paths.sessionsDir, "23");
+    const shadow = path.join(paths.sessionsDir, "23.jsonl");
+    fs.writeFileSync(shadow, "");
+    const expired = new RunBroker({ completedRetentionMs: 1 });
+    const handle = expired.start(projectId, "23", metadata("run-real"));
+    handle.publish({ type: "done" });
+    handle.complete();
+    persistRunResult(projectId, handle);
+
+    expect(deleteSession(projectId, paths, "23")).toBe("not_found");
+    expect(fs.existsSync(real)).toBe(true);
+    expect(readRunResult(projectId, "run-real")).not.toBeNull();
   });
 
   it("refuses a session id that would escape the sessions directory", () => {
@@ -198,9 +253,7 @@ describe("deleteSession", () => {
     const paths = resolvePaths(projectId);
     const sessionId = "session-active-run";
 
-    fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    const sessionFile = path.join(paths.sessionsDir, `${sessionId}.jsonl`);
-    fs.writeFileSync(sessionFile, "{}");
+    const sessionFile = writeSessionFile(paths.sessionsDir, sessionId);
 
     runBroker.start(projectId, sessionId, metadata("incomplete-run"));
 

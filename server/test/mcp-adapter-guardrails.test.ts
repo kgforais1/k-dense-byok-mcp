@@ -112,8 +112,12 @@ function writeTranscript(): void {
   const file = path.join(paths.sandbox, "data/out.csv");
   fs.mkdirSync(paths.sessionsDir, { recursive: true });
   fs.writeFileSync(
-    path.join(paths.sessionsDir, "session-headless.jsonl"),
+    path.join(paths.sessionsDir, "20260909-101500_session-headless.jsonl"),
     [
+      // Pi writes this header when it creates the file, and refuses to load a
+      // transcript without one. A fixture that skips it is not a shape the
+      // agent can produce.
+      { type: "session", version: 3, id: "session-headless", timestamp: "2026-09-09T10:15:00.000Z" },
       { type: "message", message: { role: "user", content: [{ type: "text", text: "read it" }] } },
       {
         type: "message",

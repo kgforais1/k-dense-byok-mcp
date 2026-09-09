@@ -87,7 +87,12 @@ describe("a run cannot start on a session deleted mid-flight", () => {
     createProject({ projectId, name: "MCP deleted mid-flight" });
     const paths = resolvePaths(projectId);
     fs.mkdirSync(paths.sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(paths.sessionsDir, "session-busy.jsonl"), "{}");
+    // A real Pi header row, because deletion reads it to prove the file is the
+    // session being asked for.
+    fs.writeFileSync(
+      path.join(paths.sessionsDir, "session-busy.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "session-busy" })}\n`,
+    );
     expect(deleteSession(projectId, paths, "session-busy")).toBe("deleted");
 
     const client = await connect();

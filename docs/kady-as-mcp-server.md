@@ -157,7 +157,10 @@ have `KADY_MCP_ENABLED=1` together with a non-loopback host. Pick one.
 previous Kady process. Reconnect.
 
 **Tools are listed but every call fails on scope.** The `X-Project-Id` you are
-sending does not exist. Call `list_projects` to see the real ids.
+sending does not exist. Remove the header first, then call `list_projects` to
+see the real ids — with a bad header still set, `list_projects` fails too. MCP
+calls are POSTs, and Kady refuses any non-GET carrying an unknown project id
+rather than silently writing into the default project.
 
 **A run never leaves `running`.** Check the browser: if the session is waiting
 on a provider that is not connected, `poll_run` reports `error` with the

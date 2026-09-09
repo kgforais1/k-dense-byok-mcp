@@ -41,12 +41,20 @@ const SESSIONS = [
 
 const onOpenSession = vi.fn();
 
-function renderBar(activeSessionId?: string) {
+function renderBar(openSessionId?: string) {
   return render(
     <TooltipProvider>
       <ChatTabsBar
         projectId="p1"
-        tabs={[{ id: "t1", title: "Tab", isStreaming: false, userMessageCount: 1 }]}
+        tabs={[
+          {
+            id: "t1",
+            title: "Tab",
+            sessionId: openSessionId,
+            isStreaming: false,
+            userMessageCount: 1,
+          },
+        ]}
         activeTabId="t1"
         view="chat"
         maxTabs={5}
@@ -56,7 +64,6 @@ function renderBar(activeSessionId?: string) {
         onRename={vi.fn()}
         onSelectWorkflows={vi.fn()}
         onOpenSession={onOpenSession}
-        activeSessionId={activeSessionId}
       />
     </TooltipProvider>,
   );
@@ -105,7 +112,7 @@ describe("history menu", () => {
     await waitFor(() => expect(screen.queryByText("Browser chat")).not.toBeInTheDocument());
   });
 
-  it("will not let the open chat be deleted from under itself", async () => {
+  it("will not let a chat open in any tab be deleted from under it", async () => {
     renderBar("from-browser");
     await openHistory();
 
@@ -126,6 +133,21 @@ describe("history menu", () => {
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
     expect(onOpenSession).not.toHaveBeenCalled();
+  });
+
+  it("still reopens a chat after the user cancels a keyboard delete", async () => {
+    // The keyboard handler stops the key before the menu item sees it, so
+    // nothing downstream clears a "this was a delete" marker. Leaving one set
+    // swallows the next click on the row and the menu looks broken.
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderBar();
+    const user = await openHistory();
+
+    screen.getByLabelText("Delete Browser chat").focus();
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByText("Browser chat"));
+
+    expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
   });
 
   it("does not delete when the user cancels the confirmation", async () => {

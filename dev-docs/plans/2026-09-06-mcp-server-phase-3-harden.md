@@ -103,6 +103,16 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   a change to that scope's meaning, not a one-line fix, and this is a loopback
   single-user app. Recorded so the next person does not rediscover it.
 
+- **`deleteSession` is check-then-act, not an atomic claim.** The busy guard
+  reads `live`/`pinned`/the broker, then unlinks; `prepareRun` takes its claim
+  later (`server/src/api/sessions.ts:214`). A DELETE landing between a run's
+  guard check and its claim, or during the `await` inside a cold-open
+  `getSession`, would remove a transcript a run is about to use. The window is
+  small and the browser path is behind a confirm, but MCP makes DELETE
+  scriptable. Closing it properly means one shared synchronous claim covering
+  both operations, which is a change to how run ownership works rather than a
+  patch to this function.
+
 - **Cost ledger entries outlive the chat they belong to.** Deliberate: the money
   was spent. Deleting a chat must not silently refund the project's budget
   tracking. Everything else keyed by the session id — notebook, PDF

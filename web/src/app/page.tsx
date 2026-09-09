@@ -817,6 +817,7 @@ function WorkspacePage({
       tabs.map((t) => ({
         id: t.id,
         title: t.title,
+        sessionId: t.sessionId,
         isStreaming: tabsMeta[t.id]?.isStreaming ?? false,
         userMessageCount: tabsMeta[t.id]?.userMessageCount ?? 0,
       })),

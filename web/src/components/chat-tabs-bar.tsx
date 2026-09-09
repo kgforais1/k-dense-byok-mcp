@@ -32,6 +32,8 @@ import { cn } from "@/lib/utils";
 export interface ChatTabDescriptor {
   id: string;
   title: string;
+  /** Stored session this tab is showing, once it has one. */
+  sessionId?: string;
   isStreaming: boolean;
   userMessageCount: number;
 }
@@ -89,12 +91,15 @@ function relativeTime(value: string | number): string {
 function HistoryMenu({
   projectId,
   onOpenSession,
-  openSessionId,
+  openSessionIds,
 }: {
   projectId: string;
   onOpenSession: (sessionId: string, title: string) => void;
-  /** Session showing in the active tab; it cannot be deleted from under itself. */
-  openSessionId?: string | null;
+  /**
+   * Sessions currently open in a tab. Deleting one leaves that tab pointing at
+   * a transcript the server can no longer find, and every later send fails.
+   */
+  openSessionIds: ReadonlySet<string>;
 }) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
@@ -228,10 +233,10 @@ function HistoryMenu({
                 ) : null}
                 <button
                   type="button"
-                  disabled={s.id === openSessionId}
+                  disabled={openSessionIds.has(s.id)}
                   title={
-                    s.id === openSessionId
-                      ? "This chat is open. Close its tab first."
+                    openSessionIds.has(s.id)
+                      ? "This chat is open in a tab. Close it first."
                       : undefined
                   }
                   aria-label={`Delete ${title}`}
@@ -250,7 +255,9 @@ function HistoryMenu({
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
                     event.stopPropagation();
-                    deletingRef.current = s.id;
+                    // Deliberately not setting `deletingRef`: the item never
+                    // sees this key, so `onSelect` never runs to clear it, and
+                    // a stale ref would swallow the next click on the row.
                     void deleteSession(s, title);
                   }}
                   onClick={(event) => {
@@ -366,6 +373,9 @@ export function ChatTabsBar({
   canExport = false,
 }: ChatTabsBarProps) {
   const atLimit = tabs.length >= maxTabs;
+  const openSessionIds = new Set(
+    tabs.map((tab) => tab.sessionId).filter((id): id is string => Boolean(id)),
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -529,7 +539,7 @@ export function ChatTabsBar({
         <HistoryMenu
           projectId={projectId}
           onOpenSession={onOpenSession}
-          openSessionId={activeSessionId}
+          openSessionIds={openSessionIds}
         />
       </div>
 

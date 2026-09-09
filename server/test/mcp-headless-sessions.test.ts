@@ -2,11 +2,182 @@
  * The Phase 1 prerequisite for exposing MCP runs: an MCP session must not carry
  * the blocking `interview` tool, and must not silently regain it later.
  */
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
-import { createProject } from "../src/projects.ts";
+import { createProject, resolvePaths } from "../src/projects.ts";
 import { isHeadlessSession, markHeadlessSession } from "../src/agent/headless-sessions.ts";
-import { HEADLESS_PROMPT_NOTE, sessionToolNames } from "../src/agent/session-registry.ts";
+import {
+  deleteSession,
+  HEADLESS_PROMPT_NOTE,
+  sessionToolNames,
+} from "../src/agent/session-registry.ts";
+import { runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
+import { buildApp } from "../src/index.ts";
+
+function metadata(runId = "run-1"): RunMetadata {
+  return {
+    runId,
+    prompt: "test",
+    images: [],
+    baseline: { messages: [], contextUsage: null },
+  };
+}
+
+describe("deleteSession", () => {
+  afterEach(() => {
+    runBroker.clear();
+  });
+
+  it("removes both the transcript and the headless marker", () => {
+    const projectId = "delete-session-cleanup";
+    createProject({ projectId, name: "Delete session cleanup" });
+    const paths = resolvePaths(projectId);
+    const sessionId = "session-to-delete";
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+
+    markHeadlessSession(projectId, sessionId);
+
+    const result = deleteSession(projectId, paths, sessionId);
+    expect(result).toBe("deleted");
+
+    expect(fs.existsSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`))).toBe(false);
+    expect(isHeadlessSession(projectId, sessionId)).toBe(false);
+  });
+
+  it("returns not_found when the transcript is missing", () => {
+    const projectId = "delete-session-missing";
+    createProject({ projectId, name: "Delete session missing" });
+    const paths = resolvePaths(projectId);
+
+    const result = deleteSession(projectId, paths, "nonexistent-session");
+    expect(result).toBe("not_found");
+  });
+
+  it("returns run_active and leaves the transcript when the broker holds an incomplete run", () => {
+    const projectId = "delete-session-active";
+    createProject({ projectId, name: "Delete session active" });
+    const paths = resolvePaths(projectId);
+    const sessionId = "session-active-run";
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    const sessionFile = path.join(paths.sessionsDir, `${sessionId}.jsonl`);
+    fs.writeFileSync(sessionFile, "{}");
+
+    runBroker.start(projectId, sessionId, metadata("incomplete-run"));
+
+    const result = deleteSession(projectId, paths, sessionId);
+    expect(result).toBe("run_active");
+    expect(fs.existsSync(sessionFile)).toBe(true);
+  });
+});
+
+const app = await buildApp();
+
+describe("session routes", () => {
+  afterAll(async () => {
+    await app.close();
+  });
+
+  /**
+   * A stored transcript Pi's own `SessionManager.list` will accept. The header
+   * row is required: without it the file is skipped and `GET /sessions` comes
+   * back empty, which reads as a passing assertion about nothing.
+   */
+  function writeTranscript(projectId: string, sessionId: string): string {
+    const paths = resolvePaths(projectId);
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    const at = new Date().toISOString();
+    const rows = [
+      { type: "session", version: 3, id: sessionId, timestamp: at, cwd: paths.sandbox },
+      {
+        type: "message",
+        id: "m1",
+        parentId: null,
+        timestamp: at,
+        message: { role: "user", content: [{ type: "text", text: "hi" }] },
+      },
+    ];
+    const file = path.join(paths.sessionsDir, `${sessionId}.jsonl`);
+    fs.writeFileSync(file, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+    return file;
+  }
+
+  it("labels which stored sessions are headless so the UI can say so", async () => {
+    // A headless session reopened in a chat tab has no `interview` tool. That
+    // is invisible without this flag, and the difference only shows up when the
+    // agent needs to ask a question and cannot.
+    createProject({ projectId: "headless-flag", name: "Headless flag" });
+    writeTranscript("headless-flag", "from-mcp");
+    writeTranscript("headless-flag", "from-browser");
+    markHeadlessSession("headless-flag", "from-mcp");
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/sessions",
+      headers: { "x-project-id": "headless-flag" },
+    });
+    expect(res.statusCode).toBe(200);
+    const byId = new Map(
+      (res.json() as { id: string; headless: boolean }[]).map((s) => [s.id, s.headless]),
+    );
+    expect(byId.get("from-mcp")).toBe(true);
+    expect(byId.get("from-browser")).toBe(false);
+  });
+
+  it("deletes a stored session and reports it gone afterwards", async () => {
+    createProject({ projectId: "delete-route", name: "Delete route" });
+    const file = writeTranscript("delete-route", "doomed");
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/sessions/doomed",
+      headers: { "x-project-id": "delete-route" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ deleted: true });
+    expect(fs.existsSync(file)).toBe(false);
+
+    const again = await app.inject({
+      method: "DELETE",
+      url: "/sessions/doomed",
+      headers: { "x-project-id": "delete-route" },
+    });
+    expect(again.statusCode).toBe(404);
+  });
+
+  it("refuses to delete a session with a run in flight", async () => {
+    // Deleting the transcript out from under a running agent would leave the
+    // run writing to a file nobody can read.
+    createProject({ projectId: "delete-busy", name: "Delete busy" });
+    const file = writeTranscript("delete-busy", "busy");
+    runBroker.start("delete-busy", "busy", metadata("run-in-flight"));
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/sessions/busy",
+      headers: { "x-project-id": "delete-busy" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ reason: "run_already_active" });
+    expect(fs.existsSync(file)).toBe(true);
+    runBroker.clear();
+  });
+
+  it("rejects a malformed session id rather than touching the filesystem", async () => {
+    createProject({ projectId: "delete-bad-id", name: "Delete bad id" });
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/sessions/..%2F..%2Fescape",
+      headers: { "x-project-id": "delete-bad-id" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
 
 describe("headless session marker", () => {
   it("survives the eviction that would otherwise restore interview", () => {

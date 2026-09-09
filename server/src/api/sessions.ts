@@ -50,6 +50,7 @@ import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
 import { runBroker, type RunHandle } from "../agent/run-broker.ts";
 import { runStartFailure } from "../agent/run-start-errors.ts";
 import { persistTerminalRunResult } from "../agent/run-results.ts";
+import { isHeadlessSession } from "../agent/headless-sessions.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
 import { SandboxError } from "../sandbox-fs.ts";
 import {
@@ -60,6 +61,7 @@ import {
 import { toHistory } from "../agent/session-history.ts";
 import {
   createSession,
+  deleteSession,
   getModelRegistry,
   getModelRuntime,
   getSession,
@@ -565,6 +567,27 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     return { id: session.sessionId, sessionFile: session.sessionFile };
   });
 
+  app.delete<{ Params: { id: string } }>("/sessions/:id", async (req, reply) => {
+    try {
+      const projectId = currentProjectId();
+      const paths = activePaths();
+      const result = deleteSession(projectId, paths, req.params.id);
+      switch (result) {
+        case "not_found":
+          reply.code(404);
+          return { detail: "No such session" };
+        case "run_active":
+          reply.code(409);
+          return { detail: "Session is already streaming a response", reason: "run_already_active" };
+        case "deleted":
+          return { deleted: true };
+      }
+    } catch (err) {
+      reply.code(400);
+      return { detail: (err as Error).message };
+    }
+  });
+
   app.get("/sessions", async () => {
     const infos = await listSessions(activePaths());
     return infos.map((i) => ({
@@ -574,6 +597,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       modified: i.modified,
       messageCount: i.messageCount,
       firstMessage: i.firstMessage,
+      headless: isHeadlessSession(currentProjectId(), i.id),
     }));
   });
 

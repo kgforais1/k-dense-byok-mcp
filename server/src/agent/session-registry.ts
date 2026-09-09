@@ -24,7 +24,11 @@ import type { ProjectPaths } from "../projects.ts";
 import { getMcpTools } from "./mcp.ts";
 import { defaultModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
-import { isHeadlessSession, markHeadlessSession } from "./headless-sessions.ts";
+import {
+  forgetHeadlessSession,
+  isHeadlessSession,
+  markHeadlessSession,
+} from "./headless-sessions.ts";
 import { makeInterviewTool } from "./interview.ts";
 import { makeNotebookTool } from "./notebook.ts";
 import { makeScientificResultTool } from "./scientific-result.ts";
@@ -47,6 +51,8 @@ import {
   seedBuiltinAgentModalTools,
   seedModalPackage,
 } from "./modal-bridge.ts";
+import { findSessionFile } from "./session-export.ts";
+import { runBroker } from "./run-broker.ts";
 import {
   makePdfAnnotationTools,
   PDF_ANNOTATION_TOOL_NAMES,
@@ -185,6 +191,40 @@ function release(projectId: string, key: string, session: AgentSession): void {
   live.delete(key);
   pinned.delete(key);
   clearSessionCompute(projectId, key.slice(projectId.length + 1));
+}
+
+export type DeleteSessionResult = "deleted" | "not_found" | "run_active";
+
+/**
+ * Remove a session's transcript and its headless marker.
+ *
+ * Lives here rather than in the route so `POST /sessions` and the MCP path get
+ * the same behaviour; a delete enforced only on one interface would make the
+ * other second-class. Both artifacts go together: a transcript removed while
+ * its marker survives means a later reused session id cold-opens headless and
+ * silently loses the `interview` tool.
+ */
+export function deleteSession(
+  projectId: string,
+  paths: ProjectPaths,
+  sessionId: string,
+): DeleteSessionResult {
+  const file = findSessionFile(paths, sessionId);
+  if (!file) return "not_found";
+
+  // Deleting the transcript out from under a running agent would leave the run
+  // writing to a file nobody can read.
+  const runKey = keyFor(projectId, sessionId);
+  const retained = runBroker.get(projectId, sessionId);
+  if (live.get(runKey)?.isStreaming || pinned.has(runKey) || (retained && !retained.isComplete)) {
+    return "run_active";
+  }
+
+  // Reuse the existing teardown rather than writing a second one.
+  disposeSession(projectId, sessionId);
+  fs.rmSync(file, { force: true });
+  forgetHeadlessSession(projectId, sessionId);
+  return "deleted";
 }
 
 async function build(

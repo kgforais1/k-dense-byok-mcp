@@ -53,6 +53,17 @@ export function markHeadlessSession(projectId: string, sessionId: string): void 
   fs.renameSync(tmp, file);
 }
 
+/** Remove the headless marker for `sessionId`. */
+export function forgetHeadlessSession(projectId: string, sessionId: string): void {
+  const file = markerPath(projectId, sessionId);
+  if (!file) return;
+  // A swept transcript whose marker survives is exactly the bug Phase 3
+  // warns about: a later reused session id cold-opens headless and silently
+  // loses the `interview` tool. `force: true` swallows a missing marker so
+  // the caller can treat transcript + marker removal as one atomic cleanup.
+  fs.rmSync(file, { force: true });
+}
+
 /** True when this session was created headless, including after a cold open. */
 export function isHeadlessSession(projectId: string, sessionId: string): boolean {
   const file = markerPath(projectId, sessionId);

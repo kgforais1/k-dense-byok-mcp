@@ -25,6 +25,7 @@ import { activePaths, createProject } from "../src/projects.ts";
 import { withActiveProject } from "../src/scope.ts";
 import { RunBroker, runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
 import { persistRunResult } from "../src/agent/run-results.ts";
+import { toClientFrame } from "../src/agent/events.ts";
 import { createKadyMcpServer } from "../src/mcp-server/server.ts";
 import { beginRun } from "../src/api/sessions.ts";
 
@@ -66,6 +67,28 @@ const log = { info() {}, warn() {}, error() {}, debug() {} } as unknown as Fasti
 
 function metadata(runId: string): RunMetadata {
   return { runId, prompt: "test", images: [], baseline: { messages: [], contextUsage: null } };
+}
+
+/**
+ * A `tool_start` frame carrying a sandbox-absolute path, run through the same
+ * `toClientFrame` the run pipeline uses.
+ *
+ * `poll_run` forwards broker frames verbatim, so its only defence against a
+ * host path is that whatever was published was relativized on the way in.
+ * A fixture with no path in it cannot test that at all.
+ */
+function toolStartFrame(sessionId: string): Record<string, unknown> {
+  const sandbox = activePaths().sandbox;
+  const frame = toClientFrame(
+    {
+      type: "tool_execution_start",
+      toolCallId: `call-${sessionId}`,
+      toolName: "bash",
+      args: { command: `wc -l ${path.join(sandbox, "data/out.csv")}` },
+    } as never,
+    sandbox,
+  );
+  return frame as unknown as Record<string, unknown>;
 }
 
 async function connect(): Promise<Client> {
@@ -159,7 +182,11 @@ describe("no MCP tool result carries an absolute host path", () => {
         setUp: () => {
           const handle = runBroker.start(PROJECT, "session-live", metadata("run-live"));
           handle.publish({ type: "run_start", runId: "run-live" });
-          handle.publish({ type: "text", text: "thinking" } as never);
+          // Built through the real `toClientFrame`, from an event whose args
+          // carry a sandbox-absolute path. Publishing a path-free frame would
+          // make this case unable to detect a leak at all: there would be
+          // nothing in the fixture for `poll_run` to leak.
+          handle.publish(toolStartFrame("session-live"));
         },
       },
       {
@@ -171,6 +198,7 @@ describe("no MCP tool result carries an absolute host path", () => {
         setUp: () => {
           const expired = new RunBroker({ completedRetentionMs: 1 });
           const handle = expired.start(PROJECT, "session-durable", metadata("run-durable"));
+          handle.publish(toolStartFrame("session-durable"));
           handle.publish({ type: "done" });
           handle.complete();
           persistRunResult(PROJECT, handle);

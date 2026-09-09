@@ -140,6 +140,13 @@ function HistoryMenu({
       );
     } catch (exc) {
       toast.error(exc instanceof Error ? exc.message : "Could not delete that chat");
+    } finally {
+      // Every exit clears the marker, not just the happy one. The mouse path's
+      // `onSelect` runs during event dispatch, well before this first `await`
+      // resolves, so clearing here cannot steal the click it is meant to
+      // swallow — but a refused or failed delete used to leave the marker set
+      // for good, and the next click on that row silently did nothing.
+      deletingRef.current = null;
     }
   }
 
@@ -262,9 +269,10 @@ function HistoryMenu({
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
                     event.stopPropagation();
-                    // Deliberately not setting `deletingRef`: the item never
-                    // sees this key, so `onSelect` never runs to clear it, and
-                    // a stale ref would swallow the next click on the row.
+                    // No `deletingRef` here: the item never sees this key, so
+                    // there is no `onSelect` to swallow. Setting it would be
+                    // harmless now that `deleteSession` clears the marker on
+                    // every exit, but it would still be marking nothing.
                     void deleteSession(s, title);
                   }}
                   onClick={(event) => {

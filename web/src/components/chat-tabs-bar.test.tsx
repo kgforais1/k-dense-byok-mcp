@@ -175,6 +175,27 @@ describe("history menu", () => {
     expect(screen.getByText("Browser chat")).toBeInTheDocument();
   });
 
+  it("still reopens a chat after a keyboard delete that the server refuses", async () => {
+    // The failure path is the one that strands the "this was a delete" marker:
+    // the row survives, and nothing downstream clears it, so the next click on
+    // that row is swallowed and the menu looks dead.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBar();
+    const user = await openHistory();
+
+    apiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ reason: "run_already_active" }),
+    });
+    screen.getByLabelText("Delete Browser chat").focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+
+    await user.click(screen.getByText("Browser chat"));
+    expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
+  });
+
   it("keeps the chat and explains why when a run is still in flight", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderBar();

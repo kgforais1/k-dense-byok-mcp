@@ -96,6 +96,8 @@ export function persistRunResult(
   if ((!handle.isComplete && !options.terminal) || !state.run) {
     throw new Error("Cannot persist an incomplete run state");
   }
+  // `poll_run`'s live branch states the abort half of this rule again, because
+  // it has to answer for runs that are not terminal yet. Keep the two in step.
   const status: DurableRunStatus = handle.isAbortRequested
     ? "aborted"
     : activityState === "running"

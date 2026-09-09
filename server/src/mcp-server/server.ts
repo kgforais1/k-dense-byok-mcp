@@ -231,6 +231,11 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         // abort publishes no error frame. The durable record does distinguish
         // it, so the abort check is applied here too — otherwise the same run
         // answers `done` before the broker expires it and `aborted` after.
+        // The same "an aborted run is not a done run" rule the durable record
+        // applies in `persistRunResult` (`agent/run-results.ts`), but not the
+        // same expression: that one runs only at a terminal moment and folds
+        // `running` into `done`, while this one must still be able to answer
+        // `running`. Change either and check the other.
         const status =
           handle.isAbortRequested && handle.isComplete ? "aborted" : handle.activityState;
         const result: Record<string, unknown> = {

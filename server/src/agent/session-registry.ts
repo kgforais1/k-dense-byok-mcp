@@ -248,7 +248,9 @@ function ownsSessionFile(file: string, sessionId: string): boolean {
       return row.type === "session" && row.id === sessionId;
     }
   } catch {
-    // Unreadable or malformed: fall through to the exact-name rule above.
+    // Unreadable or malformed. The exact-name rule above has already run and
+    // failed by this point, so there is nothing left to fall back to: refuse
+    // the delete rather than unlink a file whose ownership cannot be read.
   }
   return false;
 }

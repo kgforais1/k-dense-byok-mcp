@@ -513,6 +513,21 @@ describe("poll_run", () => {
     expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
   });
 
+  it("omits producedOutput for an unknown run, as the description promises", async () => {
+    createProject({ projectId: "mcp-unknown-flag", name: "MCP unknown flag" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-unknown-flag", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-x", runId: "never-existed" },
+      }),
+    );
+    const body = payload(result);
+    expect(body).toMatchObject({ status: "unknown" });
+    expect(body).not.toHaveProperty("producedOutput");
+  });
+
   it("describes producedOutput in the poll_run tool description", async () => {
     const client = await connect();
     const tool = (await client.listTools()).tools.find((t) => t.name === "poll_run");
@@ -520,7 +535,7 @@ describe("poll_run", () => {
     expect(description).toMatch(/producedOutput/);
     expect(description).toMatch(/`status` stays authoritative/);
     // The doc and the description must agree that `running` has no verdict.
-    expect(description).toMatch(/A `running` run does not carry it/);
+    expect(description).toMatch(/`running` and `unknown` do not carry it at all/);
   });
 });
 

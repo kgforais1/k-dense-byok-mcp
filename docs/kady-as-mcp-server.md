@@ -117,9 +117,10 @@ until it stops saying `running`.
 Pass the `lastSeq` you got back as `after` on the next call to receive only new
 frames.
 
-Every terminal status carries **`producedOutput`**. A `running` run does not:
-the answer is not yet knowable, so test for the key rather than for a falsy
-value. A `done` run
+`done`, `aborted`, `blocked` and `error` also carry **`producedOutput`**.
+`running` and `unknown` do not carry it at all — nothing is knowable yet in the
+first case, and there is no record to read in the second — so test for the key
+rather than for a falsy value. A `done` run
 with `producedOutput: false` finished without saying anything and without
 producing a file — treat it as a failed attempt and retry, rather than
 reporting an empty answer as a result. `status` stays authoritative: on

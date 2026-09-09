@@ -585,6 +585,9 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
             detail: "That session has a run in flight; wait for it to finish",
             reason: "run_already_active",
           };
+        case "not_deleted":
+          reply.code(500);
+          return { detail: "The session transcript could not be removed" };
         case "deleted":
           return { deleted: true };
       }

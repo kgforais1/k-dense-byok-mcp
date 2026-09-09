@@ -222,7 +222,7 @@ function ownsSessionFile(file: string, sessionId: string): boolean {
   return false;
 }
 
-export type DeleteSessionResult = "deleted" | "not_found" | "run_active";
+export type DeleteSessionResult = "deleted" | "not_found" | "run_active" | "not_deleted";
 
 /**
  * Remove a session's transcript and its headless marker.
@@ -249,9 +249,16 @@ export function deleteSession(
     return "run_active";
   }
 
-  // Reuse the existing teardown rather than writing a second one.
+  // Dispose before unlinking, so Pi is not still holding the file. If the
+  // unlink itself fails — a Windows handle, a permission problem — stop here
+  // and say so rather than stripping the notebook and provenance off a chat
+  // whose transcript is still on disk.
   disposeSession(projectId, sessionId);
-  fs.rmSync(file, { force: true });
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    return "not_deleted";
+  }
   forgetHeadlessSession(projectId, sessionId);
 
   // Everything else keyed by this session id. These are part of the chat, not

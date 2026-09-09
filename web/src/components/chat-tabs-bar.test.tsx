@@ -5,7 +5,7 @@
  * clarifying question.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -86,9 +86,12 @@ describe("history menu", () => {
     renderBar();
     await openHistory();
 
-    expect(screen.getByText("MCP")).toBeInTheDocument();
-    // One badge, on the headless row only.
-    expect(screen.getAllByText("MCP")).toHaveLength(1);
+    // Which row carries the badge is the whole point: asserting only that one
+    // exists would still pass with the badge on the wrong chat.
+    const mcpRow = screen.getByText("MCP chat").closest('[role="menuitem"]');
+    const browserRow = screen.getByText("Browser chat").closest('[role="menuitem"]');
+    expect(within(mcpRow as HTMLElement).getByText("MCP")).toBeInTheDocument();
+    expect(within(browserRow as HTMLElement).queryByText("MCP")).toBeNull();
   });
 
   it("deletes a chat without also reopening it", async () => {

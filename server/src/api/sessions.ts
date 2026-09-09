@@ -578,7 +578,13 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
           return { detail: "No such session" };
         case "run_active":
           reply.code(409);
-          return { detail: "Session is already streaming a response", reason: "run_already_active" };
+          // The machine-readable reason matches the run-start conflict — it is
+          // the same condition — but the sentence has to describe a refused
+          // delete, not a refused turn.
+          return {
+            detail: "That session has a run in flight; wait for it to finish",
+            reason: "run_already_active",
+          };
         case "deleted":
           return { deleted: true };
       }

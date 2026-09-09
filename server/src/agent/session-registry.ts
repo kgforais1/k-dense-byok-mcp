@@ -52,6 +52,9 @@ import {
   seedModalPackage,
 } from "./modal-bridge.ts";
 import { findSessionFile } from "./session-export.ts";
+import { notebookAnnotationsPath } from "./notebook-annotations.ts";
+import { notebookPath } from "./notebook-store.ts";
+import { provenanceSessionDir } from "../provenance/store.ts";
 import { runBroker } from "./run-broker.ts";
 import {
   makePdfAnnotationTools,
@@ -248,6 +251,25 @@ export function deleteSession(
   disposeSession(projectId, sessionId);
   fs.rmSync(file, { force: true });
   forgetHeadlessSession(projectId, sessionId);
+
+  // Everything else keyed by this session id. These are part of the chat, not
+  // separate records: leaving them means the lab notebook still lists entries
+  // for a chat that no longer exists, and a reused id would inherit them.
+  // Best-effort — a failure here must not leave the transcript half-deleted.
+  for (const artifact of [
+    notebookPath(sessionId, projectId),
+    notebookAnnotationsPath(sessionId, projectId),
+    provenanceSessionDir(sessionId, projectId),
+  ]) {
+    try {
+      fs.rmSync(artifact, { force: true, recursive: true });
+    } catch {
+      /* nothing actionable; the transcript is already gone */
+    }
+  }
+
+  // The cost ledger is deliberately kept. That money was actually spent, and
+  // erasing a chat must not silently refund the project's budget tracking.
   return "deleted";
 }
 

@@ -63,6 +63,31 @@ describe("deleteSession", () => {
     expect(fs.existsSync(other)).toBe(true);
   });
 
+  it("removes the notebook, annotations and provenance that belong to the chat", () => {
+    // These are part of the chat, not separate records. Left behind, the lab
+    // notebook still lists entries for a chat that no longer exists.
+    const projectId = "delete-session-artifacts";
+    createProject({ projectId, name: "Delete session artifacts" });
+    const paths = resolvePaths(projectId);
+    const sessionId = "session-with-artifacts";
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    fs.mkdirSync(paths.notebookDir, { recursive: true });
+    const notebook = path.join(paths.notebookDir, `${sessionId}.jsonl`);
+    const annotations = path.join(paths.notebookDir, `${sessionId}.annotations.json`);
+    const provenance = path.join(paths.provenanceDir, sessionId);
+    fs.writeFileSync(notebook, "{}");
+    fs.writeFileSync(annotations, "{}");
+    fs.mkdirSync(provenance, { recursive: true });
+    fs.writeFileSync(path.join(provenance, "steps.jsonl"), "{}");
+
+    expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
+    expect(fs.existsSync(notebook)).toBe(false);
+    expect(fs.existsSync(annotations)).toBe(false);
+    expect(fs.existsSync(provenance)).toBe(false);
+  });
+
   it("returns not_found when the transcript is missing", () => {
     const projectId = "delete-session-missing";
     createProject({ projectId, name: "Delete session missing" });

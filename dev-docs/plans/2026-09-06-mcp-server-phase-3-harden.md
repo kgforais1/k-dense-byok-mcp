@@ -172,15 +172,25 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   "produce" something, and getting that list wrong reports a real answer as
   nothing — a worse failure than the one it fixes. Left as is, deliberately.
 
-- **`deleteSession` is check-then-act, not an atomic claim.** The busy guard
-  reads `live`/`pinned`/the broker, then unlinks; `prepareRun` takes its claim
-  later (`server/src/api/sessions.ts:214`). A DELETE landing between a run's
-  guard check and its claim, or during the `await` inside a cold-open
-  `getSession`, would remove a transcript a run is about to use. The window is
-  small and the browser path is behind a confirm, but MCP makes DELETE
-  scriptable. Closing it properly means one shared synchronous claim covering
-  both operations, which is a change to how run ownership works rather than a
-  patch to this function.
+- ~~**`deleteSession` is check-then-act, not an atomic claim.**~~ **Fixed.**
+  Three reviewers raised this, so it stopped being worth recording. The precise
+  window is narrower than first described: `deleteSession` is synchronous end to
+  end, and `prepareRun`'s own guard-to-claim span has no `await` in it, so those
+  two cannot interleave. The reachable window is the `await getSession(...)`
+  *before* `prepareRun`'s busy check — a delete completing inside it leaves the
+  run holding a session whose transcript is gone, which it then recreates
+  partially on the next write. Closed with a deletion tombstone in
+  `session-registry.ts` that `prepareRun` checks after that await, rather than
+  the shared claim first proposed: a re-`existsSync` would have been wrong,
+  because a freshly created session has no transcript on disk until its first
+  write.
+
+- **Artifact cleanup failures are swallowed and the call still reports
+  `deleted`.** Deliberate. The transcript is already gone by that point, so
+  failing the call would deny a delete that did happen. The cost is named in the
+  code: if `forgetSessionRunResults` fails, `poll_run` keeps answering for a
+  session `get_session_history` now 404s on, until the 7-day retention sweep
+  collects it.
 
 - **Cost ledger entries outlive the chat they belong to.** Deliberate: the money
   was spent. Deleting a chat must not silently refund the project's budget

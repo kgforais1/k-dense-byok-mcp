@@ -62,6 +62,7 @@ import { toHistory } from "../agent/session-history.ts";
 import {
   createSession,
   deleteSession,
+  isDeletedSession,
   getModelRegistry,
   getModelRuntime,
   getSession,
@@ -209,7 +210,10 @@ async function prepareRun(
   const projectId = currentProjectId();
   const paths = activePaths();
   const session = await getSession(projectId, paths, sessionId);
-  if (!session) {
+  // Checked after the await, not before: a delete landing inside `getSession`
+  // would otherwise pass this function's busy check below and start a run on a
+  // session whose transcript no longer exists.
+  if (!session || isDeletedSession(projectId, sessionId)) {
     return { failure: { statusCode: 404, body: { detail: "No such session" } } };
   }
 

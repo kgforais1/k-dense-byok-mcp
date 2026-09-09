@@ -13,10 +13,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { FastifyBaseLogger } from "fastify";
 
-import { createProject } from "../src/projects.ts";
+import fs from "node:fs";
+import path from "node:path";
+
+import { createProject, resolvePaths } from "../src/projects.ts";
 import { withActiveProject } from "../src/scope.ts";
 import { runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
 import { createKadyMcpServer } from "../src/mcp-server/server.ts";
+import { deleteSession } from "../src/agent/session-registry.ts";
 import { beginRun } from "../src/api/sessions.ts";
 
 // A spy that calls through, not a stand-in: the real `prepareRun` has to be
@@ -27,14 +31,18 @@ vi.mock("../src/api/sessions.ts", async (importOriginal) => {
 });
 // `prepareRun` rejects on the retained broker handle before it resolves a
 // model or bills anything, so a plausible live session is all this needs.
-vi.mock("../src/agent/session-registry.ts", () => ({
-  createSession: vi.fn(async () => ({ sessionId: "session-created" })),
-  getSession: vi.fn(async () => ({
-    sessionId: "session-busy",
-    isStreaming: false,
-    model: undefined,
-  })),
-}));
+vi.mock("../src/agent/session-registry.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/agent/session-registry.ts")>();
+  return {
+    ...actual,
+    createSession: vi.fn(async () => ({ sessionId: "session-created" })),
+    getSession: vi.fn(async () => ({
+      sessionId: "session-busy",
+      isStreaming: false,
+      model: undefined,
+    })),
+  };
+});
 
 const PROJECT = "mcp-concurrency";
 
@@ -68,6 +76,31 @@ afterEach(async () => {
   await Promise.all(closeables.splice(0).map((item) => item.close()));
   runBroker.clear();
   vi.mocked(beginRun).mockClear();
+});
+
+describe("a run cannot start on a session deleted mid-flight", () => {
+  it("refuses the start rather than resurrecting a deleted transcript", async () => {
+    // `prepareRun` awaits `getSession` before its busy check, so a delete
+    // landing inside that await passes the check — nothing has claimed the
+    // session yet — and the run resumes on a transcript that is gone.
+    const projectId = "mcp-deleted-midflight";
+    createProject({ projectId, name: "MCP deleted mid-flight" });
+    const paths = resolvePaths(projectId);
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.sessionsDir, "session-busy.jsonl"), "{}");
+    expect(deleteSession(projectId, paths, "session-busy")).toBe("deleted");
+
+    const client = await connect();
+    const result = await withActiveProject(projectId, () =>
+      client.callTool({
+        name: "start_research_run",
+        arguments: { sessionId: "session-busy", message: "go" },
+      }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ error: "No such session" });
+  });
 });
 
 describe("run_already_active through the MCP adapter", () => {

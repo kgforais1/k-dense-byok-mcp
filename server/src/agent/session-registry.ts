@@ -110,6 +110,37 @@ const keyFor = (projectId: string, sessionId: string) => `${projectId}:${session
 const pinned = new Set<string>();
 
 /** Protect a session from eviction for the lifetime of a claimed run. */
+/**
+ * Sessions deleted in this process, so a run cannot start on one.
+ *
+ * `deleteSession` is synchronous end to end, but `prepareRun` awaits
+ * `getSession` *before* it checks whether the session is busy. A delete landing
+ * inside that await passes its own busy check — no run has claimed anything
+ * yet — and the run then resumes holding a session whose transcript is gone,
+ * recreating a partial one on its next write. Scriptable over MCP, which is
+ * this phase's threat model.
+ *
+ * A tombstone rather than a re-`existsSync`: a freshly created session has no
+ * transcript on disk until its first write, so absence does not mean deleted.
+ * Bounded, because ids are minted per session and a process deletes few.
+ */
+const deletedSessions = new Set<string>();
+const MAX_TOMBSTONES = 1_000;
+
+/** True when this session was deleted and must not be run again. */
+export function isDeletedSession(projectId: string, sessionId: string): boolean {
+  return deletedSessions.has(keyFor(projectId, sessionId));
+}
+
+function tombstone(projectId: string, sessionId: string): void {
+  if (deletedSessions.size >= MAX_TOMBSTONES) {
+    // Oldest first; Set preserves insertion order.
+    const oldest = deletedSessions.values().next();
+    if (!oldest.done) deletedSessions.delete(oldest.value);
+  }
+  deletedSessions.add(keyFor(projectId, sessionId));
+}
+
 export function pinSession(projectId: string, sessionId: string): void {
   pinned.add(keyFor(projectId, sessionId));
 }
@@ -238,7 +269,14 @@ export function deleteSession(
   paths: ProjectPaths,
   sessionId: string,
 ): DeleteSessionResult {
-  const file = findSessionFile(paths, sessionId);
+  // The exact filename first. `findSessionFile` matches on a suffix and returns
+  // whichever candidate `readdir` yields first, so with both `23.jsonl` and
+  // `subagent-123.jsonl` present it can hand back the collision — and then
+  // `ownsSessionFile` rejects it and a session that plainly exists reports
+  // `not_found`. Readdir order is filesystem-dependent, so this is not
+  // theoretical.
+  const exact = path.join(paths.sessionsDir, `${sessionId}.jsonl`);
+  const file = fs.existsSync(exact) ? exact : findSessionFile(paths, sessionId);
   if (!file || !ownsSessionFile(file, sessionId)) return "not_found";
 
   // Deleting the transcript out from under a running agent would leave the run
@@ -264,7 +302,13 @@ export function deleteSession(
   // Everything else keyed by this session id. These are part of the chat, not
   // separate records: leaving them means the lab notebook still lists entries
   // for a chat that no longer exists, and a reused id would inherit them.
-  // Best-effort — a failure here must not leave the transcript half-deleted.
+  //
+  // Best-effort, and the result still reports `deleted`. The transcript — the
+  // thing the user asked to remove — is already gone by this point, so failing
+  // the call would report a delete that did in fact happen. The cost of that
+  // choice is real and worth naming: if `forgetSessionRunResults` below fails,
+  // `poll_run` keeps answering for a session `get_session_history` now 404s on
+  // until the 7-day retention sweep collects it.
   for (const artifact of [
     notebookPath(sessionId, projectId),
     notebookAnnotationsPath(sessionId, projectId),
@@ -276,6 +320,8 @@ export function deleteSession(
       /* nothing actionable; the transcript is already gone */
     }
   }
+
+  tombstone(projectId, sessionId);
 
   // Durable run records are keyed by runId, so without this `poll_run` would
   // keep serving a deleted session's frames while `get_session_history` 404s.
@@ -411,6 +457,7 @@ export async function createSession(
   if (options?.includeInterview === false) {
     markHeadlessSession(projectId, session.sessionId);
   }
+  deletedSessions.delete(keyFor(projectId, session.sessionId));
   live.set(keyFor(projectId, session.sessionId), session);
   evictOverCap(projectId);
   return session;

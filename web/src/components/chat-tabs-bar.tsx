@@ -112,7 +112,14 @@ function HistoryMenu({
     const confirmed = window.confirm(
       `Delete "${title}"? Its transcript will be permanently removed. This cannot be undone.`,
     );
-    if (!confirmed) return;
+    if (!confirmed) {
+      // Today `onSelect` still fires for the mouse path and clears this, but
+      // only because `window.confirm` blocks synchronously. Swap in an async
+      // dialog and the marker outlives the click, and the next attempt to
+      // reopen the row silently does nothing. Clear it here too.
+      deletingRef.current = null;
+      return;
+    }
     try {
       const res = await apiFetch(
         `/sessions/${encodeURIComponent(session.id)}`,

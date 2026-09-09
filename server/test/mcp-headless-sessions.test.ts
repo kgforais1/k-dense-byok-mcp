@@ -110,6 +110,25 @@ describe("deleteSession", () => {
     expect(readRunResult(projectId, "run-kept")).toBeNull();
   });
 
+  it("deletes the exact session even when a suffix-colliding file exists", () => {
+    // `findSessionFile` returns whichever candidate readdir yields first, so a
+    // session with a colliding neighbour could report not_found and become
+    // undeletable.
+    const projectId = "delete-session-both";
+    createProject({ projectId, name: "Delete session both" });
+    const paths = resolvePaths(projectId);
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    const wanted = path.join(paths.sessionsDir, "23.jsonl");
+    const neighbour = path.join(paths.sessionsDir, "subagent-123.jsonl");
+    fs.writeFileSync(wanted, "{}");
+    fs.writeFileSync(neighbour, `${JSON.stringify({ type: "session", id: "subagent-123" })}\n`);
+
+    expect(deleteSession(projectId, paths, "23")).toBe("deleted");
+    expect(fs.existsSync(wanted)).toBe(false);
+    expect(fs.existsSync(neighbour)).toBe(true);
+  });
+
   it("returns not_found when the transcript is missing", () => {
     const projectId = "delete-session-missing";
     createProject({ projectId, name: "Delete session missing" });

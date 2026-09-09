@@ -153,6 +153,17 @@ describe("history menu", () => {
     expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
   });
 
+  it("still reopens a chat after the user cancels a mouse delete", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderBar();
+    const user = await openHistory();
+
+    await user.click(screen.getByLabelText("Delete Browser chat"));
+    await user.click(screen.getByText("Browser chat"));
+
+    expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
+  });
+
   it("does not delete when the user cancels the confirmation", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(false);
     renderBar();

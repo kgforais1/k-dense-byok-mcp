@@ -77,9 +77,17 @@ export function findSessionFile(paths: ProjectPaths, sessionId: string): string 
     throw new Error(`Invalid session id: ${sessionId}`);
   }
   if (!fs.existsSync(paths.sessionsDir)) return null;
+  // Pi names a transcript `${timestamp}_${id}.jsonl` and finds it again by the
+  // suffix `_${id}.jsonl` (pi-agent-core `harness/session/jsonl/repo.js`). The
+  // separator is what makes that safe, and it is matched here for the same
+  // reason: a bare `endsWith(`${id}.jsonl`)` lets the id `23` match
+  // `..._123.jsonl` and hand back a different session's transcript to
+  // `get_session_history` and to the export routes. The exact name is accepted
+  // too, because a session written directly as `<id>.jsonl` is still that
+  // session's file.
   const match = fs
     .readdirSync(paths.sessionsDir)
-    .find((f) => f.endsWith(`${sessionId}.jsonl`) || f === `${sessionId}.jsonl`);
+    .find((f) => f === `${sessionId}.jsonl` || f.endsWith(`_${sessionId}.jsonl`));
   return match ? path.join(paths.sessionsDir, match) : null;
 }
 

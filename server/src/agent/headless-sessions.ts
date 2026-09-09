@@ -17,16 +17,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolvePaths } from "../projects.ts";
-
-/**
- * Session ids come from Pi, but this value reaches the filesystem, so it is
- * validated the same way `run-results.ts` validates run ids rather than
- * trusted. A rejected id fails closed: `isHeadlessSession` returns false and
- * the caller keeps the interactive default.
- */
-function isSafeSessionId(sessionId: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId);
-}
+// Shared rather than restated: this file had its own copy of the same rule,
+// and the two drifted the moment one of them gained a check. A rejected id
+// fails closed here — `isHeadlessSession` returns false and the caller keeps
+// the interactive default.
+import { isSafeSessionId } from "./session-export.ts";
 
 function markerPath(projectId: string, sessionId: string): string | null {
   if (!isSafeSessionId(sessionId)) return null;

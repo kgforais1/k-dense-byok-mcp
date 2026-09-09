@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  findSessionFile,
   indexToolResults,
   readRows,
   toNotebook,
@@ -256,5 +257,28 @@ describe("toHistory", () => {
       msg({ role: "user", content: [{ type: "text", text: "hi" }] }),
     ]));
     expect(plain[0].images).toBeUndefined();
+  });
+});
+
+describe("findSessionFile", () => {
+  // Pi writes `<timestamp>_<id>.jsonl`, so the lookup has to match a suffix.
+  // Without the separator the id `23` also matches `..._123.jsonl`, and
+  // `get_session_history` hands back a different session's whole transcript.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-find-session-"));
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const paths = { sessionsDir: dir } as unknown as Parameters<typeof findSessionFile>[0];
+
+  it("does not return a session whose id merely ends with the one asked for", () => {
+    const neighbour = path.join(dir, "20260101-000000_123.jsonl");
+    fs.writeFileSync(neighbour, "{}");
+
+    expect(findSessionFile(paths, "23")).toBeNull();
+    expect(findSessionFile(paths, "123")).toBe(neighbour);
+  });
+
+  it("finds a transcript written under its bare id", () => {
+    const bare = path.join(dir, "plain.jsonl");
+    fs.writeFileSync(bare, "{}");
+    expect(findSessionFile(paths, "plain")).toBe(bare);
   });
 });

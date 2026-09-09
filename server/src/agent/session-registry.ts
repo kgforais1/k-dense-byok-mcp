@@ -310,7 +310,19 @@ export function deleteSession(
   } catch {
     return "not_deleted";
   }
-  forgetHeadlessSession(projectId, sessionId);
+  // Best-effort like the artifact loop below, and for the same reason.
+  // `force: true` only suppresses ENOENT; an EPERM or a Windows EBUSY still
+  // throws, and letting it escape here would strand the delete half-done: the
+  // transcript is already gone, but the tombstone and the durable run records
+  // below would be skipped and the route would answer 400 as though nothing
+  // had happened.
+  try {
+    forgetHeadlessSession(projectId, sessionId);
+  } catch {
+    // Nothing actionable; the transcript is already gone. The marker outliving
+    // it is inert: `isHeadlessSession` is only ever asked about a session that
+    // still has a transcript, and Pi ids are not reused.
+  }
 
   // Everything else keyed by this session id. These are part of the chat, not
   // separate records: leaving them means the lab notebook still lists entries

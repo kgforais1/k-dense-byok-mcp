@@ -121,9 +121,10 @@ frames.
 `running` and `unknown` do not carry it at all — nothing is knowable yet in the
 first case, and there is no record to read in the second — so test for the key
 rather than for a falsy value. A `done` run
-with `producedOutput: false` finished without saying anything and without
-producing a file — treat it as a failed attempt and retry, rather than
-reporting an empty answer as a result. `status` stays authoritative: on
+with `producedOutput: false` emitted no assistant prose and no successful tool
+result — treat it as a failed attempt and retry, rather than reporting an empty
+answer as a result. It is not a claim about files: a run that wrote one did so
+through a tool, and that tool result is what makes this `true`. `status` stays authoritative: on
 `error`, `blocked` or `aborted`, `producedOutput: true` only means partial
 output arrived before the run stopped.
 

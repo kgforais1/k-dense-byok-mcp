@@ -7,7 +7,7 @@ branch: mcp-work
 
 # MCP Server for K-Dense (Kady as a Tool for External Agents) — Master Plan
 
-**Status:** Accepted — Phases 1 and 2 complete (PRs #15, #17, #18); Phase 3 not started.
+**Status:** Accepted — Phases 1 and 2 complete (PRs #15, #17, #18); Phase 3 in progress (PR #20).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the

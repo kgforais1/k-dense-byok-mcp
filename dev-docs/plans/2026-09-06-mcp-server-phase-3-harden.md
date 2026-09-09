@@ -37,7 +37,8 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 
 ## Implementation sequence
 
-- [x] Write `docs/kady-as-mcp-server.md` and validate with a fresh-client walkthrough. Register the new doc per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
+- [x] Write `docs/kady-as-mcp-server.md` and register it per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
+- [ ] Validate that doc with a fresh-client walkthrough. Unchecked deliberately: the transcript that backs the "installable by a third party" claim does not exist yet, and the doc is written from the code rather than from a run.
 - [ ] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts.
 - [ ] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`.
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.

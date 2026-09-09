@@ -4,7 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { createProject, resolvePaths } from "../src/projects.ts";
 import { isHeadlessSession, markHeadlessSession } from "../src/agent/headless-sessions.ts";
@@ -108,6 +108,42 @@ describe("deleteSession", () => {
 
     expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
     expect(readRunResult(projectId, "run-kept")).toBeNull();
+  });
+
+  it("still finishes the delete when the headless marker cannot be removed", () => {
+    // `force: true` only suppresses ENOENT. An EPERM, or a Windows handle held
+    // on the marker, used to escape `deleteSession` entirely and strand it
+    // half-done: transcript gone, but the tombstone unset and `poll_run` still
+    // serving the run records, while the route answered 400.
+    const projectId = "delete-session-marker-locked";
+    createProject({ projectId, name: "Delete session marker locked" });
+    const paths = resolvePaths(projectId);
+    const sessionId = "marker-locked";
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    markHeadlessSession(projectId, sessionId);
+    const expired = new RunBroker({ completedRetentionMs: 1 });
+    const handle = expired.start(projectId, sessionId, metadata("run-marker"));
+    handle.publish({ type: "done" });
+    handle.complete();
+    persistRunResult(projectId, handle);
+
+    const real = fs.rmSync;
+    const rmSync = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (String(target).includes("headless-sessions")) {
+        throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+      }
+      return real(target, options);
+    });
+
+    try {
+      expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
+    } finally {
+      rmSync.mockRestore();
+    }
+    // The steps after the marker still ran.
+    expect(readRunResult(projectId, "run-marker")).toBeNull();
   });
 
   it("deletes the exact session even when a suffix-colliding file exists", () => {

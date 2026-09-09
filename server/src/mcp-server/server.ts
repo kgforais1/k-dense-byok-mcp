@@ -58,23 +58,33 @@ function rejectionResult(rejection: RunStartRejection): CallToolResult {
   });
 }
 
-/** Frame types that constitute an answer a client can actually use. */
-const CONTENT_FRAME_TYPES = new Set(["text", "text_delta", "message", "object", "image"]);
-
 /**
  * Whether a run produced anything a caller can read.
  *
  * `status: "done"` alone cannot say this: a human watching a chat UI sees an
- * empty bubble and retries, while an MCP client would report success.
+ * empty bubble and retries, while an MCP client reads `done` as success.
+ *
+ * Only two frame types carry an answer. Prose arrives as `text_delta` — note
+ * `delta`, not `text`: `toClientFrame` maps Pi's `message_update` to
+ * `{ type: "text_delta", delta }` (`agent/events.ts:311`), and a first draft of
+ * this helper read `frame.text`, which no published frame has. That draft
+ * returned `false` for every real run and its tests passed only because they
+ * published a frame shape the agent never emits.
+ *
+ * A successful `tool_end` counts too. A run whose whole answer is an exported
+ * notebook or a written file said nothing in prose but did not finish with
+ * nothing. `isError` tool results do not count.
+ *
+ * Everything else — `run_start`, `done`, `turn_*`, `message_*`, `tool_start`,
+ * `thinking_delta`, `context_usage`, `cost`, `retry`, `queue_update` — is
+ * bookkeeping, not output.
  */
 function producedOutput(frames: readonly { type: string; [k: string]: unknown }[]): boolean {
   return frames.some((frame) => {
-    if (!CONTENT_FRAME_TYPES.has(frame.type)) return false;
-    if (frame.type === "text" || frame.type === "text_delta") {
-      const text = typeof frame.text === "string" ? frame.text.trim() : "";
-      return text.length > 0;
+    if (frame.type === "text_delta") {
+      return typeof frame.delta === "string" && frame.delta.trim().length > 0;
     }
-    return true;
+    return frame.type === "tool_end" && frame.isError !== true;
   });
 }
 
@@ -192,7 +202,9 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         "`error` means anything else failed, including a provider refusal — that frame has no `kind`, and its `message` already carries the guidance for what to do about it. Read the terminal frame's `message` in both cases.",
         "Pass the returned `lastSeq` back as `after` on the next call to receive only new frames.",
         "This keeps working after the in-memory broker drops the run: completed runs are also persisted durably.",
-        "A terminal run also carries `producedOutput`: `true` means the run finished with at least one readable output frame, and `false` means it finished without producing an answer — treat that as a failed attempt, not a successful empty result.",
+        "Every status except `unknown` also carries `producedOutput`: whether the run emitted any assistant prose or any successful tool result.",
+        "`done` with `producedOutput: false` is a run that finished with nothing — retry it, do not report it as an answer.",
+        "`status` stays authoritative: on `error`, `blocked` or `aborted`, `producedOutput: true` only means partial output arrived before the run stopped.",
       ].join(" "),
       inputSchema: {
         sessionId: z.string().describe("Session id the run belongs to."),

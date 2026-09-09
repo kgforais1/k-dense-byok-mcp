@@ -374,7 +374,7 @@ describe("poll_run", () => {
     createProject({ projectId: "mcp-text-durable", name: "MCP text durable" });
     const expired = new RunBroker({ completedRetentionMs: 1 });
     const handle = expired.start("mcp-text-durable", "session-text", metadata("run-text"));
-    handle.publish({ type: "text", text: "Here is the answer" });
+    handle.publish({ type: "text_delta", delta: "Here is the answer" } as never);
     handle.complete();
     persistRunResult("mcp-text-durable", handle);
     const client = await connect();
@@ -388,10 +388,10 @@ describe("poll_run", () => {
     expect(payload(result)).toMatchObject({ status: "done", producedOutput: true });
   });
 
-  it("reports producedOutput: false when the only text frame is whitespace", async () => {
+  it("reports producedOutput: false when the only prose delta is whitespace", async () => {
     createProject({ projectId: "mcp-whitespace", name: "MCP whitespace" });
     const handle = runBroker.start("mcp-whitespace", "session-ws", metadata("run-ws"));
-    handle.publish({ type: "text", text: "   " });
+    handle.publish({ type: "text_delta", delta: "   " } as never);
     handle.complete();
     const client = await connect();
 
@@ -408,7 +408,7 @@ describe("poll_run", () => {
     createProject({ projectId: "mcp-cursor", name: "MCP cursor" });
     const handle = runBroker.start("mcp-cursor", "session-cursor", metadata("run-cursor"));
     handle.publish({ type: "run_start", runId: "run-cursor" });
-    handle.publish({ type: "text", text: "answer" });
+    handle.publish({ type: "text_delta", delta: "answer" } as never);
     handle.complete();
     const client = await connect();
 
@@ -446,11 +446,79 @@ describe("poll_run", () => {
     expect(body).not.toHaveProperty("producedOutput");
   });
 
+  it("counts a successful tool result as output even with no prose", async () => {
+    // A run whose whole answer is an exported notebook or a written file said
+    // nothing but did not finish with nothing.
+    createProject({ projectId: "mcp-tool-only", name: "MCP tool only" });
+    const handle = runBroker.start("mcp-tool-only", "session-tool", metadata("run-tool"));
+    handle.publish({ type: "run_start", runId: "run-tool" });
+    handle.publish({
+      type: "tool_end",
+      toolCallId: "c1",
+      toolName: "notebook",
+      isError: false,
+    } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-tool-only", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-tool", runId: "run-tool" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: true });
+  });
+
+  it("does not count a failed tool result as output", async () => {
+    createProject({ projectId: "mcp-tool-fail", name: "MCP tool fail" });
+    const handle = runBroker.start("mcp-tool-fail", "session-fail", metadata("run-fail"));
+    handle.publish({
+      type: "tool_end",
+      toolCallId: "c1",
+      toolName: "read",
+      isError: true,
+    } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-tool-fail", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-fail", runId: "run-fail" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
+  });
+
+  it("reads prose from `delta`, which is the field the agent actually publishes", async () => {
+    // Regression: the first version of this check read `frame.text`. No frame
+    // the agent emits has that field -- `toClientFrame` publishes
+    // `{ type: "text_delta", delta }` (agent/events.ts:311) -- so it reported
+    // every real run as having produced nothing, and its tests passed only
+    // because they published a frame shape that does not exist. A frame
+    // carrying `text` instead of `delta` must not count.
+    createProject({ projectId: "mcp-delta", name: "MCP delta" });
+    const handle = runBroker.start("mcp-delta", "session-delta", metadata("run-delta"));
+    handle.publish({ type: "text_delta", text: "not the real field" } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-delta", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-delta", runId: "run-delta" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
+  });
+
   it("describes producedOutput in the poll_run tool description", async () => {
     const client = await connect();
     const tool = (await client.listTools()).tools.find((t) => t.name === "poll_run");
     const description = tool?.description ?? "";
     expect(description).toMatch(/producedOutput/);
+    expect(description).toMatch(/`status` stays authoritative/);
   });
 });
 

@@ -1,0 +1,80 @@
+# Gitleaks configuration for repository hygiene, not secrets.
+#
+# This is a separate config, run as its own pass, because it deliberately sets
+# `useDefault = false`. Gitleaks' bundled default config carries a global
+# allowlist that suppresses `/home/<name>/` paths outright — reasonable for a
+# secret scanner, fatal for a rule whose entire purpose is finding them. With
+# `[extend] useDefault = true` the `/home/` branch below matches nothing at all,
+# silently, which is exactly the kind of gate that looks green and checks
+# nothing. Keeping the two passes separate is also honest about the split: a
+# committed home directory is a portability and privacy problem, not a secret,
+# and unlike `.gitleaks.toml` this pass is not run with `--redact`.
+#
+# Run locally the way CI does — over the tracked tree, not history:
+#
+#   d=$(mktemp -d) && git ls-files -z | tar --null -T - -cf - | tar -x -C "$d"
+#   gitleaks dir --config .gitleaks-paths.toml "$d"
+
+title = "k-dense-byok (paths)"
+
+[extend]
+useDefault = false
+
+[[rules]]
+id = "local-home-directory-path"
+description = "Absolute path containing a developer's home directory"
+# Committed host paths leak the machine's username and break for every other
+# contributor. Anything genuinely user-specific belongs behind `resolvePaths`
+# or an environment variable, never in a tracked file.
+# Gitleaks compiles rules with RE2, which has no lookaround, so the
+# placeholder exclusions live in the allowlist below rather than in the match.
+#
+# The drive-letter branch accepts either separator: `C:/Users/<name>/` is a
+# perfectly ordinary Windows path in JavaScript source, and matching only the
+# backslash form would miss it. Separators repeat because a Windows path
+# written in JS source has its backslashes escaped.
+#
+# The name is unbounded in length. An earlier `{0,31}` cap silently exempted
+# anyone with a 33-character username, which is the rule's own subject matter.
+#
+# The name may be followed by a separator, a string/punctuation terminator, or
+# end of input. Requiring a trailing separator missed the commonest spelling of
+# all — `const home = "/Users/<name>";` — because the path ends at the quote.
+regex = '''(?:/Users/|/home/|[A-Za-z]:[\\/]+Users[\\/]+)[A-Za-z][A-Za-z0-9._-]*(?:[/\\]|["'`\s;,:)\]}]|$)'''
+tags = ["privacy", "portability"]
+
+[[rules.allowlists]]
+description = "Syntactic placeholders only"
+regexTarget = "match"
+regexes = [
+  # Syntactic placeholders only — `<name>`, `${VAR}`, `%VAR%`. Nothing that
+  # could also be somebody's account. `root`, `admin`, `node`, `ubuntu`,
+  # `user`, `test` and `me` were all here once and are all gone: allowlisting
+  # a name by name lets a genuine home directory walk through the gate this
+  # rule exists to be. `runner` went the same way — `git grep` finds no
+  # `/home/runner` or `/Users/runner` in any tracked file, so exempting the CI
+  # runner's name was paying a real risk for nothing.
+  '''[/\\](?:<[^>]+>|\$\{?[A-Za-z_]+\}?|%[A-Za-z_]+%)(?:[/\\]|["'`\s;,:)\]}]|$)''',
+]
+
+[[rules.allowlists]]
+description = "The specific fixture paths this repository commits on purpose"
+# Allowlisted as exact strings rather than by username. Suppressing every
+# single-letter name would re-open the same hole as `admin` above, just for a
+# smaller set of people.
+regexTarget = "line"
+regexes = [
+  # server/test/backend.test.ts and web/src/lib/skill-invocation.test.ts, which
+  # use a single-letter fixture name under `projects` and under `.pi`.
+  '''/Users/x/(?:projects/p/sandbox|\.pi/agent/skills/)''',
+  # server/test/win-portability.test.ts, which spells the same fixture root both
+  # with escaped backslashes and with forward slashes.
+  '''C:[\\\\/]+Users[\\\\/]+u[\\\\/]+projects''',
+]
+
+[[rules.allowlists]]
+description = "This file has to be able to spell the patterns it matches on"
+# Narrow on purpose: one file, the one that defines the rule. A rule that
+# flags its own configuration is unfixable without either this exemption or
+# writing the patterns in an obfuscated form nobody can review.
+paths = ['''(^|/)\.gitleaks-paths\.toml$''']

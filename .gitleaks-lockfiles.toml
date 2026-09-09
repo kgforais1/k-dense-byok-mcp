@@ -1,0 +1,101 @@
+# Gitleaks configuration for the files the default rule set refuses to look at.
+#
+# `.gitleaks.toml` runs with `[extend] useDefault = true`, which silently
+# inherits gitleaks' bundled `[allowlist] paths` — and that list skips
+# `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `node_modules`, `vendor`,
+# Python virtualenvs, and binary assets. There is no supported way to un-inherit
+# it: an empty `paths = []` is rejected outright, and no flag disables it.
+#
+# For a bring-your-own-key application that is the wrong blind spot to accept.
+# Both lockfiles are churned by automation — Dependabot opens PRs against them
+# weekly, and one branch here moved `server/package-lock.json` by 1,960 lines.
+# A key pasted into one of those diffs is invisible to the main pass. Verified:
+# an identical synthetic Anthropic key is caught in a `.ts` file and missed in
+# `package-lock.json`.
+#
+# So this pass extends the upstream rule set from a *copy* with that `paths`
+# array removed, rather than from the bundled default. `[extend] path` takes a
+# local file, so CI fetches `config/gitleaks.toml` at the pinned gitleaks tag,
+# verifies its SHA-256 alongside the binary's, deletes the `paths` array from
+# its global `[allowlist]`, and writes `.gitleaks-base.toml`. Everything else in
+# the upstream config — every rule, and the stopword `regexes` that keep
+# `true`/`false`/`${VAR}` quiet — is kept.
+#
+# A first attempt hand-rolled four rules here instead, on the assumption that
+# the inherited exclusions could not be undone. They cannot be undone in place,
+# but extending a modified copy sidesteps that, and the hand-rolled set silently
+# gave up AWS, Stripe, Slack, GCP and everything else upstream knows about.
+# Verified: a synthetic Anthropic key in `package-lock.json` is caught here and
+# missed by `.gitleaks.toml`.
+#
+# The rules below are the ones upstream does not have: this backend's own
+# provider set, and the shapes a credential actually takes in a lockfile.
+#
+# Run locally (regenerate the base first, see `.github/workflows/checks.yml`):
+#   gitleaks git --redact --config .gitleaks-lockfiles.toml .
+
+title = "k-dense-byok (lockfiles and vendored files)"
+
+[extend]
+# Not `useDefault = true`. That form inherits the bundled `[allowlist] paths`
+# and there is no supported way to drop it — an empty `paths = []` is rejected
+# outright. This file is the same rule set with that one array removed.
+path = ".gitleaks-base.toml"
+
+[[rules]]
+id = "provider-api-key"
+description = "Provider API key with a recognisable prefix"
+# The providers this backend reads from the environment: Anthropic, OpenAI,
+# Google/Gemini, OpenRouter, NVIDIA, Perplexity, Exa, GitHub, Modal.
+regex = '''\b(?:sk-ant-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{32,}|sk-[A-Za-z0-9]{32,}|nvapi-[A-Za-z0-9_-]{32,}|pplx-[A-Za-z0-9]{32,}|AIza[A-Za-z0-9_-]{35}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,}|a[ks]-[A-Za-z0-9]{20,})\b'''
+tags = ["key", "provider"]
+
+[[rules]]
+id = "kady-credential-assignment"
+description = "A credential this backend reads, assigned a literal value"
+# Prefix matching only covers providers that use one. Modal's `ak-`/`as-` pair
+# is above, but Exa hands out bare UUIDs and several others have no recognisable
+# shape at all, so a prefix list alone leaves holes that are invisible until
+# someone finds them the hard way.
+#
+# This rule keys on the variable names instead — the ones read in
+# `server/src/config.ts` and `server/src/api/credentials.ts` — and fires when
+# one is assigned a literal rather than read from the environment. The value
+# must be quoted and at least 12 characters, which is what keeps
+# `process.env.MODAL_TOKEN_ID &&` and `envVar: "MODAL_TOKEN_ID"` quiet.
+regex = '''(?:ANTHROPIC|OPENAI|GEMINI|GOOGLE|NVIDIA|OPENROUTER|OR|PERPLEXITY|EXA)_API_KEY\s*[:=]\s*["'][^"']{12,}["']|MODAL_TOKEN_(?:ID|SECRET)\s*[:=]\s*["'][^"']{12,}["']|(?:GITHUB|PACKAGE)_TOKEN\s*[:=]\s*["'][^"']{12,}["']'''
+tags = ["key", "provider"]
+
+[[rules]]
+id = "registry-auth-token"
+description = "npm registry auth token in a lockfile or rc file"
+# The realistic way a credential reaches a lockfile: a private registry line
+# carrying `_auth`/`_authToken`, or basic auth embedded in a resolved URL.
+#
+# The value must be quoted, or the key must be the unambiguous `_authToken`.
+# A first draft accepted any 16-character run and matched the Python statement
+# `_auth = _has_static_auth` in this repository — an identifier, not a secret.
+regex = '''(?i)(?:_auth(?:Token)?["']?\s*[:=]\s*["'][A-Za-z0-9+/=_-]{16,}["']|_authToken\s*=\s*[A-Za-z0-9+/=_-]{16,}|https?://[^\s"'/@]+:[^\s"'/@]{8,}@)'''
+tags = ["token", "registry"]
+
+[[rules]]
+id = "private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----'''
+tags = ["key", "private"]
+
+[[allowlists]]
+description = "Obvious test placeholders, not credentials"
+# `server/test/speech.test.ts` sets `OPENROUTER_API_KEY = "test-openrouter-key"`.
+# Matched on the value's own prefix rather than by exempting the test tree, so a
+# real key pasted into a test is still caught. File-level, not `[[rules.allowlists]]`:
+# that form binds to the preceding rule only, which is a quiet way to write an
+# allowlist that never applies to the rule you meant.
+regexTarget = "match"
+regexes = [
+  '''["'](?i:test|fake|dummy|sample|example|placeholder|changeme|redacted|xxx|your)[-_]''',
+]
+
+[[allowlists]]
+description = "This file has to be able to spell the patterns it matches on"
+paths = ['''(^|/)\.gitleaks-lockfiles\.toml$''']

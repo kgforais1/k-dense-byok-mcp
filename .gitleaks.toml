@@ -1,0 +1,16 @@
+# Gitleaks configuration for k-dense-byok.
+#
+# This repository's whole purpose is handling bring-your-own-key provider
+# credentials, so a key pasted into a fixture or a doc is the realistic
+# failure mode — not one CodeQL or Dependabot would ever look for.
+#
+# Run locally with: gitleaks git --redact --config .gitleaks.toml .
+
+title = "k-dense-byok"
+
+[extend]
+# The upstream rule set (provider keys, private keys, tokens) is the whole
+# content of this pass. Repository-specific path hygiene lives in
+# `.gitleaks-paths.toml`, which must run with `useDefault = false` — see the
+# comment there for why the two cannot share one config.
+useDefault = true

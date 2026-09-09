@@ -9,7 +9,9 @@
     "prep": "tsx src/prep.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",
@@ -34,8 +36,11 @@
   "devDependencies": {
     "@types/archiver": "^8.0.0",
     "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.4"
   }
 }

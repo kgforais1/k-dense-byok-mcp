@@ -6,7 +6,6 @@ import { createProject, updateProject } from "../src/projects.ts";
 import { withActiveProject } from "../src/scope.ts";
 import { sessionCostSummary } from "../src/cost/ledger.ts";
 import {
-  AssistError,
   buildAssistContext,
   extractReplacement,
   runLatexAssist,

@@ -71,6 +71,33 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   "finished with nothing", and no human is watching the transcript. Decide
   whether to flag a content-free terminal run.
 
+## Carried in from the CI-hardening review (PR #19)
+
+Two of the three "guardrails enforced only by prose" turn out to want tests, not
+static rules, and the moment to write them is while the seam is fresh:
+
+- **No absolute host path in any MCP tool result.**
+  `server/test/mcp-server-tools.test.ts:122` pins the one known instance, the
+  `sessionFile` near-miss. It is an assertion about a single field, not the
+  property. `get_session_history` returns `toHistory(file, paths.sandbox)` and
+  `poll_run` returns broker frames; neither is checked. Gitleaks scans source
+  and can never see runtime output, so a new tool — or a new frame type that
+  happens to carry a path — goes green through the entire pipeline. Wanted: one
+  test that walks every tool's serialized result and fails on anything matching
+  an absolute host path.
+
+- **`start_research_run` and `POST /sessions/:id/run` share one path.**
+  `beginRun` is that path today and the adapter calls it, but nothing fails if a
+  future handler reimplements run-start instead. Wanted: a concurrency test that
+  drives `run_already_active` *through the MCP adapter*, so ownership and
+  billing behaviour are pinned to the shared path rather than to the REST route
+  alone.
+
+The third, "`prepareRun` must not call `reply.code`", is genuinely structural
+and stays a Semgrep candidate. `prepareRun` is transport-neutral now and returns
+`RunStartRejection`; re-adding a `reply` parameter would pass lint, typecheck
+and every test while breaking only the MCP path.
+
 ## Guardrails
 
 - Same as Phase 2 (no secrets over tools, local-first, pin discipline, cross-platform).

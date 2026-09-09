@@ -1,0 +1,112 @@
+name: Checks
+
+# Repository-hygiene gates that are cheap and must run even on
+# documentation-only changes. `Tests` deliberately skips docs-only pushes to
+# `main`; these checks are precisely the ones a docs-only change can break, so
+# this workflow carries no `paths-ignore`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docs:
+    name: docs:check
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # The root package has no dependencies, so there is nothing to install:
+      # `scripts/repo.mjs` and `scripts/docs-check.mjs` are plain Node.
+      - name: Run documentation checks
+        run: npm run docs:check
+
+  secrets:
+    name: gitleaks
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Gitleaks scans history, not just the tree. Without full depth it
+          # would only ever see the tip commit and miss a key that was
+          # committed and then removed in a later commit on the same branch.
+          fetch-depth: 0
+      # Installed from the upstream release rather than `gitleaks-action`:
+      # the Action requires a licence key for organisation accounts and would
+      # have to be SHA-pinned, while the binary is verified here by checksum.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          GITLEAKS_CONFIG_SHA256: e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o gitleaks.tar.gz "$url"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          rm gitleaks.tar.gz
+          # The lockfile pass extends the upstream rules from a copy of the
+          # default config with its global `[allowlist] paths` array deleted —
+          # that array is what makes lockfiles unreadable, and it cannot be
+          # un-inherited via `useDefault = true`. Same version tag as the
+          # binary, verified by its own checksum; bumping one without the other
+          # must fail.
+          curl -fsSL -o base.toml \
+            "https://raw.githubusercontent.com/gitleaks/gitleaks/v${GITLEAKS_VERSION}/config/gitleaks.toml"
+          echo "${GITLEAKS_CONFIG_SHA256}  base.toml" | sha256sum -c -
+          python3 - <<'PY'
+          s = open("base.toml").read()
+          i = s.index("[allowlist]")
+          j = s.index("paths = [", i)
+          k = s.index("\n]\n", j) + 3
+          open(".gitleaks-base.toml", "w").write(s[:j] + s[k:])
+          PY
+          rm base.toml
+      # `--verbose` because without it a failure prints only "leaks found: N",
+      # with no file, line or match to act on.
+      - name: Scan for committed secrets
+        run: ./gitleaks git --no-banner --no-color --verbose --redact --config .gitleaks.toml .
+      # A second pass, over history, for the files the first one is not allowed
+      # to read. `useDefault = true` silently inherits gitleaks' bundled path
+      # allowlist, which skips both lockfiles, `node_modules` and `vendor`, and
+      # there is no supported way to un-inherit it. Dependabot churns those
+      # lockfiles weekly, so leaving them exempt from every rule at once is the
+      # wrong blind spot for a BYOK app. See `.gitleaks-lockfiles.toml`.
+      - name: Scan lockfiles and vendored files for secrets
+        run: ./gitleaks git --no-banner --no-color --verbose --redact --config .gitleaks-lockfiles.toml .
+      # A third pass, and the only one that is not about secrets at all: a
+      # committed home directory is a portability and privacy problem. Its
+      # rules need `useDefault = false` too, because gitleaks' bundled
+      # defaults globally allowlist `/home/<name>/`. Not redacted — the point
+      # of the finding is being able to read which path it is.
+      #
+      # It scans the tracked tree, not history, which is the one real
+      # difference from the secret scan above. A key that reached any commit is
+      # still a live credential and has to be found wherever it is; a host path
+      # only matters where it currently sits. Scanning history here would mean
+      # a path removed three commits ago fails the build forever. The tree is
+      # exported with `git ls-files` rather than scanned in place, because
+      # `gitleaks dir .` walks gitignored content too — locally that is the
+      # 2 GB `projects/` directory, full of real host paths that are not ours.
+      - name: Scan for committed host paths
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/tracked"
+          mkdir -p "${RUNNER_TEMP}/tracked"
+          git ls-files -z | tar --null -T - -cf - | tar -x -C "${RUNNER_TEMP}/tracked"
+          ./gitleaks dir --no-banner --no-color --verbose --config .gitleaks-paths.toml "${RUNNER_TEMP}/tracked"

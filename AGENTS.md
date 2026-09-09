@@ -65,7 +65,9 @@ npm run dev                 # tsx watch on port 8000
 npm run start               # run backend (tsx)
 npm run prep                # ensure default project + seed scientific skills
 npm run typecheck           # tsc --noEmit
+npm run lint                # eslint
 npm test                    # vitest
+npm run test:coverage       # vitest with coverage thresholds
 ```
 
 Frontend (`cd web` first):
@@ -75,6 +77,7 @@ npm install
 npm run dev                 # Next.js dev server (port 3000)
 npm run build               # production build
 npm run test                # vitest
+npm run test:coverage       # vitest with coverage thresholds
 ```
 
 Full app (both services):
@@ -155,6 +158,7 @@ projects/
 ## Testing notes
 
 - Backend tests: `cd server && npm test` (vitest, in `server/test/`). `KADY_PROJECTS_ROOT` is pointed at a temp dir via `vitest.config.ts`.
+- Coverage carries a threshold floor in both `server/vitest.config.ts` and `web/vitest.config.ts`, enforced on `ubuntu-latest` in CI. The floors sit a few points under the measured value; do not lower one to make a change pass. See [Repository quality gates](dev-docs/plans/2026-09-08-repo-quality-gates.md).
 - Frontend tests: `cd web && npm test` (vitest). `npx tsc --noEmit` currently passes clean for the frontend too.
 
 ## Caveats worth knowing

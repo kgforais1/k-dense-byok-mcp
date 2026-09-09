@@ -58,6 +58,26 @@ function rejectionResult(rejection: RunStartRejection): CallToolResult {
   });
 }
 
+/** Frame types that constitute an answer a client can actually use. */
+const CONTENT_FRAME_TYPES = new Set(["text", "text_delta", "message", "object", "image"]);
+
+/**
+ * Whether a run produced anything a caller can read.
+ *
+ * `status: "done"` alone cannot say this: a human watching a chat UI sees an
+ * empty bubble and retries, while an MCP client would report success.
+ */
+function producedOutput(frames: readonly { type: string; [k: string]: unknown }[]): boolean {
+  return frames.some((frame) => {
+    if (!CONTENT_FRAME_TYPES.has(frame.type)) return false;
+    if (frame.type === "text" || frame.type === "text_delta") {
+      const text = typeof frame.text === "string" ? frame.text.trim() : "";
+      return text.length > 0;
+    }
+    return true;
+  });
+}
+
 export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
   const server = new McpServer({ name: "kady", version: packageJson.version });
 
@@ -172,6 +192,7 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         "`error` means anything else failed, including a provider refusal — that frame has no `kind`, and its `message` already carries the guidance for what to do about it. Read the terminal frame's `message` in both cases.",
         "Pass the returned `lastSeq` back as `after` on the next call to receive only new frames.",
         "This keeps working after the in-memory broker drops the run: completed runs are also persisted durably.",
+        "A terminal run also carries `producedOutput`: `true` means the run finished with at least one readable output frame, and `false` means it finished without producing an answer — treat that as a failed attempt, not a successful empty result.",
       ].join(" "),
       inputSchema: {
         sessionId: z.string().describe("Session id the run belongs to."),
@@ -194,17 +215,28 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
       const handle = runBroker.get(projectId, sessionId);
       const live = handle?.state();
       if (handle && live?.run?.runId === runId) {
-        return json({
+        // `activityState` alone reports an aborted run as `done`, because an
+        // abort publishes no error frame. The durable record does distinguish
+        // it, so the abort check is applied here too — otherwise the same run
+        // answers `done` before the broker expires it and `aborted` after.
+        const status =
+          handle.isAbortRequested && handle.isComplete ? "aborted" : handle.activityState;
+        const result: Record<string, unknown> = {
           sessionId,
           runId,
-          // `activityState` alone reports an aborted run as `done`, because an
-          // abort publishes no error frame. The durable record does distinguish
-          // it, so the abort check is applied here too — otherwise the same run
-          // answers `done` before the broker expires it and `aborted` after.
-          status: handle.isAbortRequested && handle.isComplete ? "aborted" : handle.activityState,
+          status,
           frames: live.run.frames.filter((frame) => frame.seq > after),
           lastSeq: live.run.lastSeq,
-        });
+        };
+        // Computed over the whole frame list, never the `after` slice: a client
+        // polling with a cursor would otherwise be told the run produced
+        // nothing simply because it had already consumed the frames. Omitted
+        // entirely while the run is `running`, where the answer is not yet
+        // knowable and `false` would read as a verdict.
+        if (status !== "running") {
+          result.producedOutput = producedOutput(live.run.frames);
+        }
+        return json(result);
       }
 
       // Past the broker's ~30s completed-run retention the durable record is
@@ -224,6 +256,7 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         frames: durable.frames.filter((frame) => frame.seq > after),
         lastSeq: durable.lastSeq,
         completedAt: durable.completedAt,
+        producedOutput: producedOutput(durable.frames),
       });
     },
   );

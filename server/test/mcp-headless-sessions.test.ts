@@ -129,6 +129,24 @@ describe("deleteSession", () => {
     expect(fs.existsSync(neighbour)).toBe(true);
   });
 
+  it("refuses a session id that would escape the sessions directory", () => {
+    // The id reaches `path.join` before `findSessionFile` validates it, so a
+    // traversing id would address — and unlink — a transcript in another
+    // project.
+    const projectId = "delete-session-traversal";
+    createProject({ projectId, name: "Delete session traversal" });
+    const paths = resolvePaths(projectId);
+
+    const victim = path.join(paths.sessionsDir, "..", "outside.jsonl");
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    fs.writeFileSync(victim, `${JSON.stringify({ type: "session", id: "outside" })}\n`);
+
+    for (const id of ["../outside", "..\\outside", "/etc/passwd", ".hidden"]) {
+      expect(() => deleteSession(projectId, paths, id)).toThrow(/Invalid session id/);
+    }
+    expect(fs.existsSync(victim)).toBe(true);
+  });
+
   it("returns not_found when the transcript is missing", () => {
     const projectId = "delete-session-missing";
     createProject({ projectId, name: "Delete session missing" });

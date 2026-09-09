@@ -51,7 +51,7 @@ import {
   seedBuiltinAgentModalTools,
   seedModalPackage,
 } from "./modal-bridge.ts";
-import { findSessionFile } from "./session-export.ts";
+import { findSessionFile, isSafeSessionId } from "./session-export.ts";
 import { notebookAnnotationsPath } from "./notebook-annotations.ts";
 import { notebookPath } from "./notebook-store.ts";
 import { provenanceSessionDir } from "../provenance/store.ts";
@@ -269,6 +269,13 @@ export function deleteSession(
   paths: ProjectPaths,
   sessionId: string,
 ): DeleteSessionResult {
+  // Validated before any path is built from it. `findSessionFile` does this
+  // itself, but the exact-filename shortcut below reaches `path.join` first, so
+  // an id carrying a separator would address a file outside `sessionsDir`
+  // before that check ever ran. Thrown rather than returned as `not_found`:
+  // this id could never name a session, and the route answers 400 for it.
+  if (!isSafeSessionId(sessionId)) throw new Error(`Invalid session id: ${sessionId}`);
+
   // The exact filename first. `findSessionFile` matches on a suffix and returns
   // whichever candidate `readdir` yields first, so with both `23.jsonl` and
   // `subagent-123.jsonl` present it can hand back the collision — and then

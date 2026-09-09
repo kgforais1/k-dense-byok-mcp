@@ -59,8 +59,21 @@ export interface MessageRow {
 }
 
 /** Locate the JSONL file for a session id under the project's sessions dir. */
+/**
+ * Whether a session id is safe to interpolate into a filename.
+ *
+ * The shape is deliberately narrower than "no separators": a leading dot is
+ * rejected too, so neither `..` nor a hidden file can be addressed. Exported
+ * because every caller that builds a path from a client-supplied id has to
+ * apply it *before* touching the filesystem — `deleteSession` reaches a path
+ * without going through `findSessionFile` and would otherwise be the hole.
+ */
+export function isSafeSessionId(sessionId: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId) && !sessionId.includes("..");
+}
+
 export function findSessionFile(paths: ProjectPaths, sessionId: string): string | null {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId)) {
+  if (!isSafeSessionId(sessionId)) {
     throw new Error(`Invalid session id: ${sessionId}`);
   }
   if (!fs.existsSync(paths.sessionsDir)) return null;

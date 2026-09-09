@@ -26,6 +26,8 @@ The endpoint is then:
 http://127.0.0.1:8000/mcp-server
 ```
 
+On a machine using `::1`, bracket the address: `http://[::1]:8000/mcp-server`.
+
 It speaks **Streamable HTTP**. Change the port with `KADY_PORT` if you run Kady
 somewhere other than 8000.
 
@@ -115,7 +117,9 @@ until it stops saying `running`.
 Pass the `lastSeq` you got back as `after` on the next call to receive only new
 frames.
 
-Every status except `unknown` also carries **`producedOutput`**. A `done` run
+Every terminal status carries **`producedOutput`**. A `running` run does not:
+the answer is not yet knowable, so test for the key rather than for a falsy
+value. A `done` run
 with `producedOutput: false` finished without saying anything and without
 producing a file — treat it as a failed attempt and retry, rather than
 reporting an empty answer as a result. `status` stays authoritative: on
@@ -171,6 +175,9 @@ connecting one.
 
 - No authentication, which is why it is loopback-only.
 - No way to abort a run through MCP yet; use the browser.
+- No way to *delete* a session through MCP either. Sessions are listed and
+  deleted from the browser's chat-history menu, so an MCP-only setup can create
+  sessions it cannot clean up.
 - Five tools, not Kady's whole feature surface. Sub-agents, notebooks, and Modal
   compute are all available *to the agent* during a run, but there is no MCP
   tool that drives them directly.

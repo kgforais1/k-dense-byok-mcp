@@ -202,7 +202,7 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         "`error` means anything else failed, including a provider refusal — that frame has no `kind`, and its `message` already carries the guidance for what to do about it. Read the terminal frame's `message` in both cases.",
         "Pass the returned `lastSeq` back as `after` on the next call to receive only new frames.",
         "This keeps working after the in-memory broker drops the run: completed runs are also persisted durably.",
-        "Every status except `unknown` also carries `producedOutput`: whether the run emitted any assistant prose or any successful tool result.",
+        "Every terminal status carries `producedOutput`: whether the run emitted any assistant prose or any successful tool result. A `running` run does not carry it, because the answer is not yet knowable.",
         "`done` with `producedOutput: false` is a run that finished with nothing — retry it, do not report it as an answer.",
         "`status` stays authoritative: on `error`, `blocked` or `aborted`, `producedOutput: true` only means partial output arrived before the run stopped.",
       ].join(" "),

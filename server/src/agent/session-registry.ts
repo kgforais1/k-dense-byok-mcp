@@ -55,6 +55,8 @@ import { findSessionFile } from "./session-export.ts";
 import { notebookAnnotationsPath } from "./notebook-annotations.ts";
 import { notebookPath } from "./notebook-store.ts";
 import { provenanceSessionDir } from "../provenance/store.ts";
+import { forgetSessionRunResults } from "./run-results.ts";
+import { setSessionRunId } from "./run-ids.ts";
 import { runBroker } from "./run-broker.ts";
 import {
   makePdfAnnotationTools,
@@ -267,6 +269,11 @@ export function deleteSession(
       /* nothing actionable; the transcript is already gone */
     }
   }
+
+  // Durable run records are keyed by runId, so without this `poll_run` would
+  // keep serving a deleted session's frames while `get_session_history` 404s.
+  forgetSessionRunResults(projectId, sessionId);
+  setSessionRunId(projectId, sessionId, null);
 
   // The cost ledger is deliberately kept. That money was actually spent, and
   // erasing a chat must not silently refund the project's budget tracking.

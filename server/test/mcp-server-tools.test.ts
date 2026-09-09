@@ -519,6 +519,8 @@ describe("poll_run", () => {
     const description = tool?.description ?? "";
     expect(description).toMatch(/producedOutput/);
     expect(description).toMatch(/`status` stays authoritative/);
+    // The doc and the description must agree that `running` has no verdict.
+    expect(description).toMatch(/A `running` run does not carry it/);
   });
 });
 

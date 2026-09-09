@@ -1,8 +1,8 @@
 ---
 title: "MCP server Phase 3 — harden and package"
-status: proposed
+status: accepted
 created: 2026-09-06
-branch: mcp-work
+branch: mcp-phase-3
 ---
 
 # MCP Server Phase 3 — Harden, Document, Package (Partial)
@@ -43,6 +43,12 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
+
+The three unticked items above are deliberately still open. This branch covers
+the documentation item and the carried-in review work; packaging, the remaining
+§10 tools, and the CLI reuse map are a second pass, and the fresh-client
+walkthrough transcript that backs the "installable by a third party" acceptance
+measure has not been produced yet. Do not archive this plan until they are.
 
 Archive note: archiving this file breaks the master plan's link to it — rewrite to `completed/…` in the same PR.
 
@@ -102,6 +108,12 @@ Archive note: archiving this file breaks the master plan's link to it — rewrit
   filesystem-touching sandbox routes only. Bringing session routes inside it is
   a change to that scope's meaning, not a one-line fix, and this is a loopback
   single-user app. Recorded so the next person does not rediscover it.
+
+- **`producedOutput` counts any successful `tool_end`, including a pure read.**
+  A run that read one file and then finished silently reports `true`, which is
+  the case the flag exists to catch. Narrowing it means enumerating which tools
+  "produce" something, and getting that list wrong reports a real answer as
+  nothing — a worse failure than the one it fixes. Left as is, deliberately.
 
 - **`deleteSession` is check-then-act, not an atomic claim.** The busy guard
   reads `live`/`pinned`/the broker, then unlinks; `prepareRun` takes its claim

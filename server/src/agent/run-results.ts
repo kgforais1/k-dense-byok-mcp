@@ -55,6 +55,33 @@ function resultPath(projectId: string, runId: string): string {
   return path.join(resolvePaths(projectId).runsDir, "results", `${runId}.json`);
 }
 
+/**
+ * Drop every durable result belonging to a session.
+ *
+ * Results are keyed by `runId`, so deleting a session leaves them readable:
+ * `get_session_history` would 404 while `poll_run` happily kept serving the
+ * deleted session's frames. Best effort, like `pruneResults` — a failure here
+ * must not leave the transcript half-deleted.
+ */
+export function forgetSessionRunResults(projectId: string, sessionId: string): void {
+  const resultsDir = path.join(resolvePaths(projectId).runsDir, "results");
+  let names: string[];
+  try {
+    names = fs.readdirSync(resultsDir).filter((name) => name.endsWith(".json"));
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const file = path.join(resultsDir, name);
+    try {
+      const record = JSON.parse(fs.readFileSync(file, "utf-8")) as { sessionId?: string };
+      if (record.sessionId === sessionId) fs.rmSync(file, { force: true });
+    } catch {
+      // Unreadable or not ours; leave it for the retention sweep.
+    }
+  }
+}
+
 /** Atomically persist the replayable terminal frames for a completed run. */
 export function persistRunResult(
   projectId: string,

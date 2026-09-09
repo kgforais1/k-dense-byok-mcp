@@ -13,7 +13,8 @@ import {
   HEADLESS_PROMPT_NOTE,
   sessionToolNames,
 } from "../src/agent/session-registry.ts";
-import { runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
+import { RunBroker, runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
+import { persistRunResult, readRunResult } from "../src/agent/run-results.ts";
 import { buildApp } from "../src/index.ts";
 
 function metadata(runId = "run-1"): RunMetadata {
@@ -86,6 +87,27 @@ describe("deleteSession", () => {
     expect(fs.existsSync(notebook)).toBe(false);
     expect(fs.existsSync(annotations)).toBe(false);
     expect(fs.existsSync(provenance)).toBe(false);
+  });
+
+  it("stops poll_run serving a deleted session's runs", () => {
+    // Durable records are keyed by runId, so without a sweep `poll_run` keeps
+    // answering for a session `get_session_history` now 404s on.
+    const projectId = "delete-session-runs";
+    createProject({ projectId, name: "Delete session runs" });
+    const paths = resolvePaths(projectId);
+    const sessionId = "session-with-runs";
+
+    fs.mkdirSync(paths.sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`), "{}");
+    const expired = new RunBroker({ completedRetentionMs: 1 });
+    const handle = expired.start(projectId, sessionId, metadata("run-kept"));
+    handle.publish({ type: "done" });
+    handle.complete();
+    persistRunResult(projectId, handle);
+    expect(readRunResult(projectId, "run-kept")).not.toBeNull();
+
+    expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
+    expect(readRunResult(projectId, "run-kept")).toBeNull();
   });
 
   it("returns not_found when the transcript is missing", () => {

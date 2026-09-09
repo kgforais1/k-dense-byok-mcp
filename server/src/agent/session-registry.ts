@@ -282,7 +282,11 @@ export function deleteSession(
   // `ownsSessionFile` rejects it and a session that plainly exists reports
   // `not_found`. Readdir order is filesystem-dependent, so this is not
   // theoretical.
-  const exact = path.join(paths.sessionsDir, `${sessionId}.jsonl`);
+  // `path.basename` as well as the guard above, and not instead of it: it makes
+  // the join provably inside `sessionsDir` at the point of use, rather than at
+  // the mercy of a check several lines away that a later edit could move. At
+  // runtime it is a no-op for every id the guard admits.
+  const exact = path.join(paths.sessionsDir, path.basename(`${sessionId}.jsonl`));
   const file = fs.existsSync(exact) ? exact : findSessionFile(paths, sessionId);
   if (!file || !ownsSessionFile(file, sessionId)) return "not_found";
 

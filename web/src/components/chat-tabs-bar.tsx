@@ -196,7 +196,15 @@ function HistoryMenu({
         </DropdownMenuTrigger>
       </InfoTooltip>
       <DropdownMenuContent align="start" className="w-72 max-h-80 overflow-y-auto">
-        <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+        <DropdownMenuLabel className="flex items-baseline justify-between gap-2">
+          <span>Previous chats</span>
+          {/* The keyboard route to delete has no affordance of its own: the
+              trash icon only appears on hover and cannot be focused, so
+              without this line a keyboard user has no way to discover it. */}
+          <span className="text-[10px] font-normal text-muted-foreground">
+            Del to remove
+          </span>
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {sessions === null ? (
           <div className="px-2 py-3 text-xs text-muted-foreground">Loading…</div>
@@ -218,6 +226,21 @@ function HistoryMenu({
                     return;
                   }
                   onOpenSession(s.id, title);
+                }}
+                // Announced, because the trash button is `tabIndex={-1}` and a
+                // screen reader never reaches its label. Without this the row
+                // reads as "Browser chat" with no hint that it can be deleted.
+                aria-keyshortcuts="Delete"
+                onKeyDown={(event) => {
+                  // Delete lives on the *item*, because that is the only thing
+                  // a keyboard can reach. Radix gives the menu roving focus and
+                  // swallows Tab, so the trash button below is pointer-only no
+                  // matter what handlers it carries; arrow keys move between
+                  // items and never into one.
+                  if (event.key !== "Delete" && event.key !== "Backspace") return;
+                  event.preventDefault();
+                  if (openSessionIds.has(s.id)) return;
+                  void deleteSession(s, title);
                 }}
               >
                 <MessageSquareTextIcon className="size-4 shrink-0" />
@@ -254,6 +277,11 @@ function HistoryMenu({
                       : undefined
                   }
                   aria-label={`Delete ${title}`}
+                  // Out of the tab order on purpose. Radix already prevents Tab
+                  // from reaching it, so a focusable control here would only be
+                  // a focus target screen-reader users can never land on; the
+                  // item's Delete key is the keyboard route.
+                  tabIndex={-1}
                   className={cn(
                     "shrink-0 rounded p-1 text-muted-foreground opacity-0 transition",
                     "hover:bg-destructive/10 hover:text-destructive",
@@ -262,19 +290,6 @@ function HistoryMenu({
                     "disabled:hover:text-muted-foreground",
                     s.headless ? "" : "ml-auto",
                   )}
-                  onKeyDown={(event) => {
-                    // Radix handles Enter/Space on the menu *item*, so without
-                    // this the keyboard path reopens the chat instead of
-                    // deleting it. Stop the key before the item ever sees it.
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    // No `deletingRef` here: the item never sees this key, so
-                    // there is no `onSelect` to swallow. Setting it would be
-                    // harmless now that `deleteSession` clears the marker on
-                    // every exit, but it would still be marking nothing.
-                    void deleteSession(s, title);
-                  }}
                   onClick={(event) => {
                     // Set here rather than on pointerdown so the same handler
                     // covers mouse and touch; it still runs before the item's

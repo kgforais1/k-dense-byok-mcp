@@ -124,33 +124,44 @@ describe("history menu", () => {
   });
 
   it("deletes from the keyboard without also reopening the chat", async () => {
-    // A keyboard Enter fires no pointer event, so anything that keys off
-    // pointerdown drops the user into the chat it just deleted.
+    // Driven the way a keyboard actually reaches this row: Radix gives the menu
+    // roving focus and swallows Tab, so arrowing to the item is the only route.
+    // Focusing the trash button directly would test a path no user can take.
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderBar();
     const user = await openHistory();
 
     apiFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ deleted: true }) });
-    screen.getByLabelText("Delete Browser chat").focus();
-    await user.keyboard("{Enter}");
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByText("Browser chat").closest('[role="menuitem"]')).toHaveFocus();
+    await user.keyboard("{Delete}");
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(2));
     expect(onOpenSession).not.toHaveBeenCalled();
   });
 
   it("still reopens a chat after the user cancels a keyboard delete", async () => {
-    // The keyboard handler stops the key before the menu item sees it, so
-    // nothing downstream clears a "this was a delete" marker. Leaving one set
-    // swallows the next click on the row and the menu looks broken.
     vi.spyOn(window, "confirm").mockReturnValue(false);
     renderBar();
     const user = await openHistory();
 
-    screen.getByLabelText("Delete Browser chat").focus();
-    await user.keyboard("{Enter}");
+    await user.keyboard("{ArrowDown}{Delete}");
     await user.click(screen.getByText("Browser chat"));
 
     expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
+  });
+
+  it("will not delete a chat open in a tab from the keyboard either", async () => {
+    // The trash button is disabled for these rows, but the item's own Delete
+    // key does not go through that button and needs the same guard.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBar("from-browser");
+    const user = await openHistory();
+
+    await user.keyboard("{ArrowDown}{Delete}");
+
+    expect(apiFetch).toHaveBeenCalledTimes(1); // the list fetch only
+    expect(screen.getByText("Browser chat")).toBeInTheDocument();
   });
 
   it("still reopens a chat after the user cancels a mouse delete", async () => {
@@ -176,9 +187,9 @@ describe("history menu", () => {
   });
 
   it("still reopens a chat after a keyboard delete that the server refuses", async () => {
-    // The failure path is the one that strands the "this was a delete" marker:
-    // the row survives, and nothing downstream clears it, so the next click on
-    // that row is swallowed and the menu looks dead.
+    // The keyboard path sets no marker, so this cannot strand one the way the
+    // pointer path above can. It is here for the other half: a refused delete
+    // must leave the row usable rather than half-dismissed.
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderBar();
     const user = await openHistory();
@@ -188,8 +199,27 @@ describe("history menu", () => {
       status: 409,
       json: async () => ({ reason: "run_already_active" }),
     });
-    screen.getByLabelText("Delete Browser chat").focus();
-    await user.keyboard("{Enter}");
+    await user.keyboard("{ArrowDown}{Delete}");
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+
+    await user.click(screen.getByText("Browser chat"));
+    expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
+  });
+
+  it("still reopens a chat after a mouse delete that the server refuses", async () => {
+    // The pointer path is the only one that sets the "this was a delete"
+    // marker. A refused delete leaves the row in place, so if nothing clears
+    // the marker the next click on that row is swallowed silently.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBar();
+    const user = await openHistory();
+
+    apiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ reason: "run_already_active" }),
+    });
+    await user.click(screen.getByLabelText("Delete Browser chat"));
     await waitFor(() => expect(toastError).toHaveBeenCalled());
 
     await user.click(screen.getByText("Browser chat"));

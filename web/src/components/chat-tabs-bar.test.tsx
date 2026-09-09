@@ -170,8 +170,13 @@ describe("history menu", () => {
     const user = await openHistory();
 
     await user.click(screen.getByLabelText("Delete Browser chat"));
-    await user.click(screen.getByText("Browser chat"));
+    // Asserted before the second click, because the first click must not open
+    // the chat by itself. The trash button stops propagation, so the item's
+    // `onSelect` never sees it — but clearing the marker on cancel would
+    // reopen the chat here if it ever did.
+    expect(onOpenSession).not.toHaveBeenCalled();
 
+    await user.click(screen.getByText("Browser chat"));
     expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
   });
 
@@ -224,6 +229,34 @@ describe("history menu", () => {
 
     await user.click(screen.getByText("Browser chat"));
     expect(onOpenSession).toHaveBeenCalledWith("from-browser", "Browser chat");
+  });
+
+  it("ignores a second Delete while the first request is still in flight", async () => {
+    // The menu stays open and the row stays focused during the request, so a
+    // second keypress is easy. Without a guard it raises a second dialog and
+    // fires a second DELETE, which loses the race and reports "No such
+    // session" for a delete that actually worked.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBar();
+    const user = await openHistory();
+
+    let settle: (value: unknown) => void = () => {};
+    apiFetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await user.keyboard("{ArrowDown}{Delete}");
+    await user.keyboard("{Delete}");
+    await user.keyboard("{Delete}");
+
+    // One list fetch plus exactly one DELETE, however many times it was asked.
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+
+    settle({ ok: true, status: 200, json: async () => ({ deleted: true }) });
+    await waitFor(() => expect(screen.queryByText("Browser chat")).not.toBeInTheDocument());
   });
 
   it("keeps the chat and explains why when a run is still in flight", async () => {

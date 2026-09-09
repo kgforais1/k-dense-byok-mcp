@@ -107,8 +107,25 @@ function HistoryMenu({
   // item's onSelect for a click anywhere inside it, so the button records its
   // intent here and onSelect defers to it.
   const deletingRef = useRef<string | null>(null);
+  const inFlightDeletes = useRef<Set<string>>(new Set());
 
   async function deleteSession(session: SessionListItem, title: string) {
+    // One delete per chat at a time. The menu stays open and the row stays
+    // focused while the request is in flight, so a second Delete keypress —
+    // or an impatient second click — would otherwise raise a second dialog
+    // and fire a second DELETE. The second one loses the race and answers
+    // 404, which surfaces as "No such session" for a delete that in fact
+    // succeeded.
+    if (inFlightDeletes.current.has(session.id)) return;
+    inFlightDeletes.current.add(session.id);
+    try {
+      await runDelete(session, title);
+    } finally {
+      inFlightDeletes.current.delete(session.id);
+    }
+  }
+
+  async function runDelete(session: SessionListItem, title: string) {
     const confirmed = window.confirm(
       `Delete "${title}"? Its transcript will be permanently removed. This cannot be undone.`,
     );
@@ -146,7 +163,10 @@ function HistoryMenu({
       // resolves, so clearing here cannot steal the click it is meant to
       // swallow — but a refused or failed delete used to leave the marker set
       // for good, and the next click on that row silently did nothing.
-      deletingRef.current = null;
+      // Only if it still points here: two rows deleted in quick succession
+      // would otherwise let the first one's `finally` clear the second's
+      // marker out from under it.
+      if (deletingRef.current === session.id) deletingRef.current = null;
     }
   }
 

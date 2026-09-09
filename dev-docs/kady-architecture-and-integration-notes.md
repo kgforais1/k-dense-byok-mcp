@@ -83,6 +83,14 @@ Within a project, separate chat tabs are separate sessions. Those
 sessions share the project's files but maintain separate conversation
 histories.
 
+*Note: a run is one prompt execution inside a chat tab's session. It gets its
+own `runId`, but it is keyed on the session — `activeRuns` uses
+`${projectId}:${sessionId}`, so a session holds at most one run at a time
+(`server/src/api/sessions.ts:214`). A run does not get a fresh folder tree. The
+agent's cwd is the shared `projects/<projectId>/sandbox/`
+(`server/src/agent/session-registry.ts:224`), so files persist and can be
+refined across runs and across tabs in the same project.*
+
 This gives a useful hierarchy:
 
 ```
@@ -411,6 +419,8 @@ OpenCode / Claude Code / Codex / another agent
 Because K-Dense already has project, session, run, file, and agent APIs,
 such an MCP server should be substantially easier to build than starting
 from scratch.
+
+*Note: Work to add K-Dense as an MCP server has officially started.*
 
 ---
 

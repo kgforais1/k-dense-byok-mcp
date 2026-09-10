@@ -22,7 +22,12 @@ import { contextUsageForClient } from "../agent/events.ts";
 import { runBroker } from "../agent/run-broker.ts";
 import { readRunResult } from "../agent/run-results.ts";
 import { findSessionFile } from "../agent/session-export.ts";
-import { createSession, getSession } from "../agent/session-registry.ts";
+import {
+  createSession,
+  deleteSession,
+  getSession,
+  listSessionsLabelled,
+} from "../agent/session-registry.ts";
 import { toHistory } from "../agent/session-history.ts";
 import { beginRun, type RunStartRejection } from "../api/sessions.ts";
 
@@ -275,6 +280,84 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         completedAt: durable.completedAt,
         producedOutput: producedOutput(durable.frames),
       });
+    },
+  );
+  server.registerTool(
+    "list_research_sessions",
+    {
+      title: "List Kady research sessions",
+      description: [
+        "List this project's stored research sessions, newest activity first.",
+        "Use it to find a session id from an earlier thread, or to see what this client has accumulated.",
+        "`headless: true` marks a session created over MCP, which has the interactive `interview` tool disabled.",
+        "`firstMessage` is the opening user message, for recognising a thread without replaying its transcript.",
+      ].join(" "),
+      // No `inputSchema`, for the reason given on create_research_session: an
+      // empty shape would reject a call that sends no arguments.
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async () => {
+      const sessions = (
+        await listSessionsLabelled(currentProjectId(), activePaths())
+      ).map((info) => ({
+        // `sessionId`, not `id`. Every other tool takes the field under that
+        // name, and a client that has to remember the list calls it something
+        // else gets it wrong once and then works around it forever. The REST
+        // route keeps `id`, because the web client already reads that.
+        sessionId: info.id,
+        name: info.name ?? null,
+        created: info.created,
+        modified: info.modified,
+        messageCount: info.messageCount,
+        firstMessage: info.firstMessage,
+        headless: info.headless,
+      }));
+      return json({ sessions });
+    },
+  );
+
+  server.registerTool(
+    "delete_research_session",
+    {
+      title: "Delete a Kady research session",
+      description: [
+        "Permanently delete a session: its transcript, its notebook, its provenance and its stored run results.",
+        "This cannot be undone, and the browser UI lists the same sessions — deleting one here removes it there too.",
+        "A session with a run in flight is refused with `run_already_active`; poll it to completion or wait, then delete.",
+        "The project's cost ledger is deliberately kept, because the money was spent.",
+      ].join(" "),
+      inputSchema: {
+        sessionId: z.string().describe("Session id, as returned by list_research_sessions."),
+      },
+      // The first inbound tool that destroys anything. A client that surfaces
+      // annotations can prompt before calling it.
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async ({ sessionId }) => {
+      // The REST route's vocabulary, not a second one: `deleteSession` is the
+      // shared path and this translates its result the same way
+      // `DELETE /sessions/:id` does. An invalid id throws there and answers
+      // 400; here it is caught and returned as a tool error, because MCP has
+      // no status code to carry it.
+      let result;
+      try {
+        result = deleteSession(currentProjectId(), activePaths(), sessionId);
+      } catch (err) {
+        return failure((err as Error).message, { sessionId });
+      }
+      switch (result) {
+        case "not_found":
+          return failure("No such session", { sessionId });
+        case "run_active":
+          return failure("That session has a run in flight; wait for it to finish", {
+            sessionId,
+            reason: "run_already_active",
+          });
+        case "not_deleted":
+          return failure("The session transcript could not be removed", { sessionId });
+        case "deleted":
+          return json({ sessionId, deleted: true });
+      }
     },
   );
 

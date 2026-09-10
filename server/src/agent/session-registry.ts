@@ -492,6 +492,26 @@ export async function listSessions(paths: ProjectPaths): Promise<SessionInfo[]> 
   return SessionManager.list(paths.sandbox, paths.sessionsDir);
 }
 
+/**
+ * `listSessions`, plus which of those sessions were created headless.
+ *
+ * Both interfaces that show a user their sessions need the flag, and both
+ * would otherwise add it themselves — the flag's definition would then live in
+ * two places and drift the first time it grows a second condition. It is not
+ * folded into `listSessions` because that has three other callers
+ * (`project-activity`, `project-archive`, `api/projects`) that want the
+ * transcript facts and have no project id to hand.
+ */
+export async function listSessionsLabelled(
+  projectId: string,
+  paths: ProjectPaths,
+): Promise<(SessionInfo & { headless: boolean })[]> {
+  return (await listSessions(paths)).map((info) => ({
+    ...info,
+    headless: isHeadlessSession(projectId, info.id),
+  }));
+}
+
 export function disposeSession(projectId: string, sessionId: string): void {
   const k = keyFor(projectId, sessionId);
   const s = live.get(k);

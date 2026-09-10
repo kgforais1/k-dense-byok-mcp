@@ -31,6 +31,12 @@ On a machine using `::1`, bracket the address: `http://[::1]:8000/mcp-server`.
 It speaks **Streamable HTTP**. Change the port with `KADY_PORT` if you run Kady
 somewhere other than 8000.
 
+There is no `npx` package to install and nothing separate to run. The server is
+part of the Kady you are already running, and it reads that instance's projects
+— so starting Kady is the whole installation. A client that can only speak
+stdio cannot use it, because Streamable HTTP is the only transport Kady
+serves.
+
 ### It only listens on loopback, on purpose
 
 There is no authentication on this endpoint yet. Anything that can reach it can

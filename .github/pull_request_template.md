@@ -89,7 +89,7 @@ See CONTRIBUTING.md and docs/development/workflow.md for the full lifecycle.
 - [ ] Plan moved to `dev-docs/plans/completed/` with Status `Completed and merged in PR #<this PR>` in this PR (or N/A — no plan)
 - [ ] `CHANGELOG.md` `## [Unreleased]` updated for shipped behavior in this PR (or N/A)
 - [ ] `dev-docs/maintenance-log.md` appended for security/dependency/CI/operational work in this PR (or N/A)
-- [ ] Matching `dev-docs/todo.md` entry **deleted** (not checked off) in this PR (or N/A)
+- [ ] Matching `dev-docs/todo.md` entry **deleted** (not checked off) in this PR — or, if the entry spans several PRs and this is not the last, its body refreshed to record what this PR settled and to state what is still open (or N/A)
 - [ ] `npm run verify -- docs` is green on this branch
 
 <!--

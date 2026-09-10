@@ -3,10 +3,11 @@
 ## Next Up
 
 - [ ] **Address code scanning / security alerts and Dependabot PRs** → [2. Code scanning, security alerts, and Dependabot](#2-code-scanning-security-alerts-and-dependabot)
-- [ ] **Start MCP server work** → [3. Start MCP server work](#3-start-mcp-server-work)
+- [ ] **Finish MCP server work** → [3. Finish MCP server work](#3-finish-mcp-server-work)
 - [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
 - [ ] **Fix the local-model context window** → [5. Local-model context window is hardcoded to 32K](#5-local-model-context-window-is-hardcoded-to-32k)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
+- [ ] **Make this repo read as a fork** → [6. Fork etiquette](#6-fork-etiquette)
 
 ---
 
@@ -47,16 +48,33 @@ Ideas:
 - Rate limiting (PR #7) is scoped to sandbox routes only, so UI polling can no longer be throttled; the frontend 429-handling idea for `apiFetch` is moot unless per-route limits are ever tightened
 - Consider exempting `/health` from rate limits if external monitoring ever polls it (currently unthrottled anyway, since the limiter is sandbox-scoped)
 
-## 3. Start MCP server work
+## 3. Finish MCP server work
 
-Expose K-Dense/Kady itself as an MCP server so an external coding agent can delegate research to it. Today Kady is only an MCP *client* (consumes external tools); the inverse — another agent driving Kady over MCP — is not a documented feature. Background, candidate tool surface (`kdense_research`, `kdense_delegate_specialist`, …), and the CLI-vs-MCP rationale are in [kady-architecture-and-integration-notes.md](kady-architecture-and-integration-notes.md) §§ 9–11 and §13 (recommendations 7–8).
+Kady exposes itself as an MCP server so an external coding agent can delegate
+research to it. Phases 1 and 2 shipped, and Phase 3 is partly done. Background
+and the CLI-vs-MCP rationale are in
+[kady-architecture-and-integration-notes.md](kady-architecture-and-integration-notes.md)
+§§ 9–11 and §13 (recommendations 7–8).
 
-Ideas:
+Decided and built, so no longer open questions:
 
-- Master plan (Proposed): [2026-09-06 MCP server](plans/2026-09-06-mcp-server.md) with phase plans — MCP first, CLI deferred, per the notes' recommendations 7–8.
-- Decide transport and scope: stdio vs HTTP, project scoping (`X-Project-Id`), auth for a local server.
-- Adapt the existing project/session/run/file/sandbox HTTP APIs as the tool backend rather than building from scratch.
-- Start with a minimal tool subset (e.g. list projects, research prompt, get result) before the full §10 surface.
+- Transport is Streamable HTTP on the existing backend listener, not stdio.
+  Scoping is the `X-Project-Id` header the REST API already uses, and the
+  endpoint refuses to start on a non-loopback host because it has no auth.
+- The tools call the same functions the REST routes call. The adapter
+  translates and never reimplements.
+- Seven tools, documented in [Kady as an MCP server](../docs/kady-as-mcp-server.md):
+  the five-tool research loop plus `list_research_sessions` and
+  `delete_research_session`. The rest of the §10 surface is expand-as-needed.
+
+Still open, tracked in the
+[Phase 3 plan](plans/2026-09-06-mcp-server-phase-3-harden.md):
+
+- Validate the setup doc with a fresh-client walkthrough. The doc is written
+  from the code rather than from a run, and no transcript backs the
+  "installable by a third party" claim.
+- Record the CLI entry point — which adapter modules a future CLI reuses — so
+  the deferred CLI does not redesign the tool core.
 
 ## 4. Alternate coding-agent engines
 
@@ -104,3 +122,30 @@ It does not need to be this low, and the value is discoverable rather than merel
 - Whichever lands, raise the fallback: 32K is below Kady's own prompt floor.
 
 Note the two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:238`), so a fix touches both.
+
+## 6. Fork etiquette
+
+This repo is a fork of K-Dense-AI/k-dense-byok, and nothing in it says so.
+A reader arriving from a search result cannot tell whose work they are looking
+at, which is the part that matters — attribution, not paperwork.
+
+Two badges were wrong outright and are already gone: a Tests badge pointing at
+`K-Dense-AI/k-dense-byok/actions/workflows/tests.yml`, which rendered upstream's
+CI result on this fork's front page, and a Version badge reading 0.7.3 against
+a `server/package.json` on 0.9.12. Repointing the Tests badge at this repo is
+still an option once the rest is decided.
+
+The eight that remain are a judgement call rather than a defect: one License
+shield, three count shields, and four links to K-Dense's own X, LinkedIn,
+YouTube and Reddit accounts. The social four present upstream's channels as
+this repo's.
+
+To check, before calling this done:
+
+- Whether `README.md` and `docs/` state the fork relationship at all, and where
+  a short attribution line belongs.
+- Whether the version, skills, workflows and database counts in the badges are
+  this fork's numbers or inherited ones that have since drifted.
+- Whether `LICENSE`, `CONTRIBUTING.md` and `SECURITY.md` still route a reporter
+  or contributor to upstream when they should reach this fork, or the reverse.
+- Whether any workflow, issue template or link still names the upstream repo.

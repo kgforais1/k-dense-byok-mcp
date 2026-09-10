@@ -54,7 +54,7 @@ Detail lives in the phase plans, not here — this master stays at the high leve
 
 Archive note: phases ship one at a time, and archiving any file in this set breaks the same-directory cross-links above. The archiving PR must rewrite them to `completed/…` and update the `mcp-server-plan` manifest entry in the same PR — `docs:check` validates `dev-docs/**` links.
 
-**Exit criteria (master):** an external MCP client completes a Kady research task end-to-end through MCP tools only; docs let a new client connect; CLI remains explicitly deferred (recorded in [todo “Start MCP server work”](../todo.md#3-start-mcp-server-work)), with its adapter entry point recorded per Phase 3.
+**Exit criteria (master):** an external MCP client completes a Kady research task end-to-end through MCP tools only; docs let a new client connect; CLI remains explicitly deferred (recorded in [todo “Finish MCP server work”](../todo.md#3-finish-mcp-server-work)), with its adapter entry point recorded per Phase 3.
 
 ## Guardrails
 

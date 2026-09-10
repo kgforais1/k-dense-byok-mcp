@@ -39,17 +39,46 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 
 - [x] Write `docs/kady-as-mcp-server.md` and register it per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
 - [ ] Validate that doc with a fresh-client walkthrough. Unchecked deliberately: the transcript that backs the "installable by a third party" claim does not exist yet, and the doc is written from the code rather than from a run.
-- [ ] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts.
+- [x] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts. Decided below: the documented HTTP endpoint, with no npx package.
 - [x] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`. Both are built; the rest of §10 is still expand-as-needed.
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
 
-The three unticked items above are deliberately still open: packaging, the CLI
-reuse map, and the fresh-client walkthrough transcript that backs the
-"installable by a third party" acceptance measure. Do not archive this plan
-until they are done. The documentation item, the carried-in review work and the
-two session-management tools below have landed.
+The two unticked items above are deliberately still open: the CLI reuse map,
+and the fresh-client walkthrough transcript that backs the "installable by a
+third party" acceptance measure. Do not archive this plan until they are done.
+The documentation item, the carried-in review work, the two session-management
+tools below and the packaging decision have landed.
+
+## Packaging: the documented HTTP endpoint, and no npx package
+
+Phase 1 settled this without naming it. The transport verdict was Streamable
+HTTP on the existing listener, and that alone is why a stdio-only client cannot
+connect today — there is no stdio transport to connect to.
+
+Building one would cost more than a transport. Project scope is the
+`X-Project-Id` header, first in the existing scope precedence, and Phase 1
+recorded that "stdio clients have no HTTP headers". An npx stdio server would
+therefore also need a second way to say which project it is talking about — an
+environment variable or a tool argument — and that is a second scoping path for
+the same question, which the standing guardrail rejects for the same reason it
+rejects a second agent implementation in the adapter. The one that drifts is
+the one nobody tests.
+
+The other half is that there is nothing to distribute. The tools are an
+interface onto a Kady that is already running: they read that instance's
+projects, its sandbox and its model runtime. An npx package would either have
+to start the whole server — at which point it is Kady, not a package — or proxy
+stdio to a Kady the user is running anyway, which adds a process and no
+capability. `docs/kady-as-mcp-server.md` documents the endpoint and the client
+config instead.
+
+The refusal is worth naming rather than leaving implicit, because "publish an
+npx server" is the reflex answer for an MCP server and someone will propose it
+again. A stdio→HTTP shim stays available as a *client-side* workaround if a
+client that cannot speak HTTP ever matters; that is a compatibility follow-up,
+not a distribution story, and nothing today needs it.
 
 ## Next chunk: session management over MCP — built
 
@@ -255,6 +284,10 @@ and every test while breaking only the MCP path.
 
 ## Open questions
 
-1. Packaging: npx distribution vs "point your client at localhost:8000" docs?
-2. Which §10 tools make the cut vs defer?
+1. ~~Packaging: npx distribution vs "point your client at localhost:8000" docs?~~
+   **Answered:** the documented endpoint, no npx package. See *Packaging* above.
+2. ~~Which §10 tools make the cut vs defer?~~ **Answered for the first two:**
+   `list_research_sessions` and `delete_research_session` are in, no abort tool.
+   The rest stays expand-as-needed, which is the standing answer rather than an
+   open question.
 3. Does anything in Phase 2 force an SDK upgrade (deliberate, test-gated path)?

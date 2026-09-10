@@ -22,17 +22,19 @@ import { resolvePaths } from "../projects.ts";
 // fails closed here — `isHeadlessSession` returns false and the caller keeps
 // the interactive default.
 import { isSafeSessionId } from "./session-export.ts";
+import { containedIn } from "../paths-contained.ts";
 
 function markerPath(projectId: string, sessionId: string): string | null {
   if (!isSafeSessionId(sessionId)) return null;
   const markerRoot = path.resolve(resolvePaths(projectId).kadyDir, "headless-sessions");
-  const file = path.resolve(markerRoot, `${sessionId}.json`);
-  // Keep this normalized containment check next to the filesystem sinks, as
-  // `cost/ledger.ts` does. The grammar above already blocks traversal, but this
-  // protects the boundary even if a future caller broadens that grammar — and
-  // it is the form static analysis can actually see.
-  if (!file.startsWith(`${markerRoot}${path.sep}`)) return null;
-  return file;
+  try {
+    return containedIn(markerRoot, `${sessionId}.json`);
+  } catch {
+    // The shared rule throws; this file's callers expect `null` and no-op on
+    // it, because a missing marker means "interactive" and that is the safe
+    // default here.
+    return null;
+  }
 }
 
 /** Record that `sessionId` was created headless and must stay that way. */

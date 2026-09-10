@@ -7,6 +7,7 @@
  * the live SSE `tool_start` frame is only a provisional mirror.
  */
 import fs from "node:fs";
+import { containedIn } from "../paths-contained.ts";
 import path from "node:path";
 import { activePaths, resolvePaths } from "../projects.ts";
 
@@ -54,7 +55,7 @@ export function notebookPath(sessionId: string, projectId?: string): string {
     throw new Error(`Invalid session id: ${sessionId}`);
   }
   const paths = projectId ? resolvePaths(projectId) : activePaths();
-  return path.join(paths.notebookDir, `${sessionId}.jsonl`);
+  return containedIn(paths.notebookDir, `${sessionId}.jsonl`);
 }
 
 export function appendNotebookEntry(

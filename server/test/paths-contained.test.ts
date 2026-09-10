@@ -10,10 +10,14 @@ import { describe, expect, it } from "vitest";
 import { containedIn } from "../src/paths-contained.ts";
 
 const ROOT = path.join(path.sep, "tmp", "kady-notebooks");
+// Resolved once for the expectations. On Windows a separator-rooted path has
+// no drive letter, so `path.join(ROOT, ...)` and what `containedIn` returns
+// differ by the `D:` that `path.resolve` supplies.
+const ABS_ROOT = path.resolve(ROOT);
 
 describe("containedIn", () => {
   it("joins an ordinary name onto the root", () => {
-    expect(containedIn(ROOT, "abc.jsonl")).toBe(path.join(ROOT, "abc.jsonl"));
+    expect(containedIn(ROOT, "abc.jsonl")).toBe(path.join(ABS_ROOT, "abc.jsonl"));
   });
 
   it("refuses a name that climbs out of the root", () => {
@@ -38,7 +42,9 @@ describe("containedIn", () => {
   it("still works when the root is a filesystem root", () => {
     // `path.resolve` leaves the separator on, and appending another would
     // reject every name under it.
-    expect(containedIn(path.sep, "abc.jsonl")).toBe(path.join(path.sep, "abc.jsonl"));
+    expect(containedIn(path.sep, "abc.jsonl")).toBe(
+      path.join(path.resolve(path.sep), "abc.jsonl"),
+    );
     // The same root is where the prefix test alone stops being enough: the
     // base is its own prefix, so these pass it and have to be refused on
     // their own.

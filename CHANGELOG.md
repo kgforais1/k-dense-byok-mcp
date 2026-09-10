@@ -13,24 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Sessions created over MCP are marked in the history menu, so it is clear which ones another tool made.
   - Two MCP tools for the same thing: `list_research_sessions` (this project's stored sessions, newest first, each labelled `headless`) and `delete_research_session`. A scripted client can now clean up after itself instead of requiring the browser.
   - `poll_run` reports `producedOutput` on a terminal status, so a client can tell a finished run that emitted nothing from one that answered. A `done` run with `producedOutput: false` is a failed attempt worth retrying, not an empty result to report. The key is absent on `running` and `unknown`, where nothing is knowable — test for the key rather than for a falsy value.
-
-### Fixed
-- **Transcript lookup and path containment** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20)):
-  - A session is identified by its transcript header rather than its filename, so a stray file named after a session id can no longer shadow or hide the real one. The header is read with a bounded scan instead of loading the whole transcript.
-  - `containedIn` refuses an absolute name outright, and its error names neither the root nor the offending path — an absolute name that happened to land inside the root previously passed the containment check without the root taking part.
-
-### Added
 - **Inbound MCP server — Phase 2 tool surface** ([#18](https://github.com/kgforais1/k-dense-byok-mcp/pull/18)):
   - Completed the opt-in `/mcp-server` Streamable HTTP endpoint with the full decided tool subset: `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, and `poll_run`.
   - `start_research_run` returns a run id immediately and mirrors the REST run body, including inline `images: [{data, mimeType}]` attachments; `poll_run` reads the live run broker first and the durable terminal record afterwards, so a completed run stays retrievable past the broker's ~30s retention.
   - MCP-created sessions are headless: the blocking `interview` tool is disabled and replaced with system-prompt guidance that tells the model to choose and state an interpretation instead of stalling or silently guessing.
   - New durable per-session headless marker so a session evicted from the live registry and cold-opened from disk does not silently regain `interview`.
   - Added `zod` as an exactly-pinned direct dependency of `server/` (`4.4.3`, matching the MCP SDK's own resolution) for tool input schemas.
-
-### Changed
-- **Single run-start path** ([#18](https://github.com/kgforais1/k-dense-byok-mcp/pull/18)): `prepareRun` no longer writes status codes onto a `FastifyReply`; it returns a typed rejection, and the new `beginRun` is shared by `POST /sessions/:id/run` and the MCP adapter. The SSE route attaches its stream as an observer of the already-detached run rather than owning it.
-
-### Added
 - **Repository Agent Harness** ([#11](https://github.com/kgforais1/k-dense-byok-mcp/pull/11)):
   - Layered agent guidance: root `AGENTS.md` index + source-of-truth precedence, scoped `AGENTS.md` for `server/`/`web/`/`.github/`, and `CLAUDE.md`/`GEMINI.md` compatibility pointers.
   - Contributor policies: `CONTRIBUTING.md`, `SECURITY.md` (GitHub-advisory route), and a five-section PR template with closing checklist.
@@ -55,10 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added fork policies and architecture guidelines in `AGENTS.md` and `dev-docs/`.
 
 ### Changed
+- **Single run-start path** ([#18](https://github.com/kgforais1/k-dense-byok-mcp/pull/18)): `prepareRun` no longer writes status codes onto a `FastifyReply`; it returns a typed rejection, and the new `beginRun` is shared by `POST /sessions/:id/run` and the MCP adapter. The SSE route attaches its stream as an observer of the already-detached run rather than owning it.
 - Standardized `npm ci` across both backend and frontend GitHub Actions jobs for deterministic dependency installation.
 - Standardized `"typecheck": "tsc --noEmit"` script in `web/package.json`.
 - Configured experimental React 19 compiler ESLint rules to `warn` in Next.js 16 flat config for progressive codebase modernization.
 - Reorganized planning artifacts: moved plans into `dev-docs/plans/` (with completed plans archived in `dev-docs/plans/completed/`) and tracked roadmap in `dev-docs/todo.md`.
+
+### Fixed
+- **Transcript lookup and path containment** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20)):
+  - A session is identified by its transcript header rather than its filename, so a stray file named after a session id can no longer shadow or hide the real one. The header is read with a bounded scan instead of loading the whole transcript.
+  - `containedIn` refuses an absolute name outright, and its error names neither the root nor the offending path — an absolute name that happened to land inside the root previously passed the containment check without the root taking part.
 
 ## [0.9.12] - 2026-09-02
 

@@ -33,8 +33,9 @@ somewhere other than 8000.
 
 There is no `npx` package to install and nothing separate to run. The server is
 part of the Kady you are already running, and it reads that instance's projects
-— so starting Kady is the whole installation. A stdio client cannot use it,
-because the project is chosen with an HTTP header.
+— so starting Kady is the whole installation. A client that can only speak
+stdio cannot use it, because Streamable HTTP is the only transport Kady
+serves.
 
 ### It only listens on loopback, on purpose
 

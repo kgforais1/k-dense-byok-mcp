@@ -53,14 +53,18 @@ tools below and the packaging decision have landed.
 
 ## Packaging: the documented HTTP endpoint, and no npx package
 
-Phase 1 settled this without naming it. Project scope is the `X-Project-Id`
-header, first in the existing scope precedence, and Phase 1 recorded that
-"stdio clients have no HTTP headers". An npx stdio server would therefore need
-a second way to say which project it is talking about — an environment variable
-or a tool argument — and that is a second scoping path for the same question,
-which the standing guardrail rejects for the same reason it rejects a second
-agent implementation in the adapter. The one that drifts is the one nobody
-tests.
+Phase 1 settled this without naming it. The transport verdict was Streamable
+HTTP on the existing listener, and that alone is why a stdio-only client cannot
+connect today — there is no stdio transport to connect to.
+
+Building one would cost more than a transport. Project scope is the
+`X-Project-Id` header, first in the existing scope precedence, and Phase 1
+recorded that "stdio clients have no HTTP headers". An npx stdio server would
+therefore also need a second way to say which project it is talking about — an
+environment variable or a tool argument — and that is a second scoping path for
+the same question, which the standing guardrail rejects for the same reason it
+rejects a second agent implementation in the adapter. The one that drifts is
+the one nobody tests.
 
 The other half is that there is nothing to distribute. The tools are an
 interface onto a Kady that is already running: they read that instance's

@@ -7,7 +7,9 @@ branch: deps-security-triage
 
 # Dependency Alerts and Code Scanning — Triage and Clearance
 
-**Status:** Proposed.
+**Status:** Accepted — bucket 1, the `next` bump, the `isWithin` fold and the
+CodeQL sample trace are done. `pdfjs-dist`, the model pack and the remaining 12
+alerts are open.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -102,25 +104,27 @@ only so the next reader does not re-open the question.
 
 ### Bucket 3 — not reachable in this codebase
 
-**`adm-zip` (2 high + 1 medium, and the medium has no patch at all).** All three
-advisories are extraction-path bugs: the 4 GB allocation on a crafted archive,
-the symlink-following overwrite in `extractAllTo`/`extractEntryTo`, and
-CVE-2026-76845, whose fixed version is `none`.
+**`adm-zip` (two alerts — one high, one medium, and the medium has no patch at
+all).** They do not have the same shape, and the difference matters. GHSA-vwc7-r8mq-g2x9
+(CVE-2026-76845, symlink-following overwrite, fixed version `none`) is
+extraction-only. GHSA-xcpc-8h2w-3j85's 4 GB allocation is not: it fires on
+`readFile`, `readAsText`, `entry.getData()` and `test()` too, so merely parsing
+an untrusted archive is enough.
 
-Kady never extracts. The single use is `server/src/agent/notebook-zip.ts:38`,
-`new AdmZip()` with no argument, then `addLocalFile`, `addFile`, `toBuffer` —
-construction only, and the sandbox download path uses `archiver` instead. No
-call site reads or extracts an archive, so no untrusted ZIP ever reaches the
-vulnerable code.
+So the property to rely on is not "Kady never extracts" but "Kady never hands
+adm-zip bytes it did not just produce". That holds: the single use in `src/` is
+`server/src/agent/notebook-zip.ts`, `new AdmZip()` with no argument, then
+`addLocalFile`, `addFile`, `toBuffer`, and the sandbox download path uses
+`archiver` instead. No untrusted ZIP is read, parsed or extracted anywhere. The
+tests do construct `new AdmZip(buffer)`, but only on buffers they just built.
 
 Note that 0.6.0 does not fix CVE-2026-76845 either — the advisory range is
 "0.5.9 through 0.6.0", and there is no fixed release. So the 0.5.17 → 0.6.0
-breaking bump is elective rather than urgent, and it would clear two of the
-three advisories while leaving the symlink one open at the newest version
-available. Anyone who later adds an extract path inherits an unpatched
-dependency, not merely an unfixed alert. Dismiss all three as "vulnerable code is not actually used", with the
-call-site evidence in the dismissal comment, and bump on the next convenient
-pass. **If anything ever adds an extract path, this reasoning expires** — worth
+breaking bump is elective rather than urgent, and it would clear the high while
+leaving the symlink medium open at the newest version available. Anyone who
+later adds an extract path inherits an unpatched dependency, not merely an
+unfixed alert. Dismiss both as `not_used`, with the call-site evidence in the
+dismissal comment, and bump on the next convenient pass. **If anything ever adds an extract path, this reasoning expires** — worth
 a comment in `notebook-zip.ts` saying so.
 
 ### The two open Dependabot PRs
@@ -203,6 +207,38 @@ Bulk-dismissing 183 alerts without step 1 would be the worst outcome available:
 it clears the dashboard and destroys the one signal that would catch a genuinely
 unguarded join later.
 
+### Sample trace, 2026-09-10 — step 1 done
+
+One alert from each of five files. **All five are guarded. No real finding in
+the sample**, so the hypothesis holds and the 183 stay in this bucket.
+
+| Alert | Sink | Barrier |
+|---|---|---|
+| 147 | `api/sandbox.ts:820` | `safePath(q.path)` — direct |
+| 188 | `pdf-annotations-store.ts:305` | `resolvePdf` → `isWithin` + `realpathSync` — direct |
+| 196 | `projects.ts:336` | `validateId` → `PROJECT_ID_RE` + a reserved-id set — direct |
+| 167 | `modal/store.ts:286` | `modalJobFiles` → `assertJobId` → `JOB_ID_RE` — direct, one frame up |
+| 74 | `skills-install.ts:464` | `findSkillDir` → `SKILL_NAME_RE`, which returns `null`, and the caller `fail(404)`s on null — **indirect** |
+
+Two things the sample changed.
+
+**There are more barrier idioms than the four listed above.** `PROJECT_ID_RE`
+and `JOB_ID_RE` are two more name regexes, in files nobody had looked at. Do not
+assume the inventory is closed; enumerate it from the alert list when writing
+the model, not from memory.
+
+**The last row is the hard case, and it is the one to design for.** In
+`skills-install.ts` the validation does not throw. `findSkillDir` returns `null`
+for a name that fails `SKILL_NAME_RE`, and containment holds only because every
+caller treats `null` as a 404. That is a real barrier and a fragile one: a
+future caller that ignores the `null` reintroduces the traversal, and no
+sanitizer-style CodeQL model expresses "guarded by a helper that returns null
+and a caller that checks it".
+
+That is an argument for the step-2 preference rather than against it. Moving
+these sinks onto `containedIn` converts an unmodellable indirect barrier into a
+direct one, which is both safer code and a tractable model.
+
 The remaining 12 are individually reviewable and are the more interesting half:
 
 | Rule | Where | First question |
@@ -218,19 +254,19 @@ The remaining 12 are individually reviewable and are the more interesting half:
 Split by risk, so a revert is cheap and a review is readable. Each is its own PR
 unless it turns out to be trivial.
 
-- [ ] Close Dependabot PRs #5 and #6 with a comment saying why (superseded,
+- [x] Close Dependabot PRs #5 and #6 with a comment saying why (superseded,
       overlapping, and one carries an unrelated major bump).
-- [ ] Bucket 1: `npm audit fix` in `server/`, verify, commit the lockfile alone.
-- [ ] Bucket 1: `npm audit fix` in `web/`, verify, read the removed-package diff,
+- [x] Bucket 1: `npm audit fix` in `server/`, verify, commit the lockfile alone.
+- [x] Bucket 1: `npm audit fix` in `web/`, verify, read the removed-package diff,
       commit the lockfile alone.
-- [ ] Bucket 2: `next` + `eslint-config-next` to 16.3.3. Confirm `postcss` and
+- [x] Bucket 2: `next` + `eslint-config-next` to 16.3.4. Confirm `postcss` and
       `sharp` clear as a consequence rather than assuming it.
 - [ ] Bucket 2: `pdfjs-dist` v5 → v6, on its own branch, with the PDF viewer
       exercised by hand as well as by `pdf-viewer-init.test.tsx`.
-- [ ] Bucket 3: dismiss the three `adm-zip` alerts with call-site evidence; add
+- [x] Bucket 3: dismiss both `adm-zip` alerts with call-site evidence; add
       the expiry comment to `notebook-zip.ts`.
-- [ ] CodeQL: sample five path-injection alerts by hand and record the result.
-- [ ] CodeQL: fold `pdf-annotations-store.ts`'s private `isWithin` into the
+- [x] CodeQL: sample five path-injection alerts by hand and record the result.
+- [x] CodeQL: fold `pdf-annotations-store.ts`'s private `isWithin` into the
       exported one in `sandbox-fs.ts`.
 - [ ] CodeQL: add the model pack covering all the barriers that survive that
       fold; re-run and record how many of the 183 clear. Expect the

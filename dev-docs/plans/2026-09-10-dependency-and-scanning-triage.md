@@ -157,9 +157,21 @@ open and mislabel the rest:
 | `safePath()` — lexical `resolve` + `isWithin`, then `realpathSync` on the deepest existing ancestor to defeat a symlink | `sandbox-fs.ts:51`, used by `api/sandbox.ts` | Strongest. Beats what CodeQL accepts inline. |
 | `containedIn()` — `resolve` + prefix check, refuses absolute names | `paths-contained.ts`, 4 callers | Strong, and written specifically to be the form CodeQL follows. |
 | A private `isWithin()` plus a `realpathSync` re-check | `pdf-annotations-store.ts:72,92,104` | Sound, but a **second copy** of `sandbox-fs.ts:25`'s exported `isWithin`. |
-| A name regex — `SKILL_NAME_RE`, `PI_SKILL_NAME_RE`, `AGENT_NAME_RE` | `skills.ts:338`, `skills-install.ts:58`, `agent-files.ts:43` | Sound *as validation* — the character classes exclude `/`, `\` and `.` — but it is a validity predicate, not a containment proof. |
+| A name regex — `SKILL_NAME_RE`, `PI_SKILL_NAME_RE`, `AGENT_NAME_RE` | `skills.ts:338`, `skills-install.ts:58`, `agent-files.ts:43` | Sound *as validation*, but see below — it is a validity predicate, not a containment proof. |
 
-That last row matters most. A regex validator is exactly the barrier class the
+The three regexes are not identical, and the difference matters when writing
+them down as a barrier. `PI_SKILL_NAME_RE` (`/^[a-z0-9]+(-[a-z0-9]+)*$/`) and
+`AGENT_NAME_RE` (`/^[a-z0-9][a-z0-9_-]{0,63}$/`) permit no dot at all.
+`SKILL_NAME_RE` (`/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/`) **does** permit dots.
+
+It is still sound, but for a reason worth stating rather than assuming.
+Traversal needs a separator, and no character class here admits `/` or `\`, so
+no accepted name can leave its directory however many dots it holds. The
+degenerate names `.` and `..` are refused separately, by the anchored first
+character, which must be alphanumeric. Both halves of that argument are load
+bearing: relax the first character and `..` becomes a legal skill name.
+
+That row matters most. A regex validator is exactly the barrier class the
 `paths-contained.ts` docstring records CodeQL rejecting. So roughly 53 alerts
 across `skills.ts`, `skills-install.ts` and `agent-files.ts` will **not** clear
 from a model pack that names only `safePath` and `containedIn`, and they are not
@@ -213,7 +225,6 @@ unless it turns out to be trivial.
       commit the lockfile alone.
 - [ ] Bucket 2: `next` + `eslint-config-next` to 16.3.3. Confirm `postcss` and
       `sharp` clear as a consequence rather than assuming it.
-- [ ] Bucket 2: settle `express-rate-limit` reachability; bump or dismiss.
 - [ ] Bucket 2: `pdfjs-dist` v5 → v6, on its own branch, with the PDF viewer
       exercised by hand as well as by `pdf-viewer-init.test.tsx`.
 - [ ] Bucket 3: dismiss the three `adm-zip` alerts with call-site evidence; add

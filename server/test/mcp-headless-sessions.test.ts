@@ -26,6 +26,8 @@ function metadata(runId = "run-1"): RunMetadata {
   };
 }
 
+const realReaddir = fs.readdirSync;
+
 describe("deleteSession", () => {
   afterEach(() => {
     runBroker.clear();
@@ -195,13 +197,12 @@ describe("deleteSession", () => {
     expect(fs.existsSync(impostor)).toBe(true);
   });
 
-  it("refuses an empty file, and does not strip the real session's artifacts", () => {
+  it("is not shadowed by a stray file that carries no header", () => {
     // Pi writes the header when it creates the file, so an empty transcript is
-    // not a session that has yet to be written to — it is not a session. If
-    // the name alone were enough, a stray `<id>.jsonl` beside the real
-    // `<timestamp>_<id>.jsonl` would take `deleteSession`'s exact-name
-    // shortcut, report success, and take the notebook and run records with it
-    // while the real transcript stayed on disk.
+    // not a session. A stray `23.jsonl` beside the real
+    // `<timestamp>_23.jsonl` must neither be deleted in its place nor make the
+    // real one unreachable — which is what stopping at the first candidate
+    // `readdir` yields used to do.
     const projectId = "delete-session-shadow";
     createProject({ projectId, name: "Delete session shadow" });
     const paths = resolvePaths(projectId);
@@ -215,9 +216,24 @@ describe("deleteSession", () => {
     handle.complete();
     persistRunResult(projectId, handle);
 
-    expect(deleteSession(projectId, paths, "23")).toBe("not_found");
-    expect(fs.existsSync(real)).toBe(true);
-    expect(readRunResult(projectId, "run-real")).not.toBeNull();
+    // Forced, not hoped for. Every Pi filename starts with an ISO year, so the
+    // stray sorts second on any real listing and the scan would find the right
+    // file first by luck. The bug is only visible when it does not.
+    const readdirSync = vi
+      .spyOn(fs, "readdirSync")
+      .mockImplementation(((dir: fs.PathLike, options?: unknown) => {
+        const entries = realReaddir(dir, options as never);
+        return String(dir) === paths.sessionsDir ? [...entries].reverse() : entries;
+      }) as never);
+
+    try {
+      expect(deleteSession(projectId, paths, "23")).toBe("deleted");
+    } finally {
+      readdirSync.mockRestore();
+    }
+    expect(fs.existsSync(real)).toBe(false);
+    expect(fs.existsSync(shadow)).toBe(true);
+    expect(readRunResult(projectId, "run-real")).toBeNull();
   });
 
   it("refuses a session id that would escape the sessions directory", () => {

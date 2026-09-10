@@ -245,6 +245,13 @@ function HistoryMenu({
                     event.preventDefault();
                     return;
                   }
+                  // A confirmed delete is already out for this chat. Opening it
+                  // now lands the user in a tab whose transcript is about to
+                  // stop existing, and every later send in it would 404.
+                  if (inFlightDeletes.current.has(s.id)) {
+                    event.preventDefault();
+                    return;
+                  }
                   onOpenSession(s.id, title);
                 }}
                 // Announced, because the trash button is `tabIndex={-1}` and a

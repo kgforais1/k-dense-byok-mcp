@@ -51,7 +51,7 @@ import {
   seedBuiltinAgentModalTools,
   seedModalPackage,
 } from "./modal-bridge.ts";
-import { findSessionFile, isSafeSessionId } from "./session-export.ts";
+import { isSafeSessionId, sessionFileCandidates } from "./session-export.ts";
 import { notebookAnnotationsPath } from "./notebook-annotations.ts";
 import { notebookPath } from "./notebook-store.ts";
 import { provenanceSessionDir } from "../provenance/store.ts";
@@ -232,9 +232,9 @@ function release(projectId: string, key: string, session: AgentSession): void {
 /**
  * Confirm a transcript really belongs to `sessionId` before unlinking it.
  *
- * The filename is never proof. `findSessionFile` matches on a suffix, which is
- * fine for a read but not for a delete, and even an exact `<id>.jsonl` says
- * only what someone named the file. Pi writes a `{"type": "session", "id": ...}`
+ * The filename is never proof. The lookup matches on a suffix, which is fine
+ * for a read but not for a delete, and even an exact `<id>.jsonl` says only
+ * what someone named the file. Pi writes a `{"type": "session", "id": ...}`
  * header as the first row *at file creation*
  * (`pi-agent-core` `harness/session/jsonl/storage.js:36`), and refuses to load
  * a file that lacks one, so every real transcript has it and it is the only
@@ -279,26 +279,20 @@ export function deleteSession(
   paths: ProjectPaths,
   sessionId: string,
 ): DeleteSessionResult {
-  // Validated before any path is built from it. `findSessionFile` does this
-  // itself, but the exact-filename shortcut below reaches `path.join` first, so
-  // an id carrying a separator would address a file outside `sessionsDir`
-  // before that check ever ran. Thrown rather than returned as `not_found`:
-  // this id could never name a session, and the route answers 400 for it.
+  // Validated before the directory is even listed. Thrown rather than returned
+  // as `not_found`: this id could never name a session, and the route answers
+  // 400 for it.
   if (!isSafeSessionId(sessionId)) throw new Error(`Invalid session id: ${sessionId}`);
 
-  // The exact filename first. `findSessionFile` matches on a suffix and returns
-  // whichever candidate `readdir` yields first, so with both `23.jsonl` and
-  // `subagent-123.jsonl` present it can hand back the collision — and then
-  // `ownsSessionFile` rejects it and a session that plainly exists reports
-  // `not_found`. Readdir order is filesystem-dependent, so this is not
-  // theoretical.
-  // `path.basename` as well as the guard above, and not instead of it: it makes
-  // the join provably inside `sessionsDir` at the point of use, rather than at
-  // the mercy of a check several lines away that a later edit could move. At
-  // runtime it is a no-op for every id the guard admits.
-  const exact = path.join(paths.sessionsDir, path.basename(`${sessionId}.jsonl`));
-  const file = fs.existsSync(exact) ? exact : findSessionFile(paths, sessionId);
-  if (!file || !ownsSessionFile(file, sessionId)) return "not_found";
+  // Every candidate, not the first one. More than one filename can name this
+  // session — a stray `23.jsonl` beside the real `<timestamp>_23.jsonl` — and
+  // stopping at whichever `readdir` happened to yield first made a session
+  // that plainly exists report `not_found` as soon as a neighbour shadowed it.
+  // Readdir order is filesystem-dependent, so that was not theoretical.
+  const file = sessionFileCandidates(paths, sessionId).find((candidate) =>
+    ownsSessionFile(candidate, sessionId),
+  );
+  if (!file) return "not_found";
 
   // Deleting the transcript out from under a running agent would leave the run
   // writing to a file nobody can read.

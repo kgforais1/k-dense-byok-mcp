@@ -72,23 +72,35 @@ export function isSafeSessionId(sessionId: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId) && !sessionId.includes("..");
 }
 
-export function findSessionFile(paths: ProjectPaths, sessionId: string): string | null {
+/**
+ * Every transcript in `paths.sessionsDir` whose *name* could be `sessionId`'s.
+ *
+ * Pi names a transcript `${timestamp}_${id}.jsonl` and finds it again by the
+ * suffix `_${id}.jsonl` (pi-agent-core `harness/session/jsonl/repo.js`). The
+ * separator is what makes that safe, and it is matched here for the same
+ * reason: a bare `endsWith(`${id}.jsonl`)` lets the id `23` match
+ * `..._123.jsonl` and hand back a different session's transcript. The exact
+ * name is accepted too, because a session written directly as `<id>.jsonl` is
+ * still that session's file.
+ *
+ * More than one can match — a stray `23.jsonl` sitting beside the real
+ * `<timestamp>_23.jsonl` — which is why this returns all of them and lets the
+ * caller decide. Deletion has to read each one's header rather than trust the
+ * first name it sees.
+ */
+export function sessionFileCandidates(paths: ProjectPaths, sessionId: string): string[] {
   if (!isSafeSessionId(sessionId)) {
     throw new Error(`Invalid session id: ${sessionId}`);
   }
-  if (!fs.existsSync(paths.sessionsDir)) return null;
-  // Pi names a transcript `${timestamp}_${id}.jsonl` and finds it again by the
-  // suffix `_${id}.jsonl` (pi-agent-core `harness/session/jsonl/repo.js`). The
-  // separator is what makes that safe, and it is matched here for the same
-  // reason: a bare `endsWith(`${id}.jsonl`)` lets the id `23` match
-  // `..._123.jsonl` and hand back a different session's transcript to
-  // `get_session_history` and to the export routes. The exact name is accepted
-  // too, because a session written directly as `<id>.jsonl` is still that
-  // session's file.
-  const match = fs
+  if (!fs.existsSync(paths.sessionsDir)) return [];
+  return fs
     .readdirSync(paths.sessionsDir)
-    .find((f) => f === `${sessionId}.jsonl` || f.endsWith(`_${sessionId}.jsonl`));
-  return match ? path.join(paths.sessionsDir, match) : null;
+    .filter((f) => f === `${sessionId}.jsonl` || f.endsWith(`_${sessionId}.jsonl`))
+    .map((f) => path.join(paths.sessionsDir, f));
+}
+
+export function findSessionFile(paths: ProjectPaths, sessionId: string): string | null {
+  return sessionFileCandidates(paths, sessionId)[0] ?? null;
 }
 
 export function readRows(file: string): MessageRow[] {

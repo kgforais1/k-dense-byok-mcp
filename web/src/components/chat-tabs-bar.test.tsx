@@ -259,6 +259,29 @@ describe("history menu", () => {
     await waitFor(() => expect(screen.queryByText("Browser chat")).not.toBeInTheDocument());
   });
 
+  it("will not open a chat whose delete is already out", async () => {
+    // The menu stays open while the request is in flight. Clicking the row
+    // then drops the user into a chat that is about to stop existing, and
+    // every later send in it would 404.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBar();
+    const user = await openHistory();
+
+    let settle: (value: unknown) => void = () => {};
+    apiFetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+
+    await user.keyboard("{ArrowDown}{Delete}");
+    await user.click(screen.getByText("Browser chat"));
+    expect(onOpenSession).not.toHaveBeenCalled();
+
+    settle({ ok: true, status: 200, json: async () => ({ deleted: true }) });
+    await waitFor(() => expect(screen.queryByText("Browser chat")).not.toBeInTheDocument());
+  });
+
   it("keeps the chat and explains why when a run is still in flight", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderBar();

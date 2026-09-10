@@ -7,6 +7,7 @@
 - [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
 - [ ] **Fix the local-model context window** → [5. Local-model context window is hardcoded to 32K](#5-local-model-context-window-is-hardcoded-to-32k)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
+- [ ] **Make this repo read as a fork** → [6. Fork etiquette](#6-fork-etiquette)
 
 ---
 
@@ -121,3 +122,27 @@ It does not need to be this low, and the value is discoverable rather than merel
 - Whichever lands, raise the fallback: 32K is below Kady's own prompt floor.
 
 Note the two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:238`), so a fix touches both.
+
+## 6. Fork etiquette
+
+This repo is a fork of K-Dense-AI/k-dense-byok, and nothing in it says so.
+A reader arriving from a search result cannot tell whose work they are looking
+at, which is the part that matters — attribution, not paperwork.
+
+The concrete instance found so far is the Tests badge at `README.md:8`. It
+points at `K-Dense-AI/k-dense-byok/actions/workflows/tests.yml`, so it renders
+upstream's CI result on this fork's front page. It is green when upstream is
+green, whatever this fork's own tests did. Either repoint it at this repo or
+drop it; showing someone else's build status as your own is worse than showing
+none. The other nine badges are static shields or upstream's social links, so
+they need a decision too rather than a bulk rewrite.
+
+Also to check, before calling this done:
+
+- Whether `README.md` and `docs/` state the fork relationship at all, and where
+  a short attribution line belongs.
+- Whether the version, skills, workflows and database counts in the badges are
+  this fork's numbers or inherited ones that have since drifted.
+- Whether `LICENSE`, `CONTRIBUTING.md` and `SECURITY.md` still route a reporter
+  or contributor to upstream when they should reach this fork, or the reverse.
+- Whether any workflow, issue template or link still names the upstream repo.

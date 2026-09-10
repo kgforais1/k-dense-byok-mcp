@@ -80,13 +80,18 @@ Patch-level within 16.3, so the risk is low, but it is the largest single
 runtime change here and deserves its own commit.
 
 **`pdfjs-dist` ^5.6.205 → 6.2.108 (high, arbitrary JS execution on opening a
-malicious PDF).** A major bump, and the one item here with real API risk: six
-files import it, including `pdf-viewer.tsx`, `annotation-layer.tsx` and
-`lib/pdf-annotations.ts`. There is an existing `pdf-viewer-init.test.tsx`
-covering worker-URL construction and polyfill installation, so the blast radius
-is at least partly tested, but the worker entry point and the annotation-layer
-API are the two places a v5→v6 change would land. This is the item most likely
-to need its own PR.
+malicious PDF).** A major bump, but a narrower one than the file count suggests.
+Exactly one module imports the library: `pdf-viewer.tsx`, which dynamically
+imports it at `:145` and takes `PDFDocumentProxy`/`PDFPageProxy` types from it.
+`annotation-layer.tsx` consumes a viewport object handed to it and never touches
+`pdfjs-dist`; `lib/pdf-annotations.ts` deals in PDF concepts, not the library.
+
+Two things to watch, both in that one file. The worker URL is built from
+`pdfjs-dist/build/pdf.worker.min.mjs` (`:125`), a path that can move across a
+major. And `:61` documents a Map-upsert polyfill as "required before loading
+`pdfjs-dist` 5.6+" — a version-coupled workaround that should be re-checked
+against v6 rather than carried forward blindly. `pdf-viewer-init.test.tsx`
+covers both, which is why this is a contained change rather than a risky one.
 
 **`express-rate-limit` (high, IPv4-mapped IPv6 bypass) — belongs in bucket 1,
 not here.** It is flagged only because it depends on the vulnerable
@@ -108,9 +113,12 @@ construction only, and the sandbox download path uses `archiver` instead. No
 call site reads or extracts an archive, so no untrusted ZIP ever reaches the
 vulnerable code.
 
-That makes the 0.5.17 → 0.6.0 breaking bump elective rather than urgent, and it
-is the right answer for the unpatched one, which cannot be fixed by upgrading
-at all. Dismiss all three as "vulnerable code is not actually used", with the
+Note that 0.6.0 does not fix CVE-2026-76845 either — the advisory range is
+"0.5.9 through 0.6.0", and there is no fixed release. So the 0.5.17 → 0.6.0
+breaking bump is elective rather than urgent, and it would clear two of the
+three advisories while leaving the symlink one open at the newest version
+available. Anyone who later adds an extract path inherits an unpatched
+dependency, not merely an unfixed alert. Dismiss all three as "vulnerable code is not actually used", with the
 call-site evidence in the dismissal comment, and bump on the next convenient
 pass. **If anything ever adds an extract path, this reasoning expires** — worth
 a comment in `notebook-zip.ts` saying so.

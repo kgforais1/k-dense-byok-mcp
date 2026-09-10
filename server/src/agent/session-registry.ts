@@ -51,7 +51,7 @@ import {
   seedBuiltinAgentModalTools,
   seedModalPackage,
 } from "./modal-bridge.ts";
-import { isSafeSessionId, sessionFileCandidates } from "./session-export.ts";
+import { isSafeSessionId, ownsSessionFile, sessionFileCandidates } from "./session-export.ts";
 import { notebookAnnotationsPath } from "./notebook-annotations.ts";
 import { notebookPath } from "./notebook-store.ts";
 import { provenanceSessionDir } from "../provenance/store.ts";
@@ -227,40 +227,6 @@ function release(projectId: string, key: string, session: AgentSession): void {
   live.delete(key);
   pinned.delete(key);
   clearSessionCompute(projectId, key.slice(projectId.length + 1));
-}
-
-/**
- * Confirm a transcript really belongs to `sessionId` before unlinking it.
- *
- * The filename is never proof. The lookup matches on a suffix, which is fine
- * for a read but not for a delete, and even an exact `<id>.jsonl` says only
- * what someone named the file. Pi writes a `{"type": "session", "id": ...}`
- * header as the first row *at file creation*
- * (`pi-agent-core` `harness/session/jsonl/storage.js:36`), and refuses to load
- * a file that lacks one, so every real transcript has it and it is the only
- * thing worth trusting here.
- *
- * There is deliberately no fallback to the name. A file that cannot produce a
- * matching header is not this session, and an empty one is not a session at
- * all: accepting it would let a stray `<id>.jsonl` beside the real
- * `<timestamp>_<id>.jsonl` take the exact-name shortcut in `deleteSession`,
- * report success, and strip the notebook, provenance and run records off a
- * transcript that is still sitting on disk.
- */
-function ownsSessionFile(file: string, sessionId: string): boolean {
-  try {
-    for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const row = JSON.parse(trimmed) as { type?: string; id?: string };
-      return row.type === "session" && row.id === sessionId;
-    }
-  } catch {
-    // Unreadable, or a first row that is not JSON. Ownership cannot be shown,
-    // so the delete does not happen.
-    return false;
-  }
-  return false;
 }
 
 export type DeleteSessionResult = "deleted" | "not_found" | "run_active" | "not_deleted";

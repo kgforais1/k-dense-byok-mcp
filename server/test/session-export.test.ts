@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
   findSessionFile,
   indexToolResults,
@@ -266,19 +266,46 @@ describe("findSessionFile", () => {
   // `get_session_history` hands back a different session's whole transcript.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-find-session-"));
   afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => vi.restoreAllMocks());
   const paths = { sessionsDir: dir } as unknown as Parameters<typeof findSessionFile>[0];
 
+  /** A transcript shaped the way Pi writes one: header row first. */
+  function write(name: string, headerId: string | null): string {
+    const file = path.join(dir, name);
+    fs.writeFileSync(
+      file,
+      headerId === null
+        ? "{}\n"
+        : `${JSON.stringify({ type: "session", version: 3, id: headerId, timestamp: "2026-01-01T00:00:00.000Z" })}\n`,
+    );
+    return file;
+  }
+
   it("does not return a session whose id merely ends with the one asked for", () => {
-    const neighbour = path.join(dir, "20260101-000000_123.jsonl");
-    fs.writeFileSync(neighbour, "{}");
+    const neighbour = write("20260101-000000_123.jsonl", "123");
 
     expect(findSessionFile(paths, "23")).toBeNull();
     expect(findSessionFile(paths, "123")).toBe(neighbour);
   });
 
   it("finds a transcript written under its bare id", () => {
-    const bare = path.join(dir, "plain.jsonl");
-    fs.writeFileSync(bare, "{}");
+    const bare = write("plain.jsonl", "plain");
     expect(findSessionFile(paths, "plain")).toBe(bare);
+  });
+
+  it("passes over a stray file that shares the name but not the header", () => {
+    const real = write("20260101-000000_77.jsonl", "77");
+    write("77.jsonl", null);
+
+    // Readdir order is filesystem-dependent, and every Pi filename starts with
+    // a year, so the stray sorts second here and the bug would hide. Reversing
+    // the listing is what makes this test able to fail.
+    const readdir = fs.readdirSync;
+    vi.spyOn(fs, "readdirSync").mockImplementation(((target: string, options: never) =>
+      target === dir
+        ? [...(readdir(target, options) as unknown as string[])].reverse()
+        : readdir(target, options)) as typeof fs.readdirSync);
+
+    expect(findSessionFile(paths, "77")).toBe(real);
   });
 });

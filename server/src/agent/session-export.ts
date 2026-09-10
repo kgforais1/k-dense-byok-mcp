@@ -99,8 +99,56 @@ export function sessionFileCandidates(paths: ProjectPaths, sessionId: string): s
     .map((f) => path.join(paths.sessionsDir, f));
 }
 
+/**
+ * Confirm a transcript really belongs to `sessionId`.
+ *
+ * The filename is never proof. The lookup matches on a suffix, and even an
+ * exact `<id>.jsonl` says only what someone named the file. Pi writes a `{"type": "session", "id": ...}`
+ * header as the first row *at file creation*
+ * (`pi-agent-core` `harness/session/jsonl/storage.js:36`), and refuses to load
+ * a file that lacks one, so every real transcript has it and it is the only
+ * thing worth trusting here.
+ *
+ * There is deliberately no fallback to the name. A file that cannot produce a
+ * matching header is not this session, and an empty one is not a session at
+ * all. On the delete path accepting one would let a stray `<id>.jsonl` beside
+ * the real `<timestamp>_<id>.jsonl` report success and strip the notebook,
+ * provenance and run records off a transcript still sitting on disk. On the
+ * read path it would hand back that stray file's contents as the session's
+ * history.
+ */
+export function ownsSessionFile(file: string, sessionId: string): boolean {
+  try {
+    for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const row = JSON.parse(trimmed) as { type?: string; id?: string };
+      return row.type === "session" && row.id === sessionId;
+    }
+  } catch {
+    // Unreadable, or a first row that is not JSON. Ownership cannot be shown,
+    // so the caller is told this is not the file.
+    return false;
+  }
+  return false;
+}
+
+/**
+ * The one transcript that is `sessionId`'s, or null.
+ *
+ * The header decides, not `readdir` order. Taking the first candidate meant a
+ * stray `23.jsonl` beside the real `<timestamp>_23.jsonl` could be served as
+ * the session's history, on a filesystem that happened to list it first.
+ * Preferring the exact name instead would pick that same stray: Pi never
+ * writes a bare `<id>.jsonl`, so among two candidates it is the exact name
+ * that is the odd one out.
+ */
 export function findSessionFile(paths: ProjectPaths, sessionId: string): string | null {
-  return sessionFileCandidates(paths, sessionId)[0] ?? null;
+  return (
+    sessionFileCandidates(paths, sessionId).find((candidate) =>
+      ownsSessionFile(candidate, sessionId),
+    ) ?? null
+  );
 }
 
 export function readRows(file: string): MessageRow[] {

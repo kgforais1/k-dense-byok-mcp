@@ -7,7 +7,7 @@ branch: mcp-work
 
 # MCP Server for K-Dense (Kady as a Tool for External Agents) — Master Plan
 
-**Status:** Accepted — Phases 1 and 2 complete (PRs #15, #17, #18); Phase 3 not started.
+**Status:** Accepted — Phases 1 and 2 complete (PRs #15, #17, #18); Phase 3 in progress (PR #20).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -38,7 +38,7 @@ server/src/mcp-server/          NEW — MCP adapter: tool definitions → HTTP/s
   (exact module split TBD in Phase 1; candidate: index.ts + tools/*.ts)
 server/test/mcp-server-*.test.ts   NEW — tool-shape, scoping, and contract tests
   (flat files, per the existing `server/test/` convention)
-docs/mcp-server.md              NEW — client setup (OpenCode / Claude Code / Codex) — Phase 3
+docs/kady-as-mcp-server.md      NEW — client setup (OpenCode / Claude Code / Codex) — Phase 3
 dev-docs/plans/2026-09-06-mcp-server-phase-*.md   phase plans (this directory)
 ```
 
@@ -72,7 +72,7 @@ Archive note: phases ship one at a time, and archiving any file in this set brea
 |---|---|
 | External agent completes research via MCP | Transcript + notebook entry produced through MCP tools only |
 | Minimal subset covers the loop | Phase 2 tool list exercised end-to-end without raw-HTTP fallback |
-| A new client can connect quickly | Fresh-client walkthrough against `docs/mcp-server.md` |
+| A new client can connect quickly | Fresh-client walkthrough against `docs/kady-as-mcp-server.md` |
 
 ## Phase 1 decision record (accepted)
 

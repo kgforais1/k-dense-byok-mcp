@@ -24,7 +24,11 @@ import type { ProjectPaths } from "../projects.ts";
 import { getMcpTools } from "./mcp.ts";
 import { defaultModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
-import { isHeadlessSession, markHeadlessSession } from "./headless-sessions.ts";
+import {
+  forgetHeadlessSession,
+  isHeadlessSession,
+  markHeadlessSession,
+} from "./headless-sessions.ts";
 import { makeInterviewTool } from "./interview.ts";
 import { makeNotebookTool } from "./notebook.ts";
 import { makeScientificResultTool } from "./scientific-result.ts";
@@ -47,6 +51,13 @@ import {
   seedBuiltinAgentModalTools,
   seedModalPackage,
 } from "./modal-bridge.ts";
+import { isSafeSessionId, ownsSessionFile, sessionFileCandidates } from "./session-export.ts";
+import { notebookAnnotationsPath } from "./notebook-annotations.ts";
+import { notebookPath } from "./notebook-store.ts";
+import { provenanceSessionDir } from "../provenance/store.ts";
+import { forgetSessionRunResults } from "./run-results.ts";
+import { setSessionRunId } from "./run-ids.ts";
+import { runBroker } from "./run-broker.ts";
 import {
   makePdfAnnotationTools,
   PDF_ANNOTATION_TOOL_NAMES,
@@ -99,6 +110,37 @@ const keyFor = (projectId: string, sessionId: string) => `${projectId}:${session
 const pinned = new Set<string>();
 
 /** Protect a session from eviction for the lifetime of a claimed run. */
+/**
+ * Sessions deleted in this process, so a run cannot start on one.
+ *
+ * `deleteSession` is synchronous end to end, but `prepareRun` awaits
+ * `getSession` *before* it checks whether the session is busy. A delete landing
+ * inside that await passes its own busy check — no run has claimed anything
+ * yet — and the run then resumes holding a session whose transcript is gone,
+ * recreating a partial one on its next write. Scriptable over MCP, which is
+ * this phase's threat model.
+ *
+ * A tombstone rather than a re-`existsSync`: a freshly created session has no
+ * transcript on disk until its first write, so absence does not mean deleted.
+ * Bounded, because ids are minted per session and a process deletes few.
+ */
+const deletedSessions = new Set<string>();
+const MAX_TOMBSTONES = 1_000;
+
+/** True when this session was deleted and must not be run again. */
+export function isDeletedSession(projectId: string, sessionId: string): boolean {
+  return deletedSessions.has(keyFor(projectId, sessionId));
+}
+
+function tombstone(projectId: string, sessionId: string): void {
+  if (deletedSessions.size >= MAX_TOMBSTONES) {
+    // Oldest first; Set preserves insertion order.
+    const oldest = deletedSessions.values().next();
+    if (!oldest.done) deletedSessions.delete(oldest.value);
+  }
+  deletedSessions.add(keyFor(projectId, sessionId));
+}
+
 export function pinSession(projectId: string, sessionId: string): void {
   pinned.add(keyFor(projectId, sessionId));
 }
@@ -185,6 +227,103 @@ function release(projectId: string, key: string, session: AgentSession): void {
   live.delete(key);
   pinned.delete(key);
   clearSessionCompute(projectId, key.slice(projectId.length + 1));
+}
+
+export type DeleteSessionResult = "deleted" | "not_found" | "run_active" | "not_deleted";
+
+/**
+ * Remove a session's transcript and its headless marker.
+ *
+ * Lives here rather than in the route so `POST /sessions` and the MCP path get
+ * the same behaviour; a delete enforced only on one interface would make the
+ * other second-class. Both artifacts go together: a transcript removed while
+ * its marker survives means a later reused session id cold-opens headless and
+ * silently loses the `interview` tool.
+ */
+export function deleteSession(
+  projectId: string,
+  paths: ProjectPaths,
+  sessionId: string,
+): DeleteSessionResult {
+  // Validated before the directory is even listed. Thrown rather than returned
+  // as `not_found`: this id could never name a session, and the route answers
+  // 400 for it.
+  if (!isSafeSessionId(sessionId)) throw new Error(`Invalid session id: ${sessionId}`);
+
+  // Every candidate, not the first one. More than one filename can name this
+  // session — a stray `23.jsonl` beside the real `<timestamp>_23.jsonl` — and
+  // stopping at whichever `readdir` happened to yield first made a session
+  // that plainly exists report `not_found` as soon as a neighbour shadowed it.
+  // Readdir order is filesystem-dependent, so that was not theoretical.
+  const file = sessionFileCandidates(paths, sessionId).find((candidate) =>
+    ownsSessionFile(candidate, sessionId),
+  );
+  if (!file) return "not_found";
+
+  // Deleting the transcript out from under a running agent would leave the run
+  // writing to a file nobody can read.
+  const runKey = keyFor(projectId, sessionId);
+  const retained = runBroker.get(projectId, sessionId);
+  if (live.get(runKey)?.isStreaming || pinned.has(runKey) || (retained && !retained.isComplete)) {
+    return "run_active";
+  }
+
+  // Dispose before unlinking, so Pi is not still holding the file. If the
+  // unlink itself fails — a Windows handle, a permission problem — stop here
+  // and say so rather than stripping the notebook and provenance off a chat
+  // whose transcript is still on disk.
+  disposeSession(projectId, sessionId);
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    return "not_deleted";
+  }
+  // Best-effort like the artifact loop below, and for the same reason.
+  // `force: true` only suppresses ENOENT; an EPERM or a Windows EBUSY still
+  // throws, and letting it escape here would strand the delete half-done: the
+  // transcript is already gone, but the tombstone and the durable run records
+  // below would be skipped and the route would answer 400 as though nothing
+  // had happened.
+  try {
+    forgetHeadlessSession(projectId, sessionId);
+  } catch {
+    // Nothing actionable; the transcript is already gone. The marker outliving
+    // it is inert: `isHeadlessSession` is only ever asked about a session that
+    // still has a transcript, and Pi ids are not reused.
+  }
+
+  // Everything else keyed by this session id. These are part of the chat, not
+  // separate records: leaving them means the lab notebook still lists entries
+  // for a chat that no longer exists, and a reused id would inherit them.
+  //
+  // Best-effort, and the result still reports `deleted`. The transcript — the
+  // thing the user asked to remove — is already gone by this point, so failing
+  // the call would report a delete that did in fact happen. The cost of that
+  // choice is real and worth naming: if `forgetSessionRunResults` below fails,
+  // `poll_run` keeps answering for a session `get_session_history` now 404s on
+  // until the 7-day retention sweep collects it.
+  for (const artifact of [
+    notebookPath(sessionId, projectId),
+    notebookAnnotationsPath(sessionId, projectId),
+    provenanceSessionDir(sessionId, projectId),
+  ]) {
+    try {
+      fs.rmSync(artifact, { force: true, recursive: true });
+    } catch {
+      /* nothing actionable; the transcript is already gone */
+    }
+  }
+
+  tombstone(projectId, sessionId);
+
+  // Durable run records are keyed by runId, so without this `poll_run` would
+  // keep serving a deleted session's frames while `get_session_history` 404s.
+  forgetSessionRunResults(projectId, sessionId);
+  setSessionRunId(projectId, sessionId, null);
+
+  // The cost ledger is deliberately kept. That money was actually spent, and
+  // erasing a chat must not silently refund the project's budget tracking.
+  return "deleted";
 }
 
 async function build(
@@ -311,6 +450,7 @@ export async function createSession(
   if (options?.includeInterview === false) {
     markHeadlessSession(projectId, session.sessionId);
   }
+  deletedSessions.delete(keyFor(projectId, session.sessionId));
   live.set(keyFor(projectId, session.sessionId), session);
   evictOverCap(projectId);
   return session;

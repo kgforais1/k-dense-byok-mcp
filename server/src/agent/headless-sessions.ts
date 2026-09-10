@@ -17,27 +17,24 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolvePaths } from "../projects.ts";
-
-/**
- * Session ids come from Pi, but this value reaches the filesystem, so it is
- * validated the same way `run-results.ts` validates run ids rather than
- * trusted. A rejected id fails closed: `isHeadlessSession` returns false and
- * the caller keeps the interactive default.
- */
-function isSafeSessionId(sessionId: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sessionId);
-}
+// Shared rather than restated: this file had its own copy of the same rule,
+// and the two drifted the moment one of them gained a check. A rejected id
+// fails closed here — `isHeadlessSession` returns false and the caller keeps
+// the interactive default.
+import { isSafeSessionId } from "./session-export.ts";
+import { containedIn } from "../paths-contained.ts";
 
 function markerPath(projectId: string, sessionId: string): string | null {
   if (!isSafeSessionId(sessionId)) return null;
   const markerRoot = path.resolve(resolvePaths(projectId).kadyDir, "headless-sessions");
-  const file = path.resolve(markerRoot, `${sessionId}.json`);
-  // Keep this normalized containment check next to the filesystem sinks, as
-  // `cost/ledger.ts` does. The grammar above already blocks traversal, but this
-  // protects the boundary even if a future caller broadens that grammar — and
-  // it is the form static analysis can actually see.
-  if (!file.startsWith(`${markerRoot}${path.sep}`)) return null;
-  return file;
+  try {
+    return containedIn(markerRoot, `${sessionId}.json`);
+  } catch {
+    // The shared rule throws; this file's callers expect `null` and no-op on
+    // it, because a missing marker means "interactive" and that is the safe
+    // default here.
+    return null;
+  }
 }
 
 /** Record that `sessionId` was created headless and must stay that way. */
@@ -51,6 +48,17 @@ export function markHeadlessSession(projectId: string, sessionId: string): void 
     JSON.stringify({ sessionId, createdAt: new Date().toISOString(), reason: "mcp" }),
   );
   fs.renameSync(tmp, file);
+}
+
+/** Remove the headless marker for `sessionId`. */
+export function forgetHeadlessSession(projectId: string, sessionId: string): void {
+  const file = markerPath(projectId, sessionId);
+  if (!file) return;
+  // A swept transcript whose marker survives is exactly the bug Phase 3
+  // warns about: a later reused session id cold-opens headless and silently
+  // loses the `interview` tool. `force: true` swallows a missing marker so
+  // the caller can treat transcript + marker removal as one atomic cleanup.
+  fs.rmSync(file, { force: true });
 }
 
 /** True when this session was created headless, including after a cold open. */

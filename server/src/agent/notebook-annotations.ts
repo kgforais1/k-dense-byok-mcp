@@ -7,6 +7,7 @@
  * annotations (server/src/api/sandbox.ts).
  */
 import fs from "node:fs";
+import { containedIn } from "../paths-contained.ts";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { activePaths, resolvePaths } from "../projects.ts";
@@ -37,7 +38,7 @@ export function notebookAnnotationsPath(sessionId: string, projectId?: string): 
     throw new SandboxError(400, `Invalid session id: ${sessionId}`);
   }
   const paths = projectId ? resolvePaths(projectId) : activePaths();
-  return path.join(paths.notebookDir, `${sessionId}.annotations.json`);
+  return containedIn(paths.notebookDir, `${sessionId}.annotations.json`);
 }
 
 export function normalizeNotebookAnnotations(data: unknown): NotebookAnnotationsDoc {

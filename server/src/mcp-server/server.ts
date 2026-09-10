@@ -58,6 +58,36 @@ function rejectionResult(rejection: RunStartRejection): CallToolResult {
   });
 }
 
+/**
+ * Whether a run produced anything a caller can read.
+ *
+ * `status: "done"` alone cannot say this: a human watching a chat UI sees an
+ * empty bubble and retries, while an MCP client reads `done` as success.
+ *
+ * Only two frame types carry an answer. Prose arrives as `text_delta` — note
+ * `delta`, not `text`: `toClientFrame` maps Pi's `message_update` to
+ * `{ type: "text_delta", delta }` (`agent/events.ts:311`), and a first draft of
+ * this helper read `frame.text`, which no published frame has. That draft
+ * returned `false` for every real run and its tests passed only because they
+ * published a frame shape the agent never emits.
+ *
+ * A successful `tool_end` counts too. A run whose whole answer is an exported
+ * notebook or a written file said nothing in prose but did not finish with
+ * nothing. `isError` tool results do not count.
+ *
+ * Everything else — `run_start`, `done`, `turn_*`, `message_*`, `tool_start`,
+ * `thinking_delta`, `context_usage`, `cost`, `retry`, `queue_update` — is
+ * bookkeeping, not output.
+ */
+function producedOutput(frames: readonly { type: string; [k: string]: unknown }[]): boolean {
+  return frames.some((frame) => {
+    if (frame.type === "text_delta") {
+      return typeof frame.delta === "string" && frame.delta.trim().length > 0;
+    }
+    return frame.type === "tool_end" && frame.isError !== true;
+  });
+}
+
 export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
   const server = new McpServer({ name: "kady", version: packageJson.version });
 
@@ -172,6 +202,9 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         "`error` means anything else failed, including a provider refusal — that frame has no `kind`, and its `message` already carries the guidance for what to do about it. Read the terminal frame's `message` in both cases.",
         "Pass the returned `lastSeq` back as `after` on the next call to receive only new frames.",
         "This keeps working after the in-memory broker drops the run: completed runs are also persisted durably.",
+        "`done`, `aborted`, `blocked` and `error` also carry `producedOutput`: whether the run emitted any assistant prose or any successful tool result. `running` and `unknown` do not carry it at all — nothing is knowable yet in the first case, and there is no record to read in the second. Test for the key, not for a falsy value.",
+        "`done` with `producedOutput: false` is a run that finished with nothing — retry it, do not report it as an answer.",
+        "`status` stays authoritative: on `error`, `blocked` or `aborted`, `producedOutput: true` only means partial output arrived before the run stopped.",
       ].join(" "),
       inputSchema: {
         sessionId: z.string().describe("Session id the run belongs to."),
@@ -194,17 +227,33 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
       const handle = runBroker.get(projectId, sessionId);
       const live = handle?.state();
       if (handle && live?.run?.runId === runId) {
-        return json({
+        // `activityState` alone reports an aborted run as `done`, because an
+        // abort publishes no error frame. The durable record does distinguish
+        // it, so the abort check is applied here too — otherwise the same run
+        // answers `done` before the broker expires it and `aborted` after.
+        // The same "an aborted run is not a done run" rule the durable record
+        // applies in `persistRunResult` (`agent/run-results.ts`), but not the
+        // same expression: that one runs only at a terminal moment and folds
+        // `running` into `done`, while this one must still be able to answer
+        // `running`. Change either and check the other.
+        const status =
+          handle.isAbortRequested && handle.isComplete ? "aborted" : handle.activityState;
+        const result: Record<string, unknown> = {
           sessionId,
           runId,
-          // `activityState` alone reports an aborted run as `done`, because an
-          // abort publishes no error frame. The durable record does distinguish
-          // it, so the abort check is applied here too — otherwise the same run
-          // answers `done` before the broker expires it and `aborted` after.
-          status: handle.isAbortRequested && handle.isComplete ? "aborted" : handle.activityState,
+          status,
           frames: live.run.frames.filter((frame) => frame.seq > after),
           lastSeq: live.run.lastSeq,
-        });
+        };
+        // Computed over the whole frame list, never the `after` slice: a client
+        // polling with a cursor would otherwise be told the run produced
+        // nothing simply because it had already consumed the frames. Omitted
+        // entirely while the run is `running`, where the answer is not yet
+        // knowable and `false` would read as a verdict.
+        if (status !== "running") {
+          result.producedOutput = producedOutput(live.run.frames);
+        }
+        return json(result);
       }
 
       // Past the broker's ~30s completed-run retention the durable record is
@@ -224,6 +273,7 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         frames: durable.frames.filter((frame) => frame.seq > after),
         lastSeq: durable.lastSeq,
         completedAt: durable.completedAt,
+        producedOutput: producedOutput(durable.frames),
       });
     },
   );

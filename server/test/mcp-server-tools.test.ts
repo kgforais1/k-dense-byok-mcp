@@ -352,6 +352,191 @@ describe("poll_run", () => {
     );
     expect(payload(result)).toMatchObject({ status: "unknown", frames: [], lastSeq: 0 });
   });
+
+  it("reports producedOutput: false on a done run with no content frames", async () => {
+    createProject({ projectId: "mcp-empty-done", name: "MCP empty done" });
+    const handle = runBroker.start("mcp-empty-done", "session-empty", metadata("run-empty"));
+    handle.publish({ type: "run_start", runId: "run-empty" });
+    handle.publish({ type: "done" });
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-empty-done", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-empty", runId: "run-empty" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
+  });
+
+  it("reports producedOutput: true on a done run that published real prose via the durable path", async () => {
+    createProject({ projectId: "mcp-text-durable", name: "MCP text durable" });
+    const expired = new RunBroker({ completedRetentionMs: 1 });
+    const handle = expired.start("mcp-text-durable", "session-text", metadata("run-text"));
+    handle.publish({ type: "text_delta", delta: "Here is the answer" } as never);
+    handle.complete();
+    persistRunResult("mcp-text-durable", handle);
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-text-durable", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-text", runId: "run-text" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: true });
+  });
+
+  it("reports producedOutput: false when the only prose delta is whitespace", async () => {
+    createProject({ projectId: "mcp-whitespace", name: "MCP whitespace" });
+    const handle = runBroker.start("mcp-whitespace", "session-ws", metadata("run-ws"));
+    handle.publish({ type: "text_delta", delta: "   " } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-whitespace", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-ws", runId: "run-ws" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
+  });
+
+  it("reports producedOutput: true even when the cursor has passed the content frame", async () => {
+    createProject({ projectId: "mcp-cursor", name: "MCP cursor" });
+    const handle = runBroker.start("mcp-cursor", "session-cursor", metadata("run-cursor"));
+    handle.publish({ type: "run_start", runId: "run-cursor" });
+    handle.publish({ type: "text_delta", delta: "answer" } as never);
+    handle.complete();
+    const client = await connect();
+
+    const first = await withActiveProject("mcp-cursor", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-cursor", runId: "run-cursor" },
+      }),
+    );
+    expect(payload(first)).toMatchObject({ status: "done", producedOutput: true });
+
+    const second = await withActiveProject("mcp-cursor", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-cursor", runId: "run-cursor", after: 2 },
+      }),
+    );
+    expect(payload(second)).toMatchObject({ status: "done", producedOutput: true });
+  });
+
+  it("omits producedOutput while the run is still running", async () => {
+    createProject({ projectId: "mcp-running", name: "MCP running" });
+    const handle = runBroker.start("mcp-running", "session-running", metadata("run-running"));
+    handle.publish({ type: "run_start", runId: "run-running" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-running", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-running", runId: "run-running" },
+      }),
+    );
+    const body = payload(result);
+    expect(body).toMatchObject({ status: "running" });
+    expect(body).not.toHaveProperty("producedOutput");
+  });
+
+  it("counts a successful tool result as output even with no prose", async () => {
+    // A run whose whole answer is an exported notebook or a written file said
+    // nothing but did not finish with nothing.
+    createProject({ projectId: "mcp-tool-only", name: "MCP tool only" });
+    const handle = runBroker.start("mcp-tool-only", "session-tool", metadata("run-tool"));
+    handle.publish({ type: "run_start", runId: "run-tool" });
+    handle.publish({
+      type: "tool_end",
+      toolCallId: "c1",
+      toolName: "notebook",
+      isError: false,
+    } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-tool-only", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-tool", runId: "run-tool" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: true });
+  });
+
+  it("does not count a failed tool result as output", async () => {
+    createProject({ projectId: "mcp-tool-fail", name: "MCP tool fail" });
+    const handle = runBroker.start("mcp-tool-fail", "session-fail", metadata("run-fail"));
+    handle.publish({
+      type: "tool_end",
+      toolCallId: "c1",
+      toolName: "read",
+      isError: true,
+    } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-tool-fail", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-fail", runId: "run-fail" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
+  });
+
+  it("reads prose from `delta`, which is the field the agent actually publishes", async () => {
+    // Regression: the first version of this check read `frame.text`. No frame
+    // the agent emits has that field -- `toClientFrame` publishes
+    // `{ type: "text_delta", delta }` (agent/events.ts:311) -- so it reported
+    // every real run as having produced nothing, and its tests passed only
+    // because they published a frame shape that does not exist. A frame
+    // carrying `text` instead of `delta` must not count.
+    createProject({ projectId: "mcp-delta", name: "MCP delta" });
+    const handle = runBroker.start("mcp-delta", "session-delta", metadata("run-delta"));
+    handle.publish({ type: "text_delta", text: "not the real field" } as never);
+    handle.complete();
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-delta", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-delta", runId: "run-delta" },
+      }),
+    );
+    expect(payload(result)).toMatchObject({ status: "done", producedOutput: false });
+  });
+
+  it("omits producedOutput for an unknown run, as the description promises", async () => {
+    createProject({ projectId: "mcp-unknown-flag", name: "MCP unknown flag" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-unknown-flag", () =>
+      client.callTool({
+        name: "poll_run",
+        arguments: { sessionId: "session-x", runId: "never-existed" },
+      }),
+    );
+    const body = payload(result);
+    expect(body).toMatchObject({ status: "unknown" });
+    expect(body).not.toHaveProperty("producedOutput");
+  });
+
+  it("describes producedOutput in the poll_run tool description", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find((t) => t.name === "poll_run");
+    const description = tool?.description ?? "";
+    expect(description).toMatch(/producedOutput/);
+    expect(description).toMatch(/`status` stays authoritative/);
+    // The doc and the description must agree that `running` has no verdict.
+    expect(description).toMatch(/`running` and `unknown` do not carry it at all/);
+  });
 });
 
 describe("poll_run session binding", () => {

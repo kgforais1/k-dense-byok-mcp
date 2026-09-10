@@ -9,10 +9,12 @@ import {
   PencilIcon,
   PlusIcon,
   TerminalIcon,
+  Trash2Icon,
   WorkflowIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import {
   DropdownMenu,
@@ -22,6 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { apiFetch } from "@/lib/projects";
 import { cn } from "@/lib/utils";
@@ -29,6 +32,8 @@ import { cn } from "@/lib/utils";
 export interface ChatTabDescriptor {
   id: string;
   title: string;
+  /** Stored session this tab is showing, once it has one. */
+  sessionId?: string;
   isStreaming: boolean;
   userMessageCount: number;
 }
@@ -59,6 +64,8 @@ interface SessionListItem {
   modified: string | number;
   messageCount: number;
   firstMessage?: string | null;
+  /** Created by an MCP client, so this session has no `interview` tool. */
+  headless?: boolean;
 }
 
 function sessionTitle(s: SessionListItem): string {
@@ -84,12 +91,84 @@ function relativeTime(value: string | number): string {
 function HistoryMenu({
   projectId,
   onOpenSession,
+  openSessionIds,
 }: {
   projectId: string;
   onOpenSession: (sessionId: string, title: string) => void;
+  /**
+   * Sessions currently open in a tab. Deleting one leaves that tab pointing at
+   * a transcript the server can no longer find, and every later send fails.
+   */
+  openSessionIds: ReadonlySet<string>;
 }) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionListItem[] | null>(null);
+  // Clicking the trash icon must not also reopen the chat. Radix fires the
+  // item's onSelect for a click anywhere inside it, so the button records its
+  // intent here and onSelect defers to it.
+  const deletingRef = useRef<string | null>(null);
+  const inFlightDeletes = useRef<Set<string>>(new Set());
+
+  async function deleteSession(session: SessionListItem, title: string) {
+    // One delete per chat at a time. The menu stays open and the row stays
+    // focused while the request is in flight, so a second Delete keypress —
+    // or an impatient second click — would otherwise raise a second dialog
+    // and fire a second DELETE. The second one loses the race and answers
+    // 404, which surfaces as "No such session" for a delete that in fact
+    // succeeded.
+    if (inFlightDeletes.current.has(session.id)) return;
+    inFlightDeletes.current.add(session.id);
+    try {
+      await runDelete(session, title);
+    } finally {
+      inFlightDeletes.current.delete(session.id);
+    }
+  }
+
+  async function runDelete(session: SessionListItem, title: string) {
+    const confirmed = window.confirm(
+      `Delete "${title}"? Its transcript will be permanently removed. This cannot be undone.`,
+    );
+    if (!confirmed) {
+      // Today `onSelect` still fires for the mouse path and clears this, but
+      // only because `window.confirm` blocks synchronously. Swap in an async
+      // dialog and the marker outlives the click, and the next attempt to
+      // reopen the row silently does nothing. Clear it here too.
+      deletingRef.current = null;
+      return;
+    }
+    try {
+      const res = await apiFetch(
+        `/sessions/${encodeURIComponent(session.id)}`,
+        { method: "DELETE" },
+        projectId,
+      );
+      if (res.status === 409) {
+        toast.error("That chat is still running. Wait for it to finish.");
+        return;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.detail ?? "Could not delete that chat");
+        return;
+      }
+      setSessions((current) =>
+        current ? current.filter((entry) => entry.id !== session.id) : current,
+      );
+    } catch (exc) {
+      toast.error(exc instanceof Error ? exc.message : "Could not delete that chat");
+    } finally {
+      // Every exit clears the marker, not just the happy one. The mouse path's
+      // `onSelect` runs during event dispatch, well before this first `await`
+      // resolves, so clearing here cannot steal the click it is meant to
+      // swallow — but a refused or failed delete used to leave the marker set
+      // for good, and the next click on that row silently did nothing.
+      // Only if it still points here: two rows deleted in quick succession
+      // would otherwise let the first one's `finally` clear the second's
+      // marker out from under it.
+      if (deletingRef.current === session.id) deletingRef.current = null;
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -137,7 +216,15 @@ function HistoryMenu({
         </DropdownMenuTrigger>
       </InfoTooltip>
       <DropdownMenuContent align="start" className="w-72 max-h-80 overflow-y-auto">
-        <DropdownMenuLabel>Previous chats</DropdownMenuLabel>
+        <DropdownMenuLabel className="flex items-baseline justify-between gap-2">
+          <span>Previous chats</span>
+          {/* The keyboard route to delete has no affordance of its own: the
+              trash icon only appears on hover and cannot be focused, so
+              without this line a keyboard user has no way to discover it. */}
+          <span className="text-[10px] font-normal text-muted-foreground">
+            Del to remove
+          </span>
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {sessions === null ? (
           <div className="px-2 py-3 text-xs text-muted-foreground">Loading…</div>
@@ -151,7 +238,37 @@ function HistoryMenu({
             return (
               <DropdownMenuItem
                 key={s.id}
-                onClick={() => onOpenSession(s.id, title)}
+                className="group"
+                onSelect={(event) => {
+                  if (deletingRef.current === s.id) {
+                    deletingRef.current = null;
+                    event.preventDefault();
+                    return;
+                  }
+                  // A confirmed delete is already out for this chat. Opening it
+                  // now lands the user in a tab whose transcript is about to
+                  // stop existing, and every later send in it would 404.
+                  if (inFlightDeletes.current.has(s.id)) {
+                    event.preventDefault();
+                    return;
+                  }
+                  onOpenSession(s.id, title);
+                }}
+                // Announced, because the trash button is `tabIndex={-1}` and a
+                // screen reader never reaches its label. Without this the row
+                // reads as "Browser chat" with no hint that it can be deleted.
+                aria-keyshortcuts="Delete"
+                onKeyDown={(event) => {
+                  // Delete lives on the *item*, because that is the only thing
+                  // a keyboard can reach. Radix gives the menu roving focus and
+                  // swallows Tab, so the trash button below is pointer-only no
+                  // matter what handlers it carries; arrow keys move between
+                  // items and never into one.
+                  if (event.key !== "Delete" && event.key !== "Backspace") return;
+                  event.preventDefault();
+                  if (openSessionIds.has(s.id)) return;
+                  void deleteSession(s, title);
+                }}
               >
                 <MessageSquareTextIcon className="size-4 shrink-0" />
                 <div className="flex min-w-0 flex-col">
@@ -161,6 +278,56 @@ function HistoryMenu({
                     {s.messageCount === 1 ? "" : "s"}
                   </span>
                 </div>
+                {s.headless ? (
+                  <InfoTooltip
+                    content={
+                      <>
+                        <b>Started by an MCP client</b>
+                        <br />
+                        You can reopen and continue it here, but this chat
+                        cannot ask you a clarifying question — the interview
+                        tool stays off for the life of the session.
+                      </>
+                    }
+                  >
+                    <Badge variant="secondary" className="ml-auto shrink-0 text-[10px]">
+                      MCP
+                    </Badge>
+                  </InfoTooltip>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={openSessionIds.has(s.id)}
+                  title={
+                    openSessionIds.has(s.id)
+                      ? "This chat is open in a tab. Close it first."
+                      : undefined
+                  }
+                  aria-label={`Delete ${title}`}
+                  // Out of the tab order on purpose. Radix already prevents Tab
+                  // from reaching it, so a focusable control here would only be
+                  // a focus target screen-reader users can never land on; the
+                  // item's Delete key is the keyboard route.
+                  tabIndex={-1}
+                  className={cn(
+                    "shrink-0 rounded p-1 text-muted-foreground opacity-0 transition",
+                    "hover:bg-destructive/10 hover:text-destructive",
+                    "focus-visible:opacity-100 group-hover:opacity-100",
+                    "disabled:cursor-not-allowed disabled:hover:bg-transparent",
+                    "disabled:hover:text-muted-foreground",
+                    s.headless ? "" : "ml-auto",
+                  )}
+                  onClick={(event) => {
+                    // Set here rather than on pointerdown so the same handler
+                    // covers mouse and touch; it still runs before the item's
+                    // onSelect sees the bubbled click.
+                    deletingRef.current = s.id;
+                    event.stopPropagation();
+                    void deleteSession(s, title);
+                  }}
+                >
+                  <Trash2Icon className="size-3.5" />
+                </button>
               </DropdownMenuItem>
             );
           })
@@ -263,6 +430,9 @@ export function ChatTabsBar({
   canExport = false,
 }: ChatTabsBarProps) {
   const atLimit = tabs.length >= maxTabs;
+  const openSessionIds = new Set(
+    tabs.map((tab) => tab.sessionId).filter((id): id is string => Boolean(id)),
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -423,7 +593,11 @@ export function ChatTabsBar({
             <PlusIcon className="size-3.5" />
           </button>
         </InfoTooltip>
-        <HistoryMenu projectId={projectId} onOpenSession={onOpenSession} />
+        <HistoryMenu
+          projectId={projectId}
+          onOpenSession={onOpenSession}
+          openSessionIds={openSessionIds}
+        />
       </div>
 
       <div className="shrink-0 flex items-center gap-1 pl-2 border-l">

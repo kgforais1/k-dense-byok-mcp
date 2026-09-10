@@ -79,6 +79,7 @@ place reviewers go to learn what a doc covers.
 | `../architecture.md` | Product (architecture) | Users and integrators | Runtime architecture changes (new tool family, new store, new provider) | Code; this doc is product-facing, not contributor-facing. |
 | `../file-previews.md` | Product (file previews) | Users | New viewer added to the registry | `web/src/lib/viewers/registry.ts`. |
 | `../limitations.md` | Product (limitations) | Users and integrators | Provider refusal, trust boundary, harness pin change | Code and tests; the limitations page is short and explicit. |
+| `../kady-as-mcp-server.md` | Product (inbound MCP) | Users driving Kady from another MCP client | Inbound tool added or removed, `KADY_MCP_ENABLED`/loopback rule change, `poll_run` status or field change | `server/src/mcp-server/` and `server/src/config.ts`. |
 
 ## Freshness rules
 

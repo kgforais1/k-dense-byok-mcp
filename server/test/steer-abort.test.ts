@@ -118,6 +118,7 @@ vi.mock("../src/agent/session-registry.ts", () => ({
     removeRuntimeApiKey: vi.fn(),
   })),
   getModelRegistry: vi.fn(() => ({ find: () => null })),
+  isDeletedSession: vi.fn(() => false),
   createSession: vi.fn(),
   getSession: vi.fn(async (_projectId: string, _paths: unknown, id: string) =>
     fakeSessions.get(id) ?? null,

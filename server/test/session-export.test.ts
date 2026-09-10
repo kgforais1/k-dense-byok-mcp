@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import {
+  findSessionFile,
+  ownsSessionFile,
   indexToolResults,
   readRows,
   toNotebook,
@@ -256,5 +258,109 @@ describe("toHistory", () => {
       msg({ role: "user", content: [{ type: "text", text: "hi" }] }),
     ]));
     expect(plain[0].images).toBeUndefined();
+  });
+});
+
+describe("findSessionFile", () => {
+  // Pi writes `<timestamp>_<id>.jsonl`, so the lookup has to match a suffix.
+  // Without the separator the id `23` also matches `..._123.jsonl`, and
+  // `get_session_history` hands back a different session's whole transcript.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-find-session-"));
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => vi.restoreAllMocks());
+  const paths = { sessionsDir: dir } as unknown as Parameters<typeof findSessionFile>[0];
+
+  /** A transcript shaped the way Pi writes one: header row first. */
+  function write(name: string, headerId: string | null): string {
+    const file = path.join(dir, name);
+    fs.writeFileSync(
+      file,
+      headerId === null
+        ? "{}\n"
+        : `${JSON.stringify({ type: "session", version: 3, id: headerId, timestamp: "2026-01-01T00:00:00.000Z" })}\n`,
+    );
+    return file;
+  }
+
+  it("does not return a session whose id merely ends with the one asked for", () => {
+    const neighbour = write("20260101-000000_123.jsonl", "123");
+
+    expect(findSessionFile(paths, "23")).toBeNull();
+    expect(findSessionFile(paths, "123")).toBe(neighbour);
+  });
+
+  it("finds a transcript written under its bare id", () => {
+    const bare = write("plain.jsonl", "plain");
+    expect(findSessionFile(paths, "plain")).toBe(bare);
+  });
+
+  it("passes over a stray file that shares the name but not the header", () => {
+    const real = write("20260101-000000_77.jsonl", "77");
+    write("77.jsonl", null);
+
+    // Readdir order is filesystem-dependent, and every Pi filename starts with
+    // a year, so the stray sorts second here and the bug would hide. Reversing
+    // the listing is what makes this test able to fail.
+    const readdir = fs.readdirSync;
+    vi.spyOn(fs, "readdirSync").mockImplementation(((target: string, options: never) =>
+      target === dir
+        ? [...(readdir(target, options) as unknown as string[])].reverse()
+        : readdir(target, options)) as typeof fs.readdirSync);
+
+    expect(findSessionFile(paths, "77")).toBe(real);
+  });
+});
+
+describe("ownsSessionFile", () => {
+  // The header is read a chunk at a time rather than by slurping the file, so
+  // the cases that matter are the boundaries of that scan.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-owns-session-"));
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  function write(name: string, contents: string): string {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, contents);
+    return file;
+  }
+
+  const header = (id: string, pad = "") =>
+    JSON.stringify({ type: "session", version: 3, id, cwd: pad || "/sb" });
+
+  it("matches a header with no trailing newline", () => {
+    expect(ownsSessionFile(write("no-newline.jsonl", header("a")), "a")).toBe(true);
+  });
+
+  it("matches a header longer than one read chunk", () => {
+    // 64 KiB is the chunk size, so this header spans several reads and the
+    // pieces have to be joined in order for `JSON.parse` to see valid JSON.
+    const file = write("long.jsonl", `${header("b", "/sb/".padEnd(200_000, "x"))}\n{"type":"message"}\n`);
+    expect(ownsSessionFile(file, "b")).toBe(true);
+  });
+
+  it("gives up rather than reading a file that has no line break at all", () => {
+    // A newline-free file returns false either way, so the answer alone cannot
+    // show the scan stopped. The read count can: at a 64 KiB chunk and a 1 MiB
+    // limit this is 16 reads, where reading all 4 MiB would be 64.
+    const file = write("blob.jsonl", "x".repeat(4 * 1024 * 1024));
+    const reads = vi.spyOn(fs, "readSync");
+    try {
+      expect(ownsSessionFile(file, "c")).toBe(false);
+      expect(reads.mock.calls.length).toBeLessThan(20);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  it("refuses a header whose id is a different session", () => {
+    expect(ownsSessionFile(write("other.jsonl", `${header("d")}\n`), "e")).toBe(false);
+  });
+
+  it("refuses an empty file and a first row that is not JSON", () => {
+    expect(ownsSessionFile(write("empty.jsonl", ""), "f")).toBe(false);
+    expect(ownsSessionFile(write("junk.jsonl", "not json\n"), "f")).toBe(false);
+  });
+
+  it("refuses a file that is not there", () => {
+    expect(ownsSessionFile(path.join(dir, "absent.jsonl"), "g")).toBe(false);
   });
 });

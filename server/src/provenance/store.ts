@@ -16,6 +16,7 @@
  * tool class earns its level.
  */
 import crypto from "node:crypto";
+import { containedIn } from "../paths-contained.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { activePaths, resolvePaths } from "../projects.ts";
@@ -124,7 +125,7 @@ export function provenanceSessionDir(sessionId: string, projectId?: string): str
   }
   // Matches notebook-store: an omitted projectId means "the request's project".
   const paths = projectId ? resolvePaths(projectId) : activePaths();
-  return path.join(paths.provenanceDir, sessionId);
+  return containedIn(paths.provenanceDir, sessionId);
 }
 
 export function stepsPath(sessionId: string, projectId?: string): string {

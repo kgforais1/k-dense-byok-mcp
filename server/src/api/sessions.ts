@@ -50,6 +50,7 @@ import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
 import { runBroker, type RunHandle } from "../agent/run-broker.ts";
 import { runStartFailure } from "../agent/run-start-errors.ts";
 import { persistTerminalRunResult } from "../agent/run-results.ts";
+import { isHeadlessSession } from "../agent/headless-sessions.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
 import { SandboxError } from "../sandbox-fs.ts";
 import {
@@ -60,6 +61,8 @@ import {
 import { toHistory } from "../agent/session-history.ts";
 import {
   createSession,
+  deleteSession,
+  isDeletedSession,
   getModelRegistry,
   getModelRuntime,
   getSession,
@@ -207,7 +210,10 @@ async function prepareRun(
   const projectId = currentProjectId();
   const paths = activePaths();
   const session = await getSession(projectId, paths, sessionId);
-  if (!session) {
+  // Checked after the await, not before: a delete landing inside `getSession`
+  // would otherwise pass this function's busy check below and start a run on a
+  // session whose transcript no longer exists.
+  if (!session || isDeletedSession(projectId, sessionId)) {
     return { failure: { statusCode: 404, body: { detail: "No such session" } } };
   }
 
@@ -565,6 +571,36 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     return { id: session.sessionId, sessionFile: session.sessionFile };
   });
 
+  app.delete<{ Params: { id: string } }>("/sessions/:id", async (req, reply) => {
+    try {
+      const projectId = currentProjectId();
+      const paths = activePaths();
+      const result = deleteSession(projectId, paths, req.params.id);
+      switch (result) {
+        case "not_found":
+          reply.code(404);
+          return { detail: "No such session" };
+        case "run_active":
+          reply.code(409);
+          // The machine-readable reason matches the run-start conflict — it is
+          // the same condition — but the sentence has to describe a refused
+          // delete, not a refused turn.
+          return {
+            detail: "That session has a run in flight; wait for it to finish",
+            reason: "run_already_active",
+          };
+        case "not_deleted":
+          reply.code(500);
+          return { detail: "The session transcript could not be removed" };
+        case "deleted":
+          return { deleted: true };
+      }
+    } catch (err) {
+      reply.code(400);
+      return { detail: (err as Error).message };
+    }
+  });
+
   app.get("/sessions", async () => {
     const infos = await listSessions(activePaths());
     return infos.map((i) => ({
@@ -574,6 +610,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       modified: i.modified,
       messageCount: i.messageCount,
       firstMessage: i.firstMessage,
+      headless: isHeadlessSession(currentProjectId(), i.id),
     }));
   });
 

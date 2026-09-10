@@ -294,6 +294,13 @@
       "description": "User-facing guide to project vs global skills, manifest v2 semantics, install/update flows, and the catalogue sync cadence."
     },
     {
+      "id": "product-kady-as-mcp-server",
+      "category": "product-documentation",
+      "path": "docs/kady-as-mcp-server.md",
+      "name": "Kady as an MCP server",
+      "description": "User-facing setup for driving Kady from another MCP client: the KADY_MCP_ENABLED opt-in, the loopback-only endpoint, X-Project-Id scoping, and the five inbound tools. The opposite direction from docs/mcp-servers.md."
+    },
+    {
       "id": "changelog",
       "category": "release-record",
       "path": "CHANGELOG.md",

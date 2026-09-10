@@ -119,18 +119,60 @@ export function sessionFileCandidates(paths: ProjectPaths, sessionId: string): s
  */
 export function ownsSessionFile(file: string, sessionId: string): boolean {
   try {
-    for (const line of fs.readFileSync(file, "utf-8").split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const row = JSON.parse(trimmed) as { type?: string; id?: string };
-      return row.type === "session" && row.id === sessionId;
-    }
+    const header = readFirstLine(file);
+    if (!header) return false;
+    const row = JSON.parse(header) as { type?: string; id?: string };
+    return row.type === "session" && row.id === sessionId;
   } catch {
     // Unreadable, or a first row that is not JSON. Ownership cannot be shown,
     // so the caller is told this is not the file.
     return false;
   }
-  return false;
+}
+
+/** How far to look for the end of the header row before giving up. */
+const HEADER_SCAN_LIMIT = 1024 * 1024;
+
+/**
+ * The first non-empty line of `file`, or null.
+ *
+ * Reading the whole transcript to look at one row is what this avoids. A
+ * transcript grows without bound — prose, tool output, base64 images — and
+ * `findSessionFile` now asks this question once per candidate, on the request
+ * path. Pi reads its own headers the same bounded way, through
+ * `readTextLines(path, { maxLines: 1 })` (`harness/session/jsonl/repo.js:42`).
+ *
+ * The scan stops at a megabyte. A header that long is not a header, and
+ * without a stop a file with no newline in it would be read entirely, which is
+ * the cost this exists to avoid.
+ *
+ * A leading blank line is not skipped. Pi's header is the first row of the
+ * file, and `JsonlSessionStorage.load` rejects a file whose first physical
+ * line is empty (`harness/session/jsonl/storage.js:45`), so a transcript that
+ * starts with one is not a transcript this server can open either.
+ */
+function readFirstLine(file: string): string | null {
+  const handle = fs.openSync(file, "r");
+  try {
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    const seen: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const read = fs.readSync(handle, chunk, 0, chunk.length, null);
+      if (read === 0) break;
+      const filled = chunk.subarray(0, read);
+      const newline = filled.indexOf(0x0a);
+      // Copied, because the next `readSync` writes over this same buffer.
+      seen.push(Buffer.from(newline >= 0 ? filled.subarray(0, newline) : filled));
+      if (newline >= 0) break;
+      total += read;
+      if (total >= HEADER_SCAN_LIMIT) return null;
+    }
+    const line = Buffer.concat(seen).toString("utf-8").trim();
+    return line === "" ? null : line;
+  } finally {
+    fs.closeSync(handle);
+  }
 }
 
 /**

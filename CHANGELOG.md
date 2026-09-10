@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reorganized planning artifacts: moved plans into `dev-docs/plans/` (with completed plans archived in `dev-docs/plans/completed/`) and tracked roadmap in `dev-docs/todo.md`.
 
 ### Fixed
+- **Security: dependency alerts** ([#24](https://github.com/kgforais1/k-dense-byok-mcp/pull/24)): updated `next` to 16.3.4, clearing two critical advisories (CVE-2026-75604, GHSA-2xp9-vwfh-vxw4) along with the `postcss` and `sharp` advisories that are only fixable through it. A further round of transitive updates in both packages clears `fastify`, `find-my-way`, `ip-address`, `qs`, `protobufjs`, `body-parser`, `browserslist`, `lodash-es`, `mermaid`, `picomatch`, `uuid` and others. No behaviour change is expected; this is dependency maintenance recorded here because the advisories are user-relevant.
 - **Transcript lookup and path containment** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20)):
   - A session is identified by its transcript header rather than its filename, so a stray file named after a session id can no longer shadow or hide the real one. The header is read with a bounded scan instead of loading the whole transcript.
   - `containedIn` refuses an absolute name outright, and its error names neither the root nor the offending path — an absolute name that happened to land inside the root previously passed the containment check without the root taking part.

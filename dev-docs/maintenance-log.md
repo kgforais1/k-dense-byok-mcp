@@ -6,6 +6,50 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
 
 ## Log Entries
 
+### 2026-09-10: Dependency Alert Clearance and CodeQL Sample Trace
+- **PR:** [#24](https://github.com/kgforais1/k-dense-byok-mcp/pull/24) (triage plan: [#23](https://github.com/kgforais1/k-dense-byok-mcp/pull/23))
+- **Category:** security / dependency
+- **Summary:**
+  - `npm audit fix` in `server/` (10 vulnerable packages → 1) and `web/`
+    (29 → 7), lockfile-only, no `package.json` edits and no major versions.
+  - `next` 16.2.11 → 16.3.4 with `eslint-config-next` in lockstep, both
+    keeping their exact pins. This cleared the repo's only two critical
+    alerts (CVE-2026-75604 / GHSA-2xp9-vwfh-vxw4) and the `postcss` and
+    `sharp` highs, which `npm audit` reported as fixable only through `next`.
+    Took 16.3.4 over the advisory's first-patched 16.3.3: same patch line,
+    and what npm resolves to.
+  - Raised the `web/` vitest floor to 4.1.11. `vitest` and
+    `@vitest/coverage-v8` depend on each other and each held the other at
+    4.1.4 inside a range that permitted 4.1.11; `npm update` was a no-op and
+    an explicit install was needed.
+  - Dismissed both `adm-zip` alerts as `not_used` with call-site evidence.
+    Every open adm-zip advisory is an extraction bug and this repo only ever
+    writes archives (`server/src/agent/notebook-zip.ts:38`); CVE-2026-76845
+    has no fixed release at all, 0.6.0 being inside its range. An expiry note
+    now sits in `notebook-zip.ts` so the reasoning is revisited if an extract
+    path is added.
+  - Closed stale Dependabot PRs #5 and #6 (open since 2026-09-02, overlapping,
+    missing the `next` critical, and #6 carried a `@hono/node-server` major
+    where 1.19.15 was the patch).
+  - Folded `pdf-annotations-store.ts`'s private `isWithin` into the exported
+    one in `sandbox-fs.ts` — one containment barrier instead of two.
+- **Verification:**
+  - `server`: typecheck, 785 tests, lint.
+  - `web`: typecheck, 541 tests, `next build`, lint with 0 errors.
+  - Alert count 49 → 8 open, all remaining ones read and accounted for.
+- **Follow-ups:**
+  - `pdfjs-dist` v5 → v6 is deliberately not in this pass; it needs the PDF
+    viewer exercised by hand, and `pdf-viewer.tsx:61` carries a polyfill
+    documented as required for 5.6+ that must be re-checked against v6.
+  - The 183 `js/path-injection` CodeQL alerts remain open by design. A
+    five-alert hand trace found all five guarded, but also found more barrier
+    idioms than expected and one **indirect** barrier
+    (`skills-install.ts:464`, guarded only because `findSkillDir` returns
+    `null` and callers 404 on it) that no sanitizer-style model can express.
+    Recorded in the triage plan.
+
+---
+
 ### 2026-09-05: Closing Checklist Belongs in the Implementing PR
 - **PR:** [#13](https://github.com/kgforais1/k-dense-byok-mcp/pull/13)
 - **Category:** operational

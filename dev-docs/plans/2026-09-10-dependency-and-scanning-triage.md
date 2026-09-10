@@ -104,8 +104,8 @@ only so the next reader does not re-open the question.
 
 ### Bucket 3 — not reachable in this codebase
 
-**`adm-zip` (2 high + 1 medium, and the medium has no patch at all).** These do
-not all have the same shape, and the difference matters. GHSA-vwc7-r8mq-g2x9
+**`adm-zip` (two alerts — one high, one medium, and the medium has no patch at
+all).** They do not have the same shape, and the difference matters. GHSA-vwc7-r8mq-g2x9
 (CVE-2026-76845, symlink-following overwrite, fixed version `none`) is
 extraction-only. GHSA-xcpc-8h2w-3j85's 4 GB allocation is not: it fires on
 `readFile`, `readAsText`, `entry.getData()` and `test()` too, so merely parsing
@@ -120,12 +120,11 @@ tests do construct `new AdmZip(buffer)`, but only on buffers they just built.
 
 Note that 0.6.0 does not fix CVE-2026-76845 either — the advisory range is
 "0.5.9 through 0.6.0", and there is no fixed release. So the 0.5.17 → 0.6.0
-breaking bump is elective rather than urgent, and it would clear two of the
-three advisories while leaving the symlink one open at the newest version
-available. Anyone who later adds an extract path inherits an unpatched
-dependency, not merely an unfixed alert. Dismiss all three as "vulnerable code is not actually used", with the
-call-site evidence in the dismissal comment, and bump on the next convenient
-pass. **If anything ever adds an extract path, this reasoning expires** — worth
+breaking bump is elective rather than urgent, and it would clear the high while
+leaving the symlink medium open at the newest version available. Anyone who
+later adds an extract path inherits an unpatched dependency, not merely an
+unfixed alert. Dismiss both as `not_used`, with the call-site evidence in the
+dismissal comment, and bump on the next convenient pass. **If anything ever adds an extract path, this reasoning expires** — worth
 a comment in `notebook-zip.ts` saying so.
 
 ### The two open Dependabot PRs
@@ -264,7 +263,7 @@ unless it turns out to be trivial.
       `sharp` clear as a consequence rather than assuming it.
 - [ ] Bucket 2: `pdfjs-dist` v5 → v6, on its own branch, with the PDF viewer
       exercised by hand as well as by `pdf-viewer-init.test.tsx`.
-- [x] Bucket 3: dismiss the three `adm-zip` alerts with call-site evidence; add
+- [x] Bucket 3: dismiss both `adm-zip` alerts with call-site evidence; add
       the expiry comment to `notebook-zip.ts`.
 - [x] CodeQL: sample five path-injection alerts by hand and record the result.
 - [x] CodeQL: fold `pdf-annotations-store.ts`'s private `isWithin` into the

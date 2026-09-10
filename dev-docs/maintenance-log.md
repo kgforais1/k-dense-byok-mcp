@@ -18,10 +18,13 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
     `sharp` highs, which `npm audit` reported as fixable only through `next`.
     Took 16.3.4 over the advisory's first-patched 16.3.3: same patch line,
     and what npm resolves to.
-  - Raised the `web/` vitest floor to 4.1.11. `vitest` and
-    `@vitest/coverage-v8` depend on each other and each held the other at
-    4.1.4 inside a range that permitted 4.1.11; `npm update` was a no-op and
-    an explicit install was needed.
+  - Raised the vitest floor to 4.1.11 in **both** packages. In `web/`,
+    `vitest` and `@vitest/coverage-v8` depend on each other and each held the
+    other at 4.1.4 inside a range that permitted 4.1.11; `npm update` was a
+    no-op and an explicit install was needed. `server/` had already resolved
+    to 4.1.11, but its declared range was still `^4.1.4` — inside
+    CVE-2026-84373's `>=2.1.0 <4.1.11` — so a fresh resolution could have
+    reintroduced it. Raising the floor closes that.
   - Dismissed both `adm-zip` alerts as `not_used` with call-site evidence.
     Every open adm-zip advisory is an extraction bug and this repo only ever
     writes archives (`server/src/agent/notebook-zip.ts:38`); CVE-2026-76845

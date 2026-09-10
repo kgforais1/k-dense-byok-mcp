@@ -24,6 +24,18 @@
  *
  * The tests do call `new AdmZip(buffer)`, but only on buffers they just
  * built here.
+ *
+ * One thing this does *not* claim: that Kady never touches an untrusted zip.
+ * A user can drop one in the sandbox and ask the agent to open it. That read
+ * happens inside the sandbox with the agent's own tools — `unzip`, Python's
+ * `zipfile` — which are not this dependency and carry their own risk. The
+ * claim here is only about adm-zip's reachability from server code, and the
+ * paths that could have broken it do not: `/sandbox/upload`
+ * (`api/sandbox.ts:265`) writes the bytes it receives without unpacking them,
+ * `project-archive.ts` builds archives with `archiver`, and `skills-fetch.ts`
+ * shells out to a fetcher rather than parsing an archive in process. If a
+ * server route ever parses a user-supplied archive, check what it parses it
+ * with before assuming this paragraph still covers it.
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -206,6 +206,23 @@ Three requirements follow, and the implementation is not correct without them:
 - **Refresh on every discovery call.** The routes overwrite, never merge, so
   reopening the picker is always a repair.
 
+**The env knob outranks the probe.** The first draft resolved cache first and
+still called these knobs "overrides", which they would not have been: both
+discovery routes fill the cache the moment the picker opens, so a probed value
+would have silently beaten anything the operator configured. Resolve env first.
+That is what makes the knob an escape hatch — it is there for the case where the
+probe is available but wrong, which is the only case anyone would reach for it.
+
+**Key the cache on the bare model id, not the provider-prefixed ref.** This is
+easy to get backwards. `resolveModel` strips the prefix before it calls either
+builder — `buildOllamaModel(r.slice("ollama/".length))` at `models.ts:432`, and
+the same for `openai-compatible` at `:441` — so the builders only ever see the
+bare id and cannot look up a ref-keyed entry. Every warm entry would miss and
+fall back to 128,000, which is exactly the kind of failure that looks like it
+works. Key on `(providerId, baseUrl, bareModelId)`. Each builder already holds
+its own provider and base URL as constants, so it can construct the key from
+what it has, and no signature changes.
+
 **Prefer `loaded_context_length` over `max_context_length`** when both are
 present, per the reasoning above: the loaded value is what the request is
 measured against, and it can be lower.
@@ -277,13 +294,18 @@ documentation or from this plan's guesses.
 ### Phase 2 — Cache and probe
 
 - [ ] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
-      `(baseUrl, modelRef)` with a 60 s TTL, a setter, and a lookup that treats
-      an expired entry as a miss.
-- [ ] Fill the cache from `GET /openai-compatible/models` by parsing
-      `/api/v0/models`, preferring `loaded_context_length` over
-      `max_context_length`. Keep the existing lenient parsing style — a
-      malformed entry must not blank the list, so treat a bad or missing length
-      as absent rather than as zero.
+      `(providerId, baseUrl, bareModelId)` with a 60 s TTL, a setter, and a
+      lookup that treats an expired entry as a miss. Note the key is the
+      **bare** id, not the provider-prefixed ref — see the note below on why.
+- [ ] Fill the cache from `GET /openai-compatible/models` with a **second,
+      independent** call to `/api/v0/models`, preferring
+      `loaded_context_length` over `max_context_length`. It must not replace
+      the `/v1/models` call and must not share its failure. `/api/v0/models` is
+      LM Studio's own endpoint; vLLM, text-generation-webui and the rest answer
+      `/v1/models` and 404 the native one. A 404, a timeout or a malformed body
+      means "no context metadata", never "no models" — the route must still
+      return every row `/v1/models` gave it. Keep the existing lenient parsing
+      style, so a bad or missing length is absent rather than zero.
 - [ ] Add the on-demand Ollama route (one model id, one `POST /api/show`) and
       have the picker call it on selection. Do **not** fan out across
       `/api/tags`; see the Ollama section above for why.
@@ -297,16 +319,23 @@ the TTL refreshes it; `npm run verify -- server` green.
 
 - [ ] Add `OLLAMA_CONTEXT_WINDOW` and `OPENAI_COMPATIBLE_CONTEXT_WINDOW` to
       `config.ts`, beside the existing `*_BASE_URL` knobs.
-- [ ] In both builders, resolve in order: cache (unexpired), then env knob,
-      then 128,000.
+- [ ] In both builders, resolve in order: env knob, then cache (unexpired),
+      then 128,000. The env value wins over a probed one — see the precedence
+      note in the design decisions.
 - [ ] Update the comment at `models.ts:243`. It is currently correct about
       `/v1/models` and should stay — extend it to say why the native endpoint is
       consulted instead, so the next reader does not re-derive this.
-- [ ] Update the two existing 32K assertions in
-      `server/test/openai-compatible.test.ts`.
+- [ ] Fix the test expectations, which are not what the first draft of this
+      plan claimed. `server/test/openai-compatible.test.ts` has **no** 32K
+      builder assertions to update. What it does have is two route assertions
+      on `context_length: 0` (`:229`, `:239`), and those break the moment the
+      routes return real values. Update those, and add the builder assertions
+      that do not exist yet — otherwise the fallback change ships with no
+      regression coverage at all.
 
 **Exit criteria:** `resolveModel("openai-compatible/qwen/qwen3.8-27b", …)`
-returns 262,144 with a warm cache, and 128,000 with a cold or expired one.
+returns 262,144 with a warm cache, 128,000 with a cold or expired one, and the
+env value whenever one is set regardless of cache state.
 
 ### Phase 4 — Confirm the bug is actually gone
 
@@ -331,6 +360,10 @@ recorded as unexplained with the compaction hypothesis ruled out.
 - No fan-out inside a discovery route. The Ollama probe is one model per call,
   on demand; an N+1 across `/api/tags` would blow the 2 s budget on the
   picker's path.
+- The native LM Studio probe must never be able to empty the model list. The
+  OpenAI-compatible route serves vLLM and others that do not implement
+  `/api/v0/models`; losing context metadata is acceptable, losing the models is
+  not.
 - Keep the existing 2 s `AbortController` timeout on both routes. This is on the
   picker's path and must not hang the UI.
 - `resolveModel` stays synchronous.
@@ -349,6 +382,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | Cold start no longer under-declares | With the cache empty, the builders return 128,000, above the 44,409 + 16,384 floor |
 | A stale entry cannot persist | Reduce the loaded window in LM Studio; the declared value follows within the TTL without reopening the picker |
 | Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |
+| A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |
+| The env knob is actually an override | Set `OPENAI_COMPATIBLE_CONTEXT_WINDOW`, warm the cache, confirm the env value is what `resolveModel` returns |
+| A warm cache entry is actually found | The builders' bare-id lookup hits an entry written by the discovery route, rather than silently falling back |
 | A dead local server is harmless | Probe with nothing listening; run still resolves at the fallback |
 | The original symptom is fixed | One local run returns a non-empty assistant message |
 | No regression elsewhere | `npm run verify -- server` green; 785 tests pass |

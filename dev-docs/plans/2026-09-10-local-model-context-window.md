@@ -195,14 +195,27 @@ and unguessable.
 
 Three requirements follow, and the implementation is not correct without them:
 
-- **Key the cache by base URL as well as model ref.** A module-level
-  `Map<modelRef, number>` is process-global. Two projects pointed at different
-  local servers would otherwise share one entry and serve each other's window.
-  Key on `(baseUrl, modelRef)`.
-- **Give entries a TTL** — 60 seconds is a reasonable start. Local servers are
-  restarted and reconfigured constantly during exactly the kind of local-model
-  work this feature serves, so an entry should not outlive a plausible fiddle.
-  On expiry, fall back rather than blocking on a refresh.
+- **Use one cache key everywhere: `(providerId, normalizedBaseUrl,
+  bareModelId)`.** This is the canonical contract and nothing in this plan may
+  restate it differently. `normalizedBaseUrl` means trailing slashes stripped,
+  matching the `replace(/\/+$/, "")` the builders and routes already apply.
+  A bare `Map<modelRef, number>` would be process-global, so two projects
+  pointed at different local servers would share one entry and serve each
+  other's window. See the note below on why the id is bare rather than
+  prefixed.
+- **Give entries a 60 s TTL, and be honest about what that buys.** It bounds
+  how long a wrong value survives. It does **not** repair one. On expiry the
+  lookup misses and the builder falls back, because nothing refreshes the cache
+  on its own — only a discovery call or the on-demand Ollama probe writes to it,
+  and both are driven by the UI.
+
+  Worked through, the 256K-to-32K swap therefore ends at 128,000, not at
+  32,768. That is still wrong for that model, and this plan does not fix it.
+  What it does is convert a permanently wrong value into one that expires into
+  a wrong value that fails loudly with an actionable message
+  (`agent-session.js:1595`), and that any picker interaction repairs. Closing
+  the gap properly needs a refresh trigger on the run path, which is the async
+  round trip this plan exists to avoid. Recorded here rather than papered over.
 - **Refresh on every discovery call.** The routes overwrite, never merge, so
   reopening the picker is always a repair.
 
@@ -219,9 +232,9 @@ builder — `buildOllamaModel(r.slice("ollama/".length))` at `models.ts:432`, an
 the same for `openai-compatible` at `:441` — so the builders only ever see the
 bare id and cannot look up a ref-keyed entry. Every warm entry would miss and
 fall back to 128,000, which is exactly the kind of failure that looks like it
-works. Key on `(providerId, baseUrl, bareModelId)`. Each builder already holds
-its own provider and base URL as constants, so it can construct the key from
-what it has, and no signature changes.
+works. That is why the canonical key uses the bare id. Each builder already
+holds its own provider and base URL as constants, so it can construct the key
+from what it has, and no signature changes.
 
 **Prefer `loaded_context_length` over `max_context_length`** when both are
 present, per the reasoning above: the loaded value is what the request is
@@ -266,7 +279,7 @@ todo for the prompt floor itself. Do not quietly widen this plan to cover it.
 ## Proposed information architecture / file changes
 
 ```text
-server/src/agent/local-context.ts      NEW — probe helpers + the (baseUrl, ref) TTL cache
+server/src/agent/local-context.ts      NEW — probe helpers + the canonical-key TTL cache
 server/src/agent/models.ts             MODIFIED — builders read the cache, fallback 128K
 server/src/api/system.ts               MODIFIED — LM Studio route fills the cache;
                                        NEW route probes one Ollama model on demand
@@ -294,13 +307,17 @@ documentation or from this plan's guesses.
 ### Phase 2 — Cache and probe
 
 - [ ] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
-      `(providerId, baseUrl, bareModelId)` with a 60 s TTL, a setter, and a
-      lookup that treats an expired entry as a miss. Note the key is the
-      **bare** id, not the provider-prefixed ref — see the note below on why.
+      the canonical `(providerId, normalizedBaseUrl, bareModelId)` with a 60 s
+      TTL, a setter, and a lookup that treats an expired entry as a miss. Note
+      the key is the **bare** id, not the provider-prefixed ref — see the note
+      below on why.
 - [ ] Fill the cache from `GET /openai-compatible/models` with a **second,
       independent** call to `/api/v0/models`, preferring
-      `loaded_context_length` over `max_context_length`. It must not replace
-      the `/v1/models` call and must not share its failure. `/api/v0/models` is
+      `loaded_context_length` over `max_context_length`. Issue it
+      **concurrently** with `/v1/models` under one shared 2 s deadline, not
+      after it — serially they would double the route's worst case to 4 s on
+      the picker's path. It must not replace the `/v1/models` call and must not
+      share its failure. `/api/v0/models` is
       LM Studio's own endpoint; vLLM, text-generation-webui and the rest answer
       `/v1/models` and 404 the native one. A 404, a timeout or a malformed body
       means "no context metadata", never "no models" — the route must still
@@ -342,9 +359,9 @@ env value whenever one is set regardless of cache state.
 - [ ] Run one trivial request against LM Studio end to end and confirm a
       non-empty assistant message.
 - [ ] Confirm compaction does not fire on the first turn.
-- [ ] Load the same model in LM Studio at a *reduced* context length, confirm
-      the declared window follows it down, and confirm a stale entry cannot
-      outlive the TTL.
+- [ ] Load the same model in LM Studio at a *reduced* context length and
+      confirm the stale entry cannot outlive the TTL. Expect the fallback, not
+      the new true value — the TTL bounds staleness, it does not refresh.
 - [ ] If the empty-message symptom survives, stop and say so. The mechanism in
       this plan is a hypothesis, and a surviving symptom falsifies it rather
       than calling for a bigger number.
@@ -380,7 +397,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 |---|---|
 | The declared window matches the server | `resolveModel` returns 262,144 for `qwen/qwen3.8-27b` against live LM Studio |
 | Cold start no longer under-declares | With the cache empty, the builders return 128,000, above the 44,409 + 16,384 floor |
-| A stale entry cannot persist | Reduce the loaded window in LM Studio; the declared value follows within the TTL without reopening the picker |
+| A stale entry cannot persist | Reduce the loaded window in LM Studio; within the TTL the cached 262,144 stops being served and the builder falls back to 128,000. It does not become 32,768 — see the TTL note; reopening the picker is what repairs it |
+| A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` still returns within the shared 2 s deadline |
+| An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |
 | The env knob is actually an override | Set `OPENAI_COMPATIBLE_CONTEXT_WINDOW`, warm the cache, confirm the env value is what `resolveModel` returns |

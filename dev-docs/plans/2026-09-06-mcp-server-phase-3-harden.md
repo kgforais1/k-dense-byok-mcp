@@ -40,18 +40,23 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 - [x] Write `docs/kady-as-mcp-server.md` and register it per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
 - [ ] Validate that doc with a fresh-client walkthrough. Unchecked deliberately: the transcript that backs the "installable by a third party" claim does not exist yet, and the doc is written from the code rather than from a run.
 - [ ] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts.
-- [ ] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`.
+- [x] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`. Both are built; the rest of §10 is still expand-as-needed.
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
 
-The three unticked items above are deliberately still open. This branch covers
-the documentation item and the carried-in review work; packaging, the remaining
-§10 tools, and the CLI reuse map are a second pass, and the fresh-client
-walkthrough transcript that backs the "installable by a third party" acceptance
-measure has not been produced yet. Do not archive this plan until they are.
+The three unticked items above are deliberately still open: packaging, the CLI
+reuse map, and the fresh-client walkthrough transcript that backs the
+"installable by a third party" acceptance measure. Do not archive this plan
+until they are done. The documentation item, the carried-in review work and the
+two session-management tools below have landed.
 
-## Next chunk: session management over MCP
+## Next chunk: session management over MCP — built
+
+Built as specified below. The one thing the spec did not anticipate:
+`SessionManager.list` filters on the transcript header's `cwd`, so a session
+whose header does not name the project sandbox is invisible to
+`list_research_sessions` however it was created. Test fixtures have to carry it.
 
 An MCP client can create sessions it cannot enumerate or remove. The five
 Phase 2 tools cover one research loop and nothing around it, so a scripted

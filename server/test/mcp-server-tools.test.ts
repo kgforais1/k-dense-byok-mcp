@@ -1,21 +1,25 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { FastifyBaseLogger } from "fastify";
 import packageJson from "../package.json";
 
-import { createProject } from "../src/projects.ts";
+import { activePaths, createProject } from "../src/projects.ts";
 import { withActiveProject } from "../src/scope.ts";
 import { RunBroker, runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
 import { persistRunResult } from "../src/agent/run-results.ts";
 import { createKadyMcpServer } from "../src/mcp-server/server.ts";
 import { beginRun } from "../src/api/sessions.ts";
 import { createSession } from "../src/agent/session-registry.ts";
+import { markHeadlessSession } from "../src/agent/headless-sessions.ts";
 
 vi.mock("../src/api/sessions.ts", () => ({ beginRun: vi.fn() }));
 // A real Pi session needs a model runtime; the adapter contract under test is
 // only that it asks for a headless one and returns the id it gets back.
-vi.mock("../src/agent/session-registry.ts", () => ({
+vi.mock("../src/agent/session-registry.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/agent/session-registry.ts")>()),
   createSession: vi.fn(async () => ({
     sessionId: "session-headless",
     sessionFile: "/tmp/session-headless.jsonl",
@@ -30,6 +34,38 @@ const PHASE_2_TOOLS = [
   "start_research_run",
   "poll_run",
 ];
+
+/**
+ * A transcript shaped the way Pi writes one, under the name Pi gives it.
+ *
+ * The header row is not decoration: `findSessionFile` and `deleteSession` both
+ * decide ownership from it, so a fixture without one is not a session either
+ * of them can see.
+ */
+function seedSession(sessionId: string, firstMessage = "hello"): string {
+  const paths = activePaths();
+  fs.mkdirSync(paths.sessionsDir, { recursive: true });
+  const file = path.join(paths.sessionsDir, `20260909-101500_${sessionId}.jsonl`);
+  fs.writeFileSync(
+    file,
+    [
+      // `cwd` is not decoration: `SessionManager.list` filters out any session
+      // whose header cwd does not resolve to the project's sandbox, so a
+      // fixture without it is invisible to `list_research_sessions`.
+      {
+        type: "session",
+        version: 3,
+        id: sessionId,
+        timestamp: "2026-09-09T10:15:00.000Z",
+        cwd: paths.sandbox,
+      },
+      { type: "message", message: { role: "user", content: [{ type: "text", text: firstMessage }] } },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join("\n") + "\n",
+  );
+  return file;
+}
 
 const closeables: Array<{ close(): Promise<void> }> = [];
 
@@ -587,5 +623,130 @@ describe("poll_run abort reporting", () => {
       }),
     );
     expect(payload(durable)).toMatchObject({ status: "aborted" });
+  });
+});
+
+describe("list_research_sessions", () => {
+  it("names the id field the way every other tool takes it", async () => {
+    createProject({ projectId: "mcp-list", name: "MCP list" });
+    withActiveProject("mcp-list", () => seedSession("listed-1", "what is in this dataset"));
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-list", () =>
+      client.callTool({ name: "list_research_sessions" }),
+    );
+
+    const sessions = payload(result).sessions as Array<Record<string, unknown>>;
+    const row = sessions.find((entry) => entry.sessionId === "listed-1");
+    // `sessionId`, not `id`: a client that reads the list and then calls
+    // poll_run must not have to translate the field name in between.
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty("id");
+    expect(row).toMatchObject({
+      firstMessage: "what is in this dataset",
+      headless: false,
+      name: null,
+    });
+  });
+
+  it("marks a session created over MCP as headless", async () => {
+    // The flag is what tells a client the `interview` tool is disabled there,
+    // and it is the one field in the row that is not read off the transcript.
+    createProject({ projectId: "mcp-list-headless", name: "MCP list headless" });
+    const client = await connect();
+
+    const created = await withActiveProject("mcp-list-headless", () =>
+      client.callTool({ name: "create_research_session" }),
+    );
+    expect(created.isError).toBeFalsy();
+    withActiveProject("mcp-list-headless", () => seedSession("session-headless"));
+    markHeadlessSession("mcp-list-headless", "session-headless");
+
+    const result = await withActiveProject("mcp-list-headless", () =>
+      client.callTool({ name: "list_research_sessions" }),
+    );
+    const sessions = payload(result).sessions as Array<Record<string, unknown>>;
+    expect(sessions.find((entry) => entry.sessionId === "session-headless")).toMatchObject({
+      headless: true,
+    });
+  });
+
+  it("is invocable with no arguments at all", async () => {
+    createProject({ projectId: "mcp-list-noargs", name: "MCP list no args" });
+    const client = await connect();
+    const result = await withActiveProject("mcp-list-noargs", () =>
+      client.callTool({ name: "list_research_sessions" }),
+    );
+    expect(result.isError).toBeFalsy();
+  });
+});
+
+describe("delete_research_session", () => {
+  it("removes the transcript and reports it", async () => {
+    createProject({ projectId: "mcp-delete", name: "MCP delete" });
+    const file = withActiveProject("mcp-delete", () => seedSession("doomed"));
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-delete", () =>
+      client.callTool({ name: "delete_research_session", arguments: { sessionId: "doomed" } }),
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(payload(result)).toMatchObject({ sessionId: "doomed", deleted: true });
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it("reports a missing session rather than reporting a delete that did not happen", async () => {
+    createProject({ projectId: "mcp-delete-missing", name: "MCP delete missing" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-delete-missing", () =>
+      client.callTool({ name: "delete_research_session", arguments: { sessionId: "nope" } }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ error: "No such session", sessionId: "nope" });
+  });
+
+  it("refuses while a run is in flight, in the vocabulary start_research_run already uses", async () => {
+    // One vocabulary, not two: a client learns `run_already_active` from the
+    // run-start conflict and meets the same reason here.
+    createProject({ projectId: "mcp-delete-busy", name: "MCP delete busy" });
+    withActiveProject("mcp-delete-busy", () => seedSession("busy"));
+    runBroker.start("mcp-delete-busy", "busy", metadata("run-busy"));
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-delete-busy", () =>
+      client.callTool({ name: "delete_research_session", arguments: { sessionId: "busy" } }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({ reason: "run_already_active" });
+  });
+
+  it("turns an id that could never name a session into a tool error, not a throw", async () => {
+    // `deleteSession` throws for these, because the REST route answers 400.
+    // MCP has no status code, so the throw has to become an error result — an
+    // uncaught one would surface as a transport-level failure instead.
+    createProject({ projectId: "mcp-delete-bad", name: "MCP delete bad" });
+    const client = await connect();
+
+    const result = await withActiveProject("mcp-delete-bad", () =>
+      client.callTool({
+        name: "delete_research_session",
+        arguments: { sessionId: "../../etc/passwd" },
+      }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(payload(result).error).toMatch(/Invalid session id/);
+  });
+
+  it("declares itself destructive so a client can prompt before calling it", async () => {
+    const client = await connect();
+    const tool = (await client.listTools()).tools.find(
+      (candidate) => candidate.name === "delete_research_session",
+    );
+    expect(tool?.annotations).toMatchObject({ destructiveHint: true, readOnlyHint: false });
   });
 });

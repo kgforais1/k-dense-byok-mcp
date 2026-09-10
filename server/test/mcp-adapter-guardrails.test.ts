@@ -30,10 +30,14 @@ import { createKadyMcpServer } from "../src/mcp-server/server.ts";
 import { beginRun } from "../src/api/sessions.ts";
 
 vi.mock("../src/api/sessions.ts", () => ({ beginRun: vi.fn() }));
-// A real Pi session needs a model runtime. `getSession` returning null only
-// costs this test the `contextUsage` field; the transcript below is read from
-// disk by `findSessionFile`/`toHistory`, which is the path under test.
-vi.mock("../src/agent/session-registry.ts", () => ({
+// Only the two functions that need a model runtime are replaced. `listSessions`
+// and `deleteSession` stay real: both read what is actually on disk, and a
+// stub returning invented rows would make their cases below unable to detect a
+// leak at all. `getSession` returning null only costs this test the
+// `contextUsage` field; the transcript is read from disk by
+// `findSessionFile`/`toHistory`, which is the path under test.
+vi.mock("../src/agent/session-registry.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/agent/session-registry.ts")>()),
   createSession: vi.fn(async () => ({
     sessionId: "session-headless",
     sessionFile: "/tmp/session-headless.jsonl",
@@ -58,6 +62,14 @@ interface ToolCase {
   tool: string;
   args: Record<string, unknown>;
   setUp?: () => void;
+  /**
+   * Checked before the leak assertions.
+   *
+   * A tool that returns nothing passes a "carries no host path" test for the
+   * wrong reason, so a case whose fixture could silently produce an empty
+   * result says here what it expects to have found.
+   */
+  expect?: (serialized: string) => void;
 }
 
 const closeables: Array<{ close(): Promise<void> }> = [];
@@ -111,13 +123,30 @@ function writeTranscript(): void {
   const paths = activePaths();
   const file = path.join(paths.sandbox, "data/out.csv");
   fs.mkdirSync(paths.sessionsDir, { recursive: true });
+  // A second, disposable transcript so `delete_research_session` can be
+  // exercised on its success branch without removing the one every other case
+  // reads.
+  fs.writeFileSync(
+    path.join(paths.sessionsDir, "20260909-101600_session-doomed.jsonl"),
+    `${JSON.stringify({ type: "session", version: 3, id: "session-doomed", timestamp: "2026-09-09T10:16:00.000Z", cwd: paths.sandbox })}\n`,
+  );
   fs.writeFileSync(
     path.join(paths.sessionsDir, "20260909-101500_session-headless.jsonl"),
     [
       // Pi writes this header when it creates the file, and refuses to load a
       // transcript without one. A fixture that skips it is not a shape the
       // agent can produce.
-      { type: "session", version: 3, id: "session-headless", timestamp: "2026-09-09T10:15:00.000Z" },
+      // `cwd` matters to `SessionManager.list`, which drops any session whose
+      // header cwd is not this project's sandbox. Without it the
+      // `list_research_sessions` case below would list nothing and could not
+      // detect a leak.
+      {
+        type: "session",
+        version: 3,
+        id: "session-headless",
+        timestamp: "2026-09-09T10:15:00.000Z",
+        cwd: paths.sandbox,
+      },
       { type: "message", message: { role: "user", content: [{ type: "text", text: "read it" }] } },
       {
         type: "message",
@@ -194,6 +223,30 @@ describe("no MCP tool result carries an absolute host path", () => {
         },
       },
       {
+        // Real `listSessions`, so this reads the transcripts written above and
+        // the row it returns is the one a client would get. `firstMessage` is
+        // the field worth the check: it is transcript prose, and nothing
+        // relativizes it on the way out.
+        name: "list_research_sessions",
+        tool: "list_research_sessions",
+        args: {},
+        expect: (serialized) => expect(serialized).toContain("session-headless"),
+      },
+      {
+        name: "delete_research_session (deleted)",
+        tool: "delete_research_session",
+        args: { sessionId: "session-doomed" },
+      },
+      {
+        // The error branch, where a raw filesystem or validation message is
+        // likeliest to carry a path. An id this shape is refused before any
+        // path is built, and the message must not name the directory it was
+        // refused from.
+        name: "delete_research_session (refused)",
+        tool: "delete_research_session",
+        args: { sessionId: "../escape" },
+      },
+      {
         // The durable branch reads frames back off disk, which the live case
         // skips entirely.
         name: "poll_run (durable record)",
@@ -223,6 +276,7 @@ describe("no MCP tool result carries an absolute host path", () => {
       // The whole result, not the decoded payload: an error message is a leak
       // surface too.
       const serialized = JSON.stringify(result);
+      entry.expect?.(serialized);
       expect(serialized, `${entry.name} leaked PROJECTS_ROOT`).not.toContain(PROJECTS_ROOT);
       expect(serialized, `${entry.name} leaked a host path`).not.toMatch(HOST_PATH_REGEX);
     }

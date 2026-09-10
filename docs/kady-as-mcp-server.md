@@ -88,7 +88,8 @@ config, or use the default project.
 
 ## The tools
 
-Five tools, meant to be used in this order.
+Seven tools. The first five are meant to be used in this order; the last two
+manage what the others leave behind.
 
 | Tool | What it does |
 |---|---|
@@ -97,6 +98,8 @@ Five tools, meant to be used in this order.
 | `start_research_run` | Sends a prompt to that session and returns a `runId` immediately. The run keeps going server-side. |
 | `poll_run` | Returns the run's status and any new frames. Call it until the status is no longer `running`. |
 | `get_session_history` | Returns the whole stored transcript for a session. |
+| `list_research_sessions` | Lists this project's stored sessions, newest first, with `sessionId`, `name`, `created`, `modified`, `messageCount`, `firstMessage` and `headless`. |
+| `delete_research_session` | Permanently deletes a session and its notebook, provenance and stored run results. Refused while a run is in flight. |
 
 A minimal loop is: `create_research_session` → `start_research_run` → `poll_run`
 until it stops saying `running`.
@@ -143,8 +146,11 @@ files, the sub-agents, the notebook — is the same agent the browser drives.
 
 An MCP-created session shows up in the project's session list in the UI's clock
 menu, and can be reopened there like any other chat. They are not hidden, and
-they are not cleaned up automatically: delete them the same way you delete any
-session when you no longer want them.
+they are not cleaned up automatically. `list_research_sessions` shows you the
+same set the browser does — `headless: true` marks the ones created over MCP —
+and `delete_research_session` removes one, from either interface's point of
+view. Deleting is permanent and takes the notebook and provenance with it; the
+project's cost ledger is kept, because the money was spent.
 
 Each project keeps at most 10 *live* sessions in memory. Older ones are closed
 and reopened from disk on demand, so this is a memory ceiling and not a limit on
@@ -177,9 +183,6 @@ connecting one.
 
 - No authentication, which is why it is loopback-only.
 - No way to abort a run through MCP yet; use the browser.
-- No way to *delete* a session through MCP either. Sessions are listed and
-  deleted from the browser's chat-history menu, so an MCP-only setup can create
-  sessions it cannot clean up.
-- Five tools, not Kady's whole feature surface. Sub-agents, notebooks, and Modal
+- Seven tools, not Kady's whole feature surface. Sub-agents, notebooks, and Modal
   compute are all available *to the agent* during a run, but there is no MCP
   tool that drives them directly.

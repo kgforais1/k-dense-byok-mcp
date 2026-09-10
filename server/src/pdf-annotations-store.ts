@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { isWithin } from "./sandbox-fs.ts";
 
 export interface PdfAnnotationAuthor {
   kind: "user" | "expert";
@@ -68,17 +69,6 @@ export class PdfAnnotationStoreError extends Error {
 const EMPTY_DOC = (): PdfAnnotationsDoc => ({ version: 1, annotations: [] });
 const LOCK_STALE_MS = 30_000;
 const LOCK_TIMEOUT_MS = 5_000;
-
-function isWithin(root: string, target: string): boolean {
-  const normalize = (value: string) =>
-    process.platform === "win32" ? value.toLowerCase() : value;
-  const normalizedRoot = normalize(root);
-  const normalizedTarget = normalize(target);
-  return (
-    normalizedTarget === normalizedRoot ||
-    normalizedTarget.startsWith(normalizedRoot + path.sep)
-  );
-}
 
 function resolvePdf(sandboxRoot: string, pdfPath: string): string {
   if (!pdfPath?.trim() || path.isAbsolute(pdfPath)) {

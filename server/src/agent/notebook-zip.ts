@@ -2,6 +2,14 @@
  * Bundle a session notebook as a zip: lab-notebook.md (links rewritten to the
  * bundle) + the referenced artifact files under artifacts/<sandbox-relative>.
  * Built in memory (adm-zip toBuffer), consistent with /sandbox/download-all.
+ *
+ * This is the only adm-zip call site, and it only ever writes: construct, add,
+ * `toBuffer`. That is load bearing. Every open adm-zip advisory is an
+ * extraction bug, and one of them — CVE-2026-76845, symlink-following overwrite
+ * in `extractAllTo`/`extractEntryTo` — has no fixed release at all; 0.6.0 is
+ * inside its range. Adding an extraction path here would inherit an unpatched
+ * dependency, not merely a noisy alert. Use a different library if you need
+ * one, and revisit the dismissed alerts if this changes.
  * Artifacts that are missing, escape the sandbox, or aren't regular files are
  * skipped and reported in `missing` (the markdown notes them inline).
  */

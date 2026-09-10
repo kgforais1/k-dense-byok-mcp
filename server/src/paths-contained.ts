@@ -23,6 +23,16 @@ import path from "node:path";
  */
 export function containedIn(root: string, name: string): string {
   const base = path.resolve(root);
+  // `path.resolve` discards every earlier argument once it meets an absolute
+  // one, so an absolute `name` never touches `root` at all. Today that name
+  // still has to land inside `base` to survive the check below, but one that
+  // happened to would be returned without ever having been joined — the
+  // caller would believe it had pinned a name under its own directory when
+  // the name had chosen the whole path. `name` is a filename here, never a
+  // path, so refusing outright costs nothing.
+  if (path.isAbsolute(name)) {
+    throw new Error("Refusing an absolute name");
+  }
   const resolved = path.resolve(base, name);
   // `base` already ends in a separator when it is a filesystem root, and
   // doubling it there would reject every name under it.

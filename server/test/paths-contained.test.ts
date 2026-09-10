@@ -34,6 +34,14 @@ describe("containedIn", () => {
     );
   });
 
+  it("refuses an absolute name, even one that lands inside the root", () => {
+    // The first is the obvious case. The second is the one the containment
+    // check cannot catch on its own: it resolves inside `base`, so it would be
+    // returned as though the root had been applied to it.
+    expect(() => containedIn(ROOT, path.join(path.sep, "etc", "passwd"))).toThrow(/absolute/);
+    expect(() => containedIn(ROOT, path.join(ABS_ROOT, "abc.jsonl"))).toThrow(/absolute/);
+  });
+
   it("refuses the root itself and its parent", () => {
     expect(() => containedIn(ROOT, ".")).toThrow(/outside/);
     expect(() => containedIn(ROOT, "..")).toThrow(/outside/);

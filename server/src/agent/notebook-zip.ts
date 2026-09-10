@@ -6,16 +6,24 @@
  * skipped and reported in `missing` (the markdown notes them inline).
  *
  * This is the only adm-zip call site in `src/`, and it only ever writes:
- * construct, add, `toBuffer`. That is load bearing. Every open adm-zip
- * advisory is an extraction bug, and one of them — CVE-2026-76845,
- * symlink-following overwrite in `extractAllTo`/`extractEntryTo` — has no
- * fixed release at all; 0.6.0 is inside its range. Adding an extraction path
- * here would inherit an unpatched dependency, not merely a noisy alert. Use a
- * different library if you need one, and revisit the dismissed alerts if this
- * changes.
+ * `new AdmZip()` empty, `addLocalFile`, `addFile`, `toBuffer`. That is load
+ * bearing, and the reason is narrower than "we don't extract".
  *
- * The tests do read archives (`new AdmZip(buffer)`), but only buffers they
- * just produced, and nothing anywhere calls an extract API.
+ * adm-zip's open advisories split two ways. GHSA-vwc7-r8mq-g2x9
+ * (CVE-2026-76845, symlink-following overwrite) is extraction-only, and has
+ * **no fixed release at all** — 0.6.0 is inside its range. GHSA-xcpc-8h2w-3j85
+ * (4 GB allocation from a forged uncompressed-size header) is *not*: it fires
+ * on `readFile`, `readAsText`, `entry.getData()` and `test()` as well, so any
+ * code that so much as parses an untrusted archive is exposed.
+ *
+ * So the safe property is that nothing here ever hands adm-zip bytes it did
+ * not just produce. Reading an uploaded or downloaded zip would be a live
+ * DoS, and adding an extract path would inherit a dependency with no patch
+ * available. Use a different library for either. The dismissed Dependabot
+ * alerts rest on this paragraph; revisit them if it stops being true.
+ *
+ * The tests do call `new AdmZip(buffer)`, but only on buffers they just
+ * built here.
  */
 import fs from "node:fs";
 import path from "node:path";

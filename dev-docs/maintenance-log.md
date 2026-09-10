@@ -26,9 +26,12 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
     CVE-2026-84373's `>=2.1.0 <4.1.11` — so a fresh resolution could have
     reintroduced it. Raising the floor closes that.
   - Dismissed both `adm-zip` alerts as `not_used` with call-site evidence.
-    Every open adm-zip advisory is an extraction bug and this repo only ever
-    writes archives (`server/src/agent/notebook-zip.ts:38`); CVE-2026-76845
-    has no fixed release at all, 0.6.0 being inside its range. An expiry note
+    The property relied on is that nothing in `src/` ever hands adm-zip bytes
+    it did not just produce (`server/src/agent/notebook-zip.ts`). That is
+    stronger than "we do not extract", and deliberately so: only
+    GHSA-vwc7-r8mq-g2x9 is extraction-only, while GHSA-xcpc-8h2w-3j85's 4 GB
+    allocation also fires on `readFile`, `readAsText` and `getData`.
+    CVE-2026-76845 has no fixed release at all, 0.6.0 being inside its range. An expiry note
     now sits in `notebook-zip.ts` so the reasoning is revisited if an extract
     path is added.
   - Closed stale Dependabot PRs #5 and #6 (open since 2026-09-02, overlapping,

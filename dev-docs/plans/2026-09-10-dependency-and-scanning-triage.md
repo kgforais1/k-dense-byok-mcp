@@ -104,16 +104,19 @@ only so the next reader does not re-open the question.
 
 ### Bucket 3 — not reachable in this codebase
 
-**`adm-zip` (2 high + 1 medium, and the medium has no patch at all).** All three
-advisories are extraction-path bugs: the 4 GB allocation on a crafted archive,
-the symlink-following overwrite in `extractAllTo`/`extractEntryTo`, and
-CVE-2026-76845, whose fixed version is `none`.
+**`adm-zip` (2 high + 1 medium, and the medium has no patch at all).** These do
+not all have the same shape, and the difference matters. GHSA-vwc7-r8mq-g2x9
+(CVE-2026-76845, symlink-following overwrite, fixed version `none`) is
+extraction-only. GHSA-xcpc-8h2w-3j85's 4 GB allocation is not: it fires on
+`readFile`, `readAsText`, `entry.getData()` and `test()` too, so merely parsing
+an untrusted archive is enough.
 
-Kady never extracts. The single use is `server/src/agent/notebook-zip.ts:38`,
-`new AdmZip()` with no argument, then `addLocalFile`, `addFile`, `toBuffer` —
-construction only, and the sandbox download path uses `archiver` instead. No
-call site reads or extracts an archive, so no untrusted ZIP ever reaches the
-vulnerable code.
+So the property to rely on is not "Kady never extracts" but "Kady never hands
+adm-zip bytes it did not just produce". That holds: the single use in `src/` is
+`server/src/agent/notebook-zip.ts`, `new AdmZip()` with no argument, then
+`addLocalFile`, `addFile`, `toBuffer`, and the sandbox download path uses
+`archiver` instead. No untrusted ZIP is read, parsed or extracted anywhere. The
+tests do construct `new AdmZip(buffer)`, but only on buffers they just built.
 
 Note that 0.6.0 does not fix CVE-2026-76845 either — the advisory range is
 "0.5.9 through 0.6.0", and there is no fixed release. So the 0.5.17 → 0.6.0

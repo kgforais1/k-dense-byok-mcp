@@ -88,11 +88,12 @@ is at least partly tested, but the worker entry point and the annotation-layer
 API are the two places a v5→v6 change would land. This is the item most likely
 to need its own PR.
 
-**`express-rate-limit` (high, IPv4-mapped IPv6 bypass).** Depends on the
-vulnerable `ip-address`. Worth confirming whether this is reachable at all —
-`server/` uses `@fastify/rate-limit`, so an `express-rate-limit` in `web/`'s
-tree is likely a transitive test-tool dependency rather than anything serving
-traffic. Confirm before spending a bump on it.
+**`express-rate-limit` (high, IPv4-mapped IPv6 bypass) — belongs in bucket 1,
+not here.** It is flagged only because it depends on the vulnerable
+`ip-address`, which plain `npm audit fix` resolves, so the web `audit fix` step
+will clear it before any decision is needed. Nothing serves traffic through it
+either: `server/` rate-limits with `@fastify/rate-limit`. Left recorded here
+only so the next reader does not re-open the question.
 
 ### Bucket 3 — not reachable in this codebase
 
@@ -128,8 +129,8 @@ Dependabot will re-raise anything still outstanding.
 
 ## Code scanning triage
 
-**183 of 195 alerts are one rule, `js/path-injection`, and are very likely a
-sanitizer CodeQL cannot see.** They cluster in
+**183 of 195 alerts are one rule, `js/path-injection`, and are very likely
+sanitizers CodeQL cannot see.** They cluster in
 `server/src/api/sandbox.ts` (49), `pdf-annotations-store.ts` (21),
 `agent/skills.ts` (20), `agent/skills-install.ts` (17), `agent/agent-files.ts`
 (16) and eleven more files.
@@ -137,25 +138,46 @@ sanitizer CodeQL cannot see.** They cluster in
 This repo already knows the mechanism. `server/src/paths-contained.ts` says so
 in its own docstring: CodeQL "does not treat a user-defined `isValidSessionId`
 as a barrier, and reported these joins as path injection until the check moved
-here." The sandbox has an equivalent and stronger guard —
-`sandbox-fs.ts:51 safePath()`, which does a lexical `path.resolve` plus
-`isWithin`, *and* canonicalizes the deepest existing ancestor with
-`realpathSync` to defeat a symlink inside the sandbox. It is a better check than
-the one CodeQL accepts; it just returns from a helper, and CodeQL's
-`js/path-injection` does not follow the barrier across that return.
+here."
 
-So the work is not to rewrite 183 sinks. It is, in order:
+**But there is not one barrier here, there are four**, and they are not equally
+convincing. Any plan that names only the first will leave most of the alerts
+open and mislabel the rest:
+
+| Idiom | Where | Strength |
+|---|---|---|
+| `safePath()` — lexical `resolve` + `isWithin`, then `realpathSync` on the deepest existing ancestor to defeat a symlink | `sandbox-fs.ts:51`, used by `api/sandbox.ts` | Strongest. Beats what CodeQL accepts inline. |
+| `containedIn()` — `resolve` + prefix check, refuses absolute names | `paths-contained.ts`, 4 callers | Strong, and written specifically to be the form CodeQL follows. |
+| A private `isWithin()` plus a `realpathSync` re-check | `pdf-annotations-store.ts:72,92,104` | Sound, but a **second copy** of `sandbox-fs.ts:25`'s exported `isWithin`. |
+| A name regex — `SKILL_NAME_RE`, `PI_SKILL_NAME_RE`, `AGENT_NAME_RE` | `skills.ts:338`, `skills-install.ts:58`, `agent-files.ts:43` | Sound *as validation* — the character classes exclude `/`, `\` and `.` — but it is a validity predicate, not a containment proof. |
+
+That last row matters most. A regex validator is exactly the barrier class the
+`paths-contained.ts` docstring records CodeQL rejecting. So roughly 53 alerts
+across `skills.ts`, `skills-install.ts` and `agent-files.ts` will **not** clear
+from a model pack that names only `safePath` and `containedIn`, and they are not
+real findings either — the regex does hold. They need either their own model
+entry or a containment check moved to the sink, the same move
+`paths-contained.ts` already made once.
+
+So the work is, in order:
 
 1. **Confirm the hypothesis on a sample** rather than assuming it. Take one
    alert from each of the top five files and trace the source-to-sink path by
-   hand. Any sink that does not in fact pass through `safePath` or
-   `containedIn` is a real finding and leaves this bucket immediately.
-2. **Teach CodeQL the barrier.** A CodeQL model pack declaring `safePath` and
-   `containedIn` as path sanitizers is the durable fix — it keeps working as new
-   call sites are added, and a future sink that *forgets* the guard still
-   alerts. There is no `.github/codeql*` config in the repo today, so this is
-   new configuration rather than an edit.
-3. **Only then** dismiss what remains, per-alert with the reason, not in bulk.
+   hand. The test is "does *some* barrier stand between the request value and
+   the join", not "does it call one of two named functions" — a sink guarded
+   only by `AGENT_NAME_RE` is guarded. A sink with no barrier at all is a real
+   finding and leaves this bucket immediately.
+2. **Teach CodeQL the barriers — all four.** A model pack is the durable fix: it
+   keeps working as call sites are added, and a sink that *forgets* every guard
+   still alerts. There is no `.github/codeql*` config in the repo today, so this
+   is new configuration rather than an edit. Expect the regex validators to be
+   the awkward ones to model, and prefer moving those sinks onto `containedIn`
+   over modelling a regex as a path sanitizer, which is a weaker claim to encode
+   permanently.
+3. **Fold the duplicate `isWithin` away.** `pdf-annotations-store.ts:72`
+   reimplements `sandbox-fs.ts:25`. One of them is enough, and one barrier to
+   model is better than two.
+4. **Only then** dismiss what remains, per-alert with the reason, not in bulk.
 
 Bulk-dismissing 183 alerts without step 1 would be the worst outcome available:
 it clears the dashboard and destroys the one signal that would catch a genuinely
@@ -167,7 +189,7 @@ The remaining 12 are individually reviewable and are the more interesting half:
 |---|---|---|
 | `js/insecure-randomness` ×7 | `web/src/components/file-preview-panel.tsx:1969-1992`, `chat-tabs-bar.tsx:420,430`, `app/page.tsx:749` | Are these ids/keys for React or DOM, or do any feed a token, filename or nonce? Only the latter is a real finding. |
 | `js/reflected-xss` | `server/src/api/sessions.ts:809` | A server route reflecting a user value. Needs reading; this is the one alert whose default assumption should be "real until shown otherwise". |
-| `js/polynomial-redos` ×2 | `server/src/projects.ts:103`, `agent/skills-fetch.ts:83` | Both on repeated `-`. Is the input length-capped upstream? |
+| `js/polynomial-redos` ×2 | `server/src/projects.ts:103`, `agent/skills-fetch.ts:83` | Both on repeated `-`. Not capped: `mintProjectId` runs `.replace(/[^a-z0-9]+/g, "-")` on the raw `name` and only calls `.slice(0, 32)` afterwards, so the regex sees the full input. Cap first, or bound the name at the route. |
 | `js/resource-exhaustion` | `server/src/modal/store.ts:289` | Buffer allocated from a user-controlled size. |
 | `js/incomplete-sanitization` | `server/src/api/credentials.ts:133` | Does not escape backslashes. In a credentials path, worth reading closely. |
 
@@ -189,8 +211,12 @@ unless it turns out to be trivial.
 - [ ] Bucket 3: dismiss the three `adm-zip` alerts with call-site evidence; add
       the expiry comment to `notebook-zip.ts`.
 - [ ] CodeQL: sample five path-injection alerts by hand and record the result.
-- [ ] CodeQL: add the model pack for `safePath` and `containedIn`; re-run and
-      record how many of the 183 clear.
+- [ ] CodeQL: fold `pdf-annotations-store.ts`'s private `isWithin` into the
+      exported one in `sandbox-fs.ts`.
+- [ ] CodeQL: add the model pack covering all the barriers that survive that
+      fold; re-run and record how many of the 183 clear. Expect the
+      regex-guarded sinks in `skills*.ts` and `agent-files.ts` to need their own
+      answer.
 - [ ] CodeQL: triage the remaining 12 individually, starting with the
       `js/reflected-xss` in `sessions.ts`.
 - [ ] Append the outcome to `dev-docs/maintenance-log.md` — this is exactly the

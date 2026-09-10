@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Session management, in the browser and over MCP** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20), [#21](https://github.com/kgforais1/k-dense-byok-mcp/pull/21)):
+  - A chat can be deleted from the history menu, by mouse or keyboard. Deleting takes the session's notebook, annotations, provenance and durable run records with it; the project's cost ledger is kept, because the money was spent. A session with a run in flight is refused rather than deleted underneath it.
+  - Sessions created over MCP are marked in the history menu, so it is clear which ones another tool made.
+  - Two MCP tools for the same thing: `list_research_sessions` (this project's stored sessions, newest first, each labelled `headless`) and `delete_research_session`. A scripted client can now clean up after itself instead of requiring the browser.
+  - `poll_run` no longer reports `producedOutput` on `running` or `unknown`, where nothing is knowable; the key is absent rather than false. Clients should test for the key.
+
+### Fixed
+- **Transcript lookup and path containment** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20)):
+  - A session is identified by its transcript header rather than its filename, so a stray file named after a session id can no longer shadow or hide the real one. The header is read with a bounded scan instead of loading the whole transcript.
+  - `containedIn` refuses an absolute name outright, and its error names neither the root nor the offending path — an absolute name that happened to land inside the root previously passed the containment check without the root taking part.
+
+### Added
 - **Inbound MCP server — Phase 2 tool surface** ([#18](https://github.com/kgforais1/k-dense-byok-mcp/pull/18)):
   - Completed the opt-in `/mcp-server` Streamable HTTP endpoint with the full decided tool subset: `list_projects`, `create_research_session`, `get_session_history`, `start_research_run`, and `poll_run`.
   - `start_research_run` returns a run id immediately and mirrors the REST run body, including inline `images: [{data, mimeType}]` attachments; `poll_run` reads the live run broker first and the durable terminal record afterwards, so a completed run stays retrievable past the broker's ~30s retention.

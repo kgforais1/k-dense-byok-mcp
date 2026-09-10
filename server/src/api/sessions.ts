@@ -50,7 +50,6 @@ import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
 import { runBroker, type RunHandle } from "../agent/run-broker.ts";
 import { runStartFailure } from "../agent/run-start-errors.ts";
 import { persistTerminalRunResult } from "../agent/run-results.ts";
-import { isHeadlessSession } from "../agent/headless-sessions.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
 import { SandboxError } from "../sandbox-fs.ts";
 import {
@@ -66,7 +65,7 @@ import {
   getModelRegistry,
   getModelRuntime,
   getSession,
-  listSessions,
+  listSessionsLabelled,
   pinSession,
   unpinSession,
 } from "../agent/session-registry.ts";
@@ -602,7 +601,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
   });
 
   app.get("/sessions", async () => {
-    const infos = await listSessions(activePaths());
+    const infos = await listSessionsLabelled(currentProjectId(), activePaths());
     return infos.map((i) => ({
       id: i.id,
       name: i.name ?? null,
@@ -610,7 +609,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       modified: i.modified,
       messageCount: i.messageCount,
       firstMessage: i.firstMessage,
-      headless: isHeadlessSession(currentProjectId(), i.id),
+      headless: i.headless,
     }));
   });
 

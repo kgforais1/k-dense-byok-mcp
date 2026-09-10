@@ -26,10 +26,9 @@ import {
   createSession,
   deleteSession,
   getSession,
-  listSessions,
+  listSessionsLabelled,
 } from "../agent/session-registry.ts";
 import { toHistory } from "../agent/session-history.ts";
-import { isHeadlessSession } from "../agent/headless-sessions.ts";
 import { beginRun, type RunStartRejection } from "../api/sessions.ts";
 
 /** MCP has no typed result channel, so structured payloads travel as JSON text. */
@@ -298,8 +297,9 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
-      const projectId = currentProjectId();
-      const sessions = (await listSessions(activePaths())).map((info) => ({
+      const sessions = (
+        await listSessionsLabelled(currentProjectId(), activePaths())
+      ).map((info) => ({
         // `sessionId`, not `id`. Every other tool takes the field under that
         // name, and a client that has to remember the list calls it something
         // else gets it wrong once and then works around it forever. The REST
@@ -310,7 +310,7 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
         modified: info.modified,
         messageCount: info.messageCount,
         firstMessage: info.firstMessage,
-        headless: isHeadlessSession(projectId, info.id),
+        headless: info.headless,
       }));
       return json({ sessions });
     },

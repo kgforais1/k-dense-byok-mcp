@@ -649,16 +649,16 @@ describe("list_research_sessions", () => {
     });
   });
 
-  it("marks a session created over MCP as headless", async () => {
-    // The flag is what tells a client the `interview` tool is disabled there,
-    // and it is the one field in the row that is not read off the transcript.
+  it("reports a marked session as headless", async () => {
+    // Two halves, and this covers the second. `create_research_session` asks
+    // for a headless session (asserted below), `createSession` writes the
+    // marker for that request (`session-registry.ts:450`), and this shows the
+    // list reads the marker back. The marker is written here by hand rather
+    // than by the tool, because `createSession` is stubbed in this file — a
+    // real one needs a model runtime.
     createProject({ projectId: "mcp-list-headless", name: "MCP list headless" });
     const client = await connect();
 
-    const created = await withActiveProject("mcp-list-headless", () =>
-      client.callTool({ name: "create_research_session" }),
-    );
-    expect(created.isError).toBeFalsy();
     withActiveProject("mcp-list-headless", () => seedSession("session-headless"));
     markHeadlessSession("mcp-list-headless", "session-headless");
 
@@ -668,6 +668,23 @@ describe("list_research_sessions", () => {
     const sessions = payload(result).sessions as Array<Record<string, unknown>>;
     expect(sessions.find((entry) => entry.sessionId === "session-headless")).toMatchObject({
       headless: true,
+    });
+  });
+
+  it("asks for a headless session, which is what makes the flag true later", async () => {
+    // The other half. Without this, nothing pins the request that causes the
+    // marker to be written, and `create_research_session` could quietly start
+    // creating interactive sessions whose runs hang on a question no MCP
+    // client can answer.
+    createProject({ projectId: "mcp-create-headless", name: "MCP create headless" });
+    const client = await connect();
+
+    await withActiveProject("mcp-create-headless", () =>
+      client.callTool({ name: "create_research_session" }),
+    );
+
+    expect(vi.mocked(createSession).mock.calls.at(-1)?.[2]).toMatchObject({
+      includeInterview: false,
     });
   });
 

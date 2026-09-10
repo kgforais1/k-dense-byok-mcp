@@ -225,11 +225,13 @@ Three requirements follow, and the implementation is not correct without them:
   128,000 a minute after the picker was last opened, and starts compacting
   history it did not need to.
 
-  The asymmetry the fallback argument rests on settles this. A stale value that
-  is too high fails loudly and recoverably (`agent-session.js:1595`); a value
-  that is too low fails silently. Keeping the last probed value is therefore
-  strictly better than expiring to a fallback, and it is also simpler. So:
-  entries live until something overwrites them.
+  The asymmetry the fallback argument rests on settles this — *given Phase 0*.
+  A stale value that is too high fails loudly and recoverably; a value that is
+  too low fails silently. Note that this is only true once `compaction_end` is
+  forwarded; without Phase 0 both directions are silent and this argument does
+  not hold. Keeping the last probed value is therefore strictly better than
+  expiring to a fallback, and it is also simpler. So: entries live until
+  something overwrites them.
 
   What remains, stated plainly: after a 256K-to-32K swap the cache serves
   262,144 until a discovery call replaces it, and runs in between fail with the
@@ -269,13 +271,34 @@ measured against, and it can be lower.
 
 **Raise the fallback to 128,000.** Two arguments. It matches what the repo
 already uses when it has no better information (`models.ts:132`, and `:71`).
-And the two failure directions are not symmetric. This was checked rather than
-assumed: on a context-overflow error Pi compacts and retries once, and if that
-does not recover it surfaces `"Context overflow recovery failed after one
-compact-and-retry attempt. Try reducing context or switching to a larger-context
-model."` (`pi-coding-agent/dist/core/agent-session.js:1595`). That is an
-actionable message reaching the user. Declaring too low fails silently, in the
-way this plan exists to fix. Prefer the loud failure.
+And the two failure directions are not symmetric — but only after a
+prerequisite fix, and the earlier drafts of this plan were wrong to assume
+otherwise.
+
+Pi does produce the right message. On a context-overflow error it compacts,
+retries once, and if that fails emits `"Context overflow recovery failed after
+one compact-and-retry attempt. Try reducing context or switching to a
+larger-context model."` (`pi-coding-agent/dist/core/agent-session.js:1595`).
+The problem is what Kady does with it. That message rides on a
+`type: "compaction_end"` event, and `toClientFrame`
+(`server/src/agent/events.ts:283`) has no `compaction_end` case. It falls to
+`default: return null` at `:357` and is dropped. Nothing anywhere in
+`server/src` or `web/src` handles a compaction event — a repo-wide grep for
+`compaction` returns exactly one hit, an unrelated comment at
+`cost/ledger.ts:50`.
+
+So today, over-declaring does **not** fail loudly. It produces a dead run and an
+empty assistant bubble, which is the same symptom this plan is chasing. That
+matters more than a wording correction, because the asymmetry is what justifies
+the 128,000 fallback *and* the decision not to expire cache entries. Both of
+those rest on "too high fails loudly, too low fails silently", and that sentence
+is currently false in this codebase.
+
+The fix is small and it is now a prerequisite of this plan rather than an aside:
+map `compaction_end` carrying an `errorMessage` onto the existing `error` client
+frame, the same way the `message_update` error case at `events.ts:313-324`
+already turns a provider failure into readable text. Phase 0 below does this
+first, so that every later decision rests on something true.
 
 The fallback must clear the prompt floor with reserve headroom. `44409 + 16384`
 = 60,793, so 128,000 clears it with room for the conversation itself; 65,536
@@ -306,18 +329,40 @@ todo for the prompt floor itself. Do not quietly widen this plan to cover it.
 ## Proposed information architecture / file changes
 
 ```text
+server/src/agent/events.ts             MODIFIED — forward compaction_end errors (Phase 0)
 server/src/agent/local-context.ts      NEW — probe helpers + the canonical-key cache
 server/src/agent/models.ts             MODIFIED — builders read the cache, fallback 128K
 server/src/api/system.ts               MODIFIED — LM Studio route fills the cache;
                                        NEW route probes one Ollama model on demand
 server/src/config.ts                   MODIFIED — two env override knobs
 server/test/local-context.test.ts      NEW — cache, probe parsing, precedence
-server/test/openai-compatible.test.ts  MODIFIED — existing 32K assertions
+server/test/openai-compatible.test.ts  MODIFIED — the context_length: 0 assertions
+server/test/model-refusal.test.ts      MODIFIED — compaction_end forwarding (Phase 0);
+                                       there is no events.test.ts, and this file
+                                       already covers toClientFrame error mapping
+web/src/components/model-selector.tsx  MODIFIED — call the Ollama probe on select
 docs/model-selection.md                MODIFIED — document the knobs
 dev-docs/todo.md                       MODIFIED — delete section 5 on completion
 ```
 
 ## Implementation sequence
+
+### Phase 0 — Make the loud failure actually loud
+
+This is a prerequisite, not a nicety. Every later decision in this plan assumes
+an over-declared window surfaces an actionable error, and today it does not.
+
+- [ ] Add a `compaction_end` case to `toClientFrame`
+      (`server/src/agent/events.ts:283`). When the event carries an
+      `errorMessage`, emit the existing `error` frame with it; when it does not,
+      keep returning `null` so ordinary successful compaction stays invisible.
+- [ ] Confirm the client renders it. The `error` frame is already handled, so
+      this should need no frontend change — verify rather than assume.
+- [ ] Add a test that a `compaction_end` with an `errorMessage` produces an
+      `error` frame, and that one without stays `null`.
+
+**Exit criteria:** a run against a deliberately over-declared window shows the
+overflow text instead of an empty assistant bubble.
 
 ### Phase 1 — Verify the two probe shapes
 
@@ -355,7 +400,10 @@ documentation or from this plan's guesses.
       return every row `/v1/models` gave it. Keep the existing lenient parsing
       style, so a bad or missing length is absent rather than zero.
 - [ ] Add the on-demand Ollama route (one model id, one `POST /api/show`) and
-      have the picker call it on selection. Do **not** fan out across
+      have the picker call it on selection. Note this means adding a call that
+      does not exist: `handleSelect`
+      (`web/src/components/model-selector.tsx:428`) is currently synchronous
+      state only — `onChange(model); setOpen(false);`. Do **not** fan out across
       `/api/tags`; see the Ollama section above for why.
 - [ ] Fire the same probe, unawaited, when a run resolves an Ollama ref with no
       cache entry, so restored chats converge on the next turn instead of
@@ -393,9 +441,10 @@ whenever one is set regardless of cache state.
       non-empty assistant message.
 - [ ] Confirm compaction does not fire on the first turn.
 - [ ] Load the same model in LM Studio at a *reduced* context length without
-      reopening the picker. Expect the run to fail with the overflow message,
-      not to work and not to silently compact, and expect reopening the picker
-      to repair it.
+      reopening the picker. Expect the run to fail with the overflow message
+      from Phase 0, not to work and not to silently compact, and expect
+      reopening the picker to repair it. If the message does not appear, Phase 0
+      is incomplete and the fallback argument is still resting on nothing.
 - [ ] If the empty-message symptom survives, stop and say so. The mechanism in
       this plan is a hypothesis, and a surviving symptom falsifies it rather
       than calling for a bigger number.
@@ -431,6 +480,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 |---|---|
 | The declared window matches the server | `resolveModel` returns 262,144 for `qwen/qwen3.8-27b` against live LM Studio |
 | Cold start no longer under-declares | With the cache empty, the builders return 128,000, above the 44,409 + 16,384 floor |
+| Overflow is visible at all | A `compaction_end` carrying an `errorMessage` reaches the client as an `error` frame, instead of being dropped at `events.ts:357` |
 | A stale entry fails loudly and is repairable | Reduce the loaded window in LM Studio; the run fails with the overflow message rather than compacting silently, and reopening the picker fixes it |
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000 and the next run in that session uses the probed value |

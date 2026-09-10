@@ -15,18 +15,26 @@ branch: local-context-window
 > its closing checklist — never after merge. See
 > `docs/development/workflow.md#archive-lifecycle`.
 
-**Goal:** Make the local-model path runnable. Today `buildOllamaModel` and
-`buildOpenAICompatibleModel` declare a 32,768-token context window that is far
-below Kady's own prompt, so every local run is over budget before it starts.
-Replace the guess with the value the local server already reports, and raise the
-fallback for the case where it reports nothing.
+**Goal:** Make Kady declare the local model's real context window instead of
+guessing 32,768. Today `buildOllamaModel` and `buildOpenAICompatibleModel`
+hardcode a window far below Kady's own prompt, so every local run is over budget
+before it starts. Replace the guess with the value the local server already
+reports, and raise the fallback for the case where it reports nothing.
+
+Stated deliberately narrowly. This makes the declared window *truthful*, which
+makes large local models runnable and makes small ones fail legibly. It does not
+make every local model work: Kady's prompt needs roughly 61,000 tokens of window
+(44,409 plus the 16,384 reserve), so a genuine 8K or 32K local model will still
+not run. What changes for those is that they stop failing silently and start
+saying why. Closing that remaining gap means shrinking the prompt or the
+reserve, which is separate work — see the out-of-scope note below.
 
 Recorded as [todo “Local-model context window is hardcoded to
 32K”](../todo.md#5-local-model-context-window-is-hardcoded-to-32k).
 
 ## Why this work
 
-`server/src/agent/models.ts:233` and `:246` both hardcode
+`server/src/agent/models.ts:233` and `:257` both hardcode
 `contextWindow: 32_768`. The comment at `:243` is honest about the reason — the
 standard OpenAI `/v1/models` endpoint carries no context length — and that part
 is still true, verified 2026-09-10 against a live LM Studio:
@@ -47,33 +55,43 @@ The todo compares Kady's measured 44,409-token prompt against the declared
 lower still, because the harness reserves headroom on top of the declared
 window.
 
-Pi's compaction is on by default and Kady never overrides it, so the harness
-default applies (`@earendil-works/pi-agent-core`,
-`dist/harness/agent-harness.js:97`, matching `DEFAULT_COMPACTION_SETTINGS` at
-`dist/harness/compaction/compaction.js:85`):
+The live path is `@earendil-works/pi-coding-agent`, not `pi-agent-core`. The
+`AgentHarness` class in `pi-agent-core/dist/harness/agent-harness.js` is a stub
+whose every method returns `unavailable` (`:109-164`), so citing its settings
+block would be citing dead code. The real chain is:
 
-```js
-{ enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 }
-```
-
-and the trigger (`compaction.js:154`) is:
-
-```js
-export function shouldCompact(contextTokens, contextWindow, settings) {
-    if (!settings.enabled) return false;
-    return contextTokens > contextWindow - settings.reserveTokens;
-}
-```
+- `AgentSession._checkCompaction` reads the declared window straight off the
+  model — `const contextWindow = this.model?.contextWindow ?? 0`
+  (`pi-coding-agent/dist/core/agent-session.js`). That is the direct link from
+  the builders this plan changes to the trigger below.
+- Settings come from `settingsManager.getCompactionSettings()`
+  (`dist/core/settings-manager.js:565`), which resolves
+  `this.settings.compaction?.reserveTokens ?? 16384` (`:560`). Kady sets no
+  `compaction` settings anywhere in `server/src`, so the default applies.
+- The trigger fires at `agent-session.js:1650` —
+  `if (shouldCompact(contextTokens, contextWindow, settings))` — and
+  `shouldCompact` (`dist/core/compaction/compaction.js`) is
+  `contextTokens > contextWindow - settings.reserveTokens`.
 
 So the effective budget is `32768 - 16384` = **16,384 tokens**, against a
-44,409-token prompt. That is not 1.35× over, it is 2.7× over.
+44,409-token prompt. That is not 1.35x over, it is 2.7x over.
 
-This also supplies the mechanism for the observed symptom. Compaction fires on
-the very first turn and can never succeed, because what is over budget is the
-system prompt plus the seeded `AGENTS.md` plus the tool surface — none of which
-compaction can cut. The run then completes as `done` with an empty assistant
-message and no error frame, exactly as recorded during the Phase 2 external
-client check.
+The 44,409 figure is an empirical measurement from the Phase 2 external-client
+check, not a constant in the code. Re-measure it during implementation rather
+than treating it as fixed.
+
+This also supplies a **likely** mechanism for the observed symptom, and it is
+worth being precise about how much of that is established. The arithmetic is
+verified: the prompt exceeds the effective budget, so `shouldCompact` returns
+true on the first turn, and compaction cannot cut what is over budget — the
+system prompt, the seeded `AGENTS.md` and the tool surface are all fixed. The
+step that is *not* verified is the last one, that this is what produces a `done`
+run with an empty assistant message and no error frame. That symptom was
+observed during the Phase 2 external-client check, and this chain explains it,
+but the two have not been connected by observation. Treat it as the leading
+hypothesis rather than a finding. Phase 4 exists to test it, and if the symptom
+survives the fix then the cause is elsewhere and this plan has not addressed
+it.
 
 Two consequences for this plan. The fix is a correctness fix rather than a
 tuning nicety, and any fallback we choose has to clear 44,409 *plus*
@@ -105,13 +123,38 @@ every model read `"state": "not-loaded"`, and the field was absent from all of
 them. Treat its exact shape as **unverified** and confirm it against a loaded
 model during implementation rather than trusting this plan for it.
 
-Ollama's `POST /api/show` is the stated equivalent. It is likewise
-**unverified**: the CLI is installed at `/usr/local/bin/ollama` but the daemon
-was not running during this research (`curl http://localhost:11434/` returned no
-response), and starting a background daemon on the owner's machine was out of
-scope for writing a plan. The implementing PR must probe a live Ollama and
-record the real field name, because the two providers are separate code paths
-and a guess in one does not validate the other.
+### Ollama is not symmetrical with LM Studio, and that shapes the design
+
+Ollama's `POST /api/show` is the stated equivalent, and it is still
+**unverified**: the daemon is installed and reachable, but `ollama list` returns
+an empty set on this machine, so there is no model to probe and no real response
+to quote. Pulling one is a multi-gigabyte download and was out of scope for
+writing a plan. The implementing PR must probe a live Ollama and record the real
+field name rather than assuming it mirrors LM Studio.
+
+What *is* clear without a live probe is a structural difference that the first
+draft of this plan missed. LM Studio answers for every model in **one** call:
+`/api/v0/models` returns `max_context_length` per entry. Ollama does not.
+`/api/tags`, which `GET /ollama/models` already calls, carries no context length
+at all, so covering every model would mean one `POST /api/show` **per model** —
+an N+1 fan-out inside a route that holds a single 2 s budget. For a user with a
+dozen models that either blows the timeout or forces the timeout up, and this
+route is on the picker's path.
+
+So the two providers get different probe strategies, which is consistent with
+them already being deliberately parallel paths:
+
+- **LM Studio / OpenAI-compatible:** probe in the discovery route. One call,
+  every model, no extra cost over what the route already pays.
+- **Ollama:** do **not** fan out in the discovery route. Probe `/api/show` for a
+  single model id, on demand, through a separate lightweight endpoint the picker
+  calls when a model is actually selected. One model is selected at a time, so
+  there is no fan-out, and the run path stays synchronous because the result
+  lands in the same cache before the run starts.
+
+If the on-demand probe has not run — the user selected nothing, or restored a
+saved model ref — the cache misses and the fallback applies, exactly as for a
+cold LM Studio cache.
 
 ## Design decisions
 
@@ -137,11 +180,31 @@ the rows they return. Read the real value there, cache it by model id, and have
 `resolveModel` do a synchronous cache lookup. The builders stay synchronous and
 no call site changes.
 
-**Accept that the cache can be cold.** If a run starts before the picker has
-ever been opened, the lookup misses and the fallback applies. That is the
-correct trade: it is the current behaviour, only with a better number, and it
-self-corrects the first time the picker opens. Do not add a blocking
-warm-up — this is a local-only path and a cold miss is not a failure.
+**Accept that the cache can be cold. Do not accept that it can be stale.**
+A cold cache is benign: the lookup misses, the fallback applies, and it
+self-corrects the first time the picker opens. Do not add a blocking warm-up.
+
+A *stale* cache is not benign, and the first draft of this plan ignored it.
+Both reviewers raised it independently, and they are right. The user loads a
+256K model in LM Studio, opens the picker (caching 256,000), then swaps to a 32K
+model without reopening the picker. Kady now declares 256,000 for a model that
+physically holds 32,768 and sends a prompt that cannot fit, on every turn, until
+the user somehow guesses that reopening the picker is the fix. That is a worse
+failure than the one this plan exists to remove, because it is both persistent
+and unguessable.
+
+Three requirements follow, and the implementation is not correct without them:
+
+- **Key the cache by base URL as well as model ref.** A module-level
+  `Map<modelRef, number>` is process-global. Two projects pointed at different
+  local servers would otherwise share one entry and serve each other's window.
+  Key on `(baseUrl, modelRef)`.
+- **Give entries a TTL** — 60 seconds is a reasonable start. Local servers are
+  restarted and reconfigured constantly during exactly the kind of local-model
+  work this feature serves, so an entry should not outlive a plausible fiddle.
+  On expiry, fall back rather than blocking on a refresh.
+- **Refresh on every discovery call.** The routes overwrite, never merge, so
+  reopening the picker is always a repair.
 
 **Prefer `loaded_context_length` over `max_context_length`** when both are
 present, per the reasoning above: the loaded value is what the request is
@@ -149,10 +212,13 @@ measured against, and it can be lower.
 
 **Raise the fallback to 128,000.** Two arguments. It matches what the repo
 already uses when it has no better information (`models.ts:132`, and `:71`).
-And the two failure directions are not symmetric: declaring too high fails
-loudly at the provider, with the provider's own message reaching the user
-through the existing error frame, whereas declaring too low fails silently in
-the way this plan exists to fix. Prefer the loud failure.
+And the two failure directions are not symmetric. This was checked rather than
+assumed: on a context-overflow error Pi compacts and retries once, and if that
+does not recover it surfaces `"Context overflow recovery failed after one
+compact-and-retry attempt. Try reducing context or switching to a larger-context
+model."` (`pi-coding-agent/dist/core/agent-session.js:1595`). That is an
+actionable message reaching the user. Declaring too low fails silently, in the
+way this plan exists to fix. Prefer the loud failure.
 
 The fallback must clear the prompt floor with reserve headroom. `44409 + 16384`
 = 60,793, so 128,000 clears it with room for the conversation itself; 65,536
@@ -166,17 +232,27 @@ discovery routes: the protocols are unrelated and Ollama's is upstream-owned.
 This plan touches four places rather than two, on purpose. Do not "clean that
 up" along the way.
 
-**Out of scope.** Overriding Pi's `reserveTokens`, changing compaction
-behaviour, and shrinking Kady's 44,409-token prompt are all real questions and
-all separate from this one. This plan makes the declared window truthful and
-stops there.
+**Out of scope, with one caveat.** Overriding Pi's `reserveTokens`, changing
+compaction behaviour, and shrinking Kady's 44,409-token prompt are all real
+questions and all separate from this one. This plan makes the declared window
+truthful and stops there.
+
+The caveat, raised in review and worth recording rather than waving away: these
+are separable but not independent. Kady needs about 61,000 tokens of window to
+function at all, so for any local model below that, this plan converts a silent
+failure into a loud one without making the model usable. That is still a strict
+improvement — an unusable model that says so beats one that returns an empty
+message — but it means "the local path works now" would be an overstatement
+after this lands. If small local models turn out to matter, raise a follow-up
+todo for the prompt floor itself. Do not quietly widen this plan to cover it.
 
 ## Proposed information architecture / file changes
 
 ```text
-server/src/agent/local-context.ts      NEW — probe helpers + the id→window cache
+server/src/agent/local-context.ts      NEW — probe helpers + the (baseUrl, ref) TTL cache
 server/src/agent/models.ts             MODIFIED — builders read the cache, fallback 128K
-server/src/api/system.ts               MODIFIED — both routes populate the cache
+server/src/api/system.ts               MODIFIED — LM Studio route fills the cache;
+                                       NEW route probes one Ollama model on demand
 server/src/config.ts                   MODIFIED — two env override knobs
 server/test/local-context.test.ts      NEW — cache, probe parsing, precedence
 server/test/openai-compatible.test.ts  MODIFIED — existing 32K assertions
@@ -200,23 +276,29 @@ documentation or from this plan's guesses.
 
 ### Phase 2 — Cache and probe
 
-- [ ] Add `server/src/agent/local-context.ts`: a module-level
-      `Map<string, number>` keyed by the full model ref (`ollama/…`,
-      `openai-compatible/…`), a setter, and a lookup.
-- [ ] Parse the context length in each of the two discovery routes and populate
-      the cache. Keep the existing lenient parsing style — a malformed entry
-      must not blank the list, so treat a bad or missing length as absent
-      rather than as zero.
+- [ ] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
+      `(baseUrl, modelRef)` with a 60 s TTL, a setter, and a lookup that treats
+      an expired entry as a miss.
+- [ ] Fill the cache from `GET /openai-compatible/models` by parsing
+      `/api/v0/models`, preferring `loaded_context_length` over
+      `max_context_length`. Keep the existing lenient parsing style — a
+      malformed entry must not blank the list, so treat a bad or missing length
+      as absent rather than as zero.
+- [ ] Add the on-demand Ollama route (one model id, one `POST /api/show`) and
+      have the picker call it on selection. Do **not** fan out across
+      `/api/tags`; see the Ollama section above for why.
 - [ ] Return the real value in each route's `context_length` field instead of
       the hardcoded `0`.
 
-**Exit criteria:** opening the picker populates the cache; `npm run verify -- server` green.
+**Exit criteria:** opening the picker populates the cache; a second open after
+the TTL refreshes it; `npm run verify -- server` green.
 
 ### Phase 3 — Consume it
 
 - [ ] Add `OLLAMA_CONTEXT_WINDOW` and `OPENAI_COMPATIBLE_CONTEXT_WINDOW` to
       `config.ts`, beside the existing `*_BASE_URL` knobs.
-- [ ] In both builders, resolve in order: cache, then env knob, then 128,000.
+- [ ] In both builders, resolve in order: cache (unexpired), then env knob,
+      then 128,000.
 - [ ] Update the comment at `models.ts:243`. It is currently correct about
       `/v1/models` and should stay — extend it to say why the native endpoint is
       consulted instead, so the next reader does not re-derive this.
@@ -224,21 +306,31 @@ documentation or from this plan's guesses.
       `server/test/openai-compatible.test.ts`.
 
 **Exit criteria:** `resolveModel("openai-compatible/qwen/qwen3.8-27b", …)`
-returns 262,144 with a warm cache and 128,000 with a cold one.
+returns 262,144 with a warm cache, and 128,000 with a cold or expired one.
 
 ### Phase 4 — Confirm the bug is actually gone
 
 - [ ] Run one trivial request against LM Studio end to end and confirm a
       non-empty assistant message.
 - [ ] Confirm compaction does not fire on the first turn.
+- [ ] Load the same model in LM Studio at a *reduced* context length, confirm
+      the declared window follows it down, and confirm a stale entry cannot
+      outlive the TTL.
+- [ ] If the empty-message symptom survives, stop and say so. The mechanism in
+      this plan is a hypothesis, and a surviving symptom falsifies it rather
+      than calling for a bigger number.
 
-**Exit criteria:** the Phase 2 external-client symptom does not reproduce.
+**Exit criteria:** the Phase 2 external-client symptom does not reproduce, or is
+recorded as unexplained with the compaction hypothesis ruled out.
 
 ## Guardrails
 
 - The probe is best-effort. A local server that is down, slow, or returns
   nonsense must fall back silently, exactly as the two routes already do
   today — a dead Ollama must never make a run fail.
+- No fan-out inside a discovery route. The Ollama probe is one model per call,
+  on demand; an N+1 across `/api/tags` would blow the 2 s budget on the
+  picker's path.
 - Keep the existing 2 s `AbortController` timeout on both routes. This is on the
   picker's path and must not hang the UI.
 - `resolveModel` stays synchronous.
@@ -255,6 +347,8 @@ returns 262,144 with a warm cache and 128,000 with a cold one.
 |---|---|
 | The declared window matches the server | `resolveModel` returns 262,144 for `qwen/qwen3.8-27b` against live LM Studio |
 | Cold start no longer under-declares | With the cache empty, the builders return 128,000, above the 44,409 + 16,384 floor |
+| A stale entry cannot persist | Reduce the loaded window in LM Studio; the declared value follows within the TTL without reopening the picker |
+| Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |
 | A dead local server is harmless | Probe with nothing listening; run still resolves at the fallback |
 | The original symptom is fixed | One local run returns a non-empty assistant message |
 | No regression elsewhere | `npm run verify -- server` green; 785 tests pass |

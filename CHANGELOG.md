@@ -9,10 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Session management, in the browser and over MCP** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20), [#21](https://github.com/kgforais1/k-dense-byok-mcp/pull/21)):
-  - A chat can be deleted from the history menu, by mouse or keyboard. Deleting takes the session's notebook, annotations, provenance and durable run records with it; the project's cost ledger is kept, because the money was spent. A session with a run in flight is refused rather than deleted underneath it.
+  - A chat can be deleted from the history menu, by mouse or keyboard. Deleting takes the session's notebook, annotations, provenance and durable run records with it; the project's cost ledger is kept, because the money was spent. A session with a run in flight is refused rather than deleted underneath it. Clearing the run records is best-effort: if it fails, the transcript is still gone, and `poll_run` can answer for a session `get_session_history` now 404s on until the seven-day retention sweep collects it.
   - Sessions created over MCP are marked in the history menu, so it is clear which ones another tool made.
   - Two MCP tools for the same thing: `list_research_sessions` (this project's stored sessions, newest first, each labelled `headless`) and `delete_research_session`. A scripted client can now clean up after itself instead of requiring the browser.
-  - `poll_run` no longer reports `producedOutput` on `running` or `unknown`, where nothing is knowable; the key is absent rather than false. Clients should test for the key.
+  - `poll_run` reports `producedOutput` on a terminal status, so a client can tell a finished run that emitted nothing from one that answered. A `done` run with `producedOutput: false` is a failed attempt worth retrying, not an empty result to report. The key is absent on `running` and `unknown`, where nothing is knowable — test for the key rather than for a falsy value.
 
 ### Fixed
 - **Transcript lookup and path containment** ([#20](https://github.com/kgforais1/k-dense-byok-mcp/pull/20)):

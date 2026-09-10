@@ -257,7 +257,10 @@ pre-completion state.
   maintenance log (for incidents) are the durable record.
 - **TODO entries:** `dev-docs/todo.md` rows for the shipped work are
   **deleted**, not ticked, in the same PR. The roadmap only contains
-  unstarted / in-progress work.
+  unstarted / in-progress work. An entry that spans several PRs is not
+  deleted until the last one, so refresh its body in whichever PR
+  invalidates it: an entry that still poses a question the work has since
+  answered reads as unstarted, and the next person re-decides it.
 - **Changelog:** `CHANGELOG.md` `## [Unreleased]` is updated in the
   implementing PR; release prep later moves entries under
   `[X.Y.Z] - YYYY-MM-DD` (see [`release-policy.md`](release-policy.md)).

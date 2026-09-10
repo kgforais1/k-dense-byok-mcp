@@ -129,15 +129,18 @@ This repo is a fork of K-Dense-AI/k-dense-byok, and nothing in it says so.
 A reader arriving from a search result cannot tell whose work they are looking
 at, which is the part that matters — attribution, not paperwork.
 
-The concrete instance found so far is the Tests badge at `README.md:8`. It
-points at `K-Dense-AI/k-dense-byok/actions/workflows/tests.yml`, so it renders
-upstream's CI result on this fork's front page. It is green when upstream is
-green, whatever this fork's own tests did. Either repoint it at this repo or
-drop it; showing someone else's build status as your own is worse than showing
-none. The other nine badges are static shields or upstream's social links, so
-they need a decision too rather than a bulk rewrite.
+Two badges were wrong outright and are already gone: a Tests badge pointing at
+`K-Dense-AI/k-dense-byok/actions/workflows/tests.yml`, which rendered upstream's
+CI result on this fork's front page, and a Version badge reading 0.7.3 against
+a `server/package.json` on 0.9.12. Repointing the Tests badge at this repo is
+still an option once the rest is decided.
 
-Also to check, before calling this done:
+The eight that remain are a judgement call rather than a defect: one License
+shield, three count shields, and four links to K-Dense's own X, LinkedIn,
+YouTube and Reddit accounts. The social four present upstream's channels as
+this repo's.
+
+To check, before calling this done:
 
 - Whether `README.md` and `docs/` state the fork relationship at all, and where
   a short attribution line belongs.

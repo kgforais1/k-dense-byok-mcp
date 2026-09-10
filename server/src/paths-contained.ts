@@ -42,7 +42,13 @@ export function containedIn(root: string, name: string): string {
   // onto it and would pass the test below — naming the root directory itself
   // where a name inside it was asked for.
   if (resolved === base || !resolved.startsWith(prefix)) {
-    throw new Error(`Refusing a path outside ${base}`);
+    // Neither the root nor the name is named. The root is an absolute host
+    // path, and a relative name can still spell one out — `../../tmp/x` holds
+    // a host directory in it. `mcp-adapter-guardrails.test.ts` asserts no tool
+    // result carries such a path, and an error message is a leak surface like
+    // any other. No caller can reach this today; the caller's own logs have
+    // the name.
+    throw new Error("Refusing a path outside the root");
   }
   return resolved;
 }

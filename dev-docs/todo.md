@@ -123,6 +123,8 @@ It does not need to be this low, and the value is discoverable rather than merel
 
 Note the two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:238`), so a fix touches both.
 
+Planned in [Local-model context window: probe it instead of guessing 32K](plans/2026-09-10-local-model-context-window.md). Two findings from that research sharpen the entry above. The effective budget is 16,384 rather than 32,768, because Pi's compaction reserves 16,384 on top of the declared window and Kady never overrides that default — so the prompt is 2.7x over, not 1.35x, and unrecoverable compaction on the first turn is the mechanism behind the empty assistant message. And the value really is discoverable: LM Studio's `/api/v0/models` reports `max_context_length: 262144` for the model in question, while the standard `/v1/models` carries only `id`, `object` and `owned_by`, which is why the existing comment at `models.ts:243` was right about the endpoint it was reading.
+
 ## 6. Fork etiquette
 
 This repo is a fork of K-Dense-AI/k-dense-byok, and nothing in it says so.

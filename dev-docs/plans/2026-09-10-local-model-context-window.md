@@ -7,9 +7,7 @@ branch: local-context-window
 
 # Local-Model Context Window Implementation Plan
 
-**Status:** Proposed — reviewed to convergence. Four reviewers over four rounds
-(kilo, agy, and the PR bots) found no remaining contradictions or stale
-citations, and both model reviewers judged it implementable as written.
+**Status:** Proposed — reviewed during this PR.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -151,18 +149,36 @@ them already being deliberately parallel paths:
 - **Ollama:** do **not** fan out in the discovery route. Probe `/api/show` for a
   single model id, on demand, through a separate lightweight endpoint the picker
   calls when a model is actually selected. One model is selected at a time, so
-  there is no fan-out, and the run path stays synchronous because the result
-  lands in the same cache before the run starts.
+  there is no fan-out, and the run path stays synchronous because nothing on it
+  ever waits for the probe. Selection does **not** guarantee a populated cache
+  before the next run — the probe is unawaited, so a run started immediately
+  after selecting correctly uses the fallback. See the convergence note below;
+  do not read this bullet as a promise that the first run is already correct.
 
 That leaves a gap the first draft waved through: a restored chat never touches
 the picker, so its Ollama entry is never written and every run in that session
 uses the 128,000 fallback. For a large Ollama model that is an
 under-declaration, which is the silent-compaction case again.
 
-Close it with a **fire-and-forget probe at run start**. When a run resolves an
-Ollama ref whose entry is missing, kick off the `/api/show` probe without
-awaiting it. `resolveModel` stays synchronous, nothing on the run path blocks,
-and a dead Ollama is still harmless.
+Close it with a **fire-and-forget probe at run start**, and put it somewhere
+specific rather than leaving the implementer to choose. Add a fifth export to
+`local-context.ts`, `ensureProbed(providerId, baseUrl, modelId): void`, which
+returns immediately: it looks the key up, does nothing if an entry or an
+in-flight probe already exists, and otherwise starts one via the shared dedup
+map, the generation counter and the 2 s timeout described below. The same
+function backs the picker's route handler, so both paths share one
+implementation and one set of guarantees.
+
+Call it from the `/run` handler in `server/src/api/sessions.ts`, immediately
+after `resolveModel` returns (`:254-255`), gated on
+`model.provider === "ollama"`. Take the bare id from the resolved
+`model.id`, which is already the stripped form the builders received
+(`models.ts:432`) — do not re-parse the ref. Nothing awaits it.
+
+`resolveModel` itself stays untouched and synchronous; the probe is fired by its
+caller, not from inside it. That distinction is the whole reason this design
+avoids an async run path, so do not "tidy" it by moving the call into
+`resolveModel`.
 
 Three requirements, because "fire and forget" is easy to implement as a leak:
 
@@ -463,13 +479,19 @@ documentation or from this plan's guesses.
       is the **bare** id, not the provider-prefixed ref — see the note below on
       why.
 
-      Export four things, so the callers do not each invent a shape:
+      Export five things, so the callers do not each invent a shape. Four are
+      cache primitives; the fifth, `ensureProbed`, is described in the Ollama
+      section above and is what both the picker route and the `/run` handler
+      call:
       `cacheKey(providerId, baseUrl, modelId): string` (normalising the base
       URL); `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
       `nextGeneration(key): number`, called when a probe starts; and
       `recordContextWindow(key, generation, value): void`, which writes only if
       `value` is a positive integer and `generation` is still the newest for
-      that key. Keep the generation counter in its own map, not inside the cache
+      that key. And `ensureProbed(providerId, baseUrl, modelId): void`, which
+      returns immediately and starts a deduplicated, generation-stamped,
+      timed-out probe only if there is neither an entry nor one already in
+      flight. Keep the generation counter in its own map, not inside the cache
       entry — an entry that does not exist yet has no counter to advance, and
       storing it in the entry makes the first probe for a key unorderable.
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed

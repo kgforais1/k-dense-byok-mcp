@@ -237,7 +237,9 @@ The asymmetry was carrying roughly half the design. With it gone, so are:
 - the on-demand `GET /ollama/model-context` route,
 - the picker hook in `handleSelect` and its `isOllama` gating,
 - the `force` flag, and the selection-as-repair gesture it existed for,
-- the two different dedup scopes,
+- the two different *per-provider* dedup scopes — one rule now covers both,
+  though the key still carries the probe's own scope, for a different reason
+  given below,
 - the per-model `modelId` argument to the probe,
 - and the two-slice release split, which existed only because Ollama could not
   be verified. It can be, and now has been.
@@ -251,9 +253,11 @@ probeLoaded(providerId, baseUrl): Promise<void>   // loaded figures only
 probeAll(providerId, baseUrl): Promise<void>      // from cold, for the run path
 ```
 
-Both return the shared in-flight promise from one dedup map keyed on
-`(providerId, baseUrl)`. Phase 2 explains why two entry points rather than
-one. The promise **always resolves and
+Both return a shared in-flight promise from one dedup map keyed on
+`(providerId, baseUrl, scope)`, where scope distinguishes the two — see Phase 2
+for why the scope belongs in the key and why `probeAll` must never join a
+`probeLoaded` already in flight. Phase 2 also explains why two entry points
+rather than one. The promise **always resolves and
 never rejects** — failures leave the cache untouched. Callers do not await it
 and need no `.catch()`, because there is nothing to catch.
 
@@ -329,9 +333,13 @@ avoids an async run path, so do not "tidy" it by moving the call into
 
 Four requirements, because "fire and forget" is easy to implement as a leak:
 
-- **Deduplicate by canonical key.** Track in-flight probes in a
-  `Map<key, Promise>` keyed on `(providerId, baseUrl)`, so several quick runs or
-  picker opens cannot stack duplicate list calls at one local server.
+- **Deduplicate by canonical key, and put the probe's scope in that key.**
+  Track in-flight probes in a `Map<key, Promise>` keyed on
+  `(providerId, baseUrl, scope)` where scope is `loaded` or `all`, so several
+  quick runs or picker opens cannot stack duplicate list calls at one local
+  server. The scope component is not decoration: `probeAll` and `probeLoaded`
+  do not fetch the same things on Ollama, so joining across them loses data.
+  See "A `probeAll` must never join a `probeLoaded`" below.
 - **Absorb every failure inside the probe. The returned promise
   never rejects.** This is the single contract, and it is worth being exact
   because an earlier draft stated two incompatible ones. A timeout, a dead
@@ -457,11 +465,42 @@ Three requirements follow, and the implementation is not correct without them:
   starting a rival. Close the window at the source instead of reconciling
   writes afterwards.
 
-  One requirement follows: **dedup by `(providerId, baseUrl)`, not by model
-  key.** One list call fills every model's entry, so the dedup scope is the
-  call, not the row. The Ollama
+  One requirement follows: **dedup per server, not per model.** One list call
+  fills every model's entry, so the dedup scope is the
+  call, not the row. (The key gains a third component for a separate reason —
+  see the next bullet — but no component of it is ever the model.) The Ollama
   probes dedupe at the same scope, because they are also one call per server
   filling every entry. One rule, both providers.
+- **A `probeAll` must never join a `probeLoaded` already in flight.** The key
+  therefore carries the scope as a third component: `(providerId, baseUrl,
+  scope)`. The two entry points fetch different things on Ollama —
+  `probeLoaded` reads `/api/ps` only, `probeAll` reads `/api/tags` *and*
+  `/api/ps` — so a `probeAll` that joined an in-flight `probeLoaded` would
+  resolve as soon as `/api/ps` returned, having never fetched `/api/tags`. The
+  architectural slot stays empty, and on a server with nothing currently loaded
+  `/api/ps` returns an empty list, so *both* slots stay empty and the run falls
+  back to 128,000. That is precisely the restored-chat case `probeAll` exists
+  for, defeated by the dedup that was supposed to be an optimisation.
+
+  The window is small but ordinary: a restored chat's run-path `probeAll` firing
+  while a picker-fired `probeLoaded` is still outstanding at the same server.
+
+  Two directions, and they are not symmetric, so state both:
+
+  - A second `probeAll` joins the first `probeAll`. Same work, so sharing is
+    correct.
+  - A `probeLoaded` arriving while a `probeAll` is in flight may either join it
+    or run on its own. Joining is sound, because `probeAll` is a superset — it
+    fetches `/api/ps` too and writes the loaded slot. Prefer joining, since it
+    saves a call and cannot lose data. Implement it as an explicit check for an
+    in-flight `all` entry, not as a shared key, so the asymmetry is visible in
+    the code rather than implied.
+
+  For LM Studio the two entry points do identical work — one `/api/v0/models`
+  carrying both figures — so keying by scope costs at most one redundant call
+  there and never loses data. Do not special-case the provider to avoid it. A
+  uniform rule that is slightly conservative on one provider is worth more than
+  a per-provider exception that has to be re-derived by the next reader.
 - **Refresh on every write, and one gesture repairs both providers.** Writes
   overwrite, never merge. Opening the picker runs both discovery routes, and
   each fills every entry for its server, so reopening the picker is the repair
@@ -726,9 +765,13 @@ documentation or from this plan's guesses.
       passed `undefined`; and
       `probeLoaded(providerId, baseUrl)` and `probeAll(providerId, baseUrl)`,
       both `Promise<void>`, sharing one dedup map keyed on
-      `(providerId, baseUrl)` and a 2 s timeout. Each returns the shared
-      in-flight promise so a second caller joins the first rather than starting
-      a rival.
+      `(providerId, baseUrl, scope)` — scope being `loaded` or `all` — and a 2 s
+      timeout. Each returns the shared in-flight promise so a second caller at
+      the same scope joins the first rather than starting a rival. A
+      `probeAll` must not join an in-flight `probeLoaded`, which is what the
+      scope component prevents; a `probeLoaded` may join an in-flight
+      `probeAll`, which is a superset, via an explicit check. The reasoning is
+      under "A `probeAll` must never join a `probeLoaded`" above.
 
       It resolves to nothing. The probe's product is the cache write, not a
       return value, so there is no `null` result to inspect — callers read the
@@ -798,8 +841,13 @@ documentation or from this plan's guesses.
         `/api/ps`; LM Studio's single `/api/v0/models` carries both, so the two
         entry points do the same work there.
 
-      Both are unawaited, share one dedup map keyed `(providerId, baseUrl)`,
-      resolve to nothing and never reject. The Ollama architectural figure on
+      Because those two do different work on Ollama, the dedup key carries the
+      scope: a `probeAll` joining an in-flight `probeLoaded` would skip
+      `/api/tags` entirely and leave the architectural slot empty. See the
+      dedup requirement above.
+
+      Both are unawaited, share one dedup map keyed
+      `(providerId, baseUrl, scope)`, resolve to nothing and never reject. The Ollama architectural figure on
       the picker path goes through **neither**: it is parsed inline from the
       payload the route already holds, synchronously, before the route replies.
       Re-fetching `/api/tags` to route it through a shared function would buy
@@ -963,6 +1011,8 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A restored Ollama chat converges | Restore an Ollama chat and send a message **without opening the picker**, so the discovery and selection probes cannot mask a broken run path. The first run uses 128,000; once the probe settles the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
 | Every *new* HTTP call goes through a shared probe | Assert `/api/v0/models`, `/api/ps` and both run-path probes go through `probeLoaded`/`probeAll`, not a private `fetch`, and that a second one started while the first is in flight joins it. Ollama's architectural figure on the picker path is exempt — parsed inline from the `/api/tags` payload the route already holds |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
+| A `probeAll` does not join an in-flight `probeLoaded` | On Ollama, hold `/api/ps` open, fire `probeLoaded(providerId, baseUrl)`, then fire `probeAll` for the same server while it is outstanding. Assert `probeAll` issues its own `/api/tags` and that the architectural slot is populated once it settles. With a single-scope key this fails: `probeAll` resolves on the shared `/api/ps` alone and the slot stays empty, so with no model loaded the run falls back to 128,000 |
+| A `probeLoaded` may join an in-flight `probeAll` | Same setup, reversed order. Assert only one `/api/ps` is issued and the loaded slot is still written, confirming the superset join is wired as an explicit check rather than a shared key |
 | The probe never rejects | Point it at a closed port, a 404 and a malformed body in turn; each resolves normally, leaves the cache untouched, and logs no unhandled rejection. The discovery route still returns its model list with `context_length` unchanged, and never a 500 |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |

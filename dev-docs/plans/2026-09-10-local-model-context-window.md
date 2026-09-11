@@ -129,13 +129,13 @@ $ curl -s http://localhost:1234/api/v0/models
 Every entry carries `max_context_length`. The declared 32,768 is 8× low for the
 model the owner actually runs.
 
-`loaded_context_length` is documented as the companion field, and it matters
-more than `max_context_length` does: LM Studio lets you load a model at less
-than its architectural maximum, and it is the loaded value that the request
-will actually be measured against. It was not observable in the probe above —
-every model read `"state": "not-loaded"`, and the field was absent from all of
-them. Treat its exact shape as **unverified** and confirm it against a loaded
-model during implementation rather than trusting this plan for it.
+`loaded_context_length` is the companion field, and it matters more than
+`max_context_length` does: LM Studio lets you load a model at less than its
+architectural maximum, and it is the loaded value the request is measured
+against. It was absent from the probe above only because every model read
+`"state": "not-loaded"`. It has since been **verified** by loading one — see
+the divergence evidence in the Ollama section below, where a loaded model
+reported `max_context_length: 128000` alongside `loaded_context_length: 64000`.
 
 ### Ollama is symmetrical with LM Studio after all — verified 2026-09-11
 

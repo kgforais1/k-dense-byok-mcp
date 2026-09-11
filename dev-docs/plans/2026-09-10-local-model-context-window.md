@@ -7,7 +7,9 @@ branch: local-context-window
 
 # Local-Model Context Window Implementation Plan
 
-**Status:** Proposed
+**Status:** Proposed — reviewed to convergence. Four reviewers over four rounds
+(kilo, agy, and the PR bots) found no remaining contradictions or stale
+citations, and both model reviewers judged it implementable as written.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -367,8 +369,8 @@ first, so that every later decision rests on something true.
 
 The fallback must clear the prompt floor with reserve headroom. `44409 + 16384`
 = 60,793, so 128,000 clears it with room for the conversation itself; 65,536
-would clear the arithmetic but leave roughly 4 KB of actual working space, which
-is not a usable agent.
+would clear the arithmetic but leave 4,743 tokens of actual working space
+(49,152 effective minus the 44,409 prompt), which is not a usable agent.
 
 **Keep the two providers on parallel paths.** `models.ts:238` documents that
 `buildOllamaModel` and `buildOpenAICompatibleModel` are deliberately not
@@ -456,10 +458,20 @@ documentation or from this plan's guesses.
 ### Phase 2 — Cache and probe
 
 - [ ] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
-      the canonical `(providerId, normalizedBaseUrl, bareModelId)`, a setter
-      and a lookup. No TTL — entries live until overwritten, for the reason
-      given above. Note the key is the **bare** id, not the provider-prefixed
-      ref — see the note below on why.
+      the canonical `(providerId, normalizedBaseUrl, bareModelId)`. No TTL —
+      entries live until overwritten, for the reason given above. Note the key
+      is the **bare** id, not the provider-prefixed ref — see the note below on
+      why.
+
+      Export four things, so the callers do not each invent a shape:
+      `cacheKey(providerId, baseUrl, modelId): string` (normalising the base
+      URL); `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
+      `nextGeneration(key): number`, called when a probe starts; and
+      `recordContextWindow(key, generation, value): void`, which writes only if
+      `value` is a positive integer and `generation` is still the newest for
+      that key. Keep the generation counter in its own map, not inside the cache
+      entry — an entry that does not exist yet has no counter to advance, and
+      storing it in the entry makes the first probe for a key unorderable.
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails must be a
@@ -480,12 +492,24 @@ documentation or from this plan's guesses.
       means "no context metadata", never "no models" — the route must still
       return every row `/v1/models` gave it. Keep the existing lenient parsing
       style, so a bad or missing length is absent rather than zero.
-- [ ] Add the on-demand Ollama route (one model id, one `POST /api/show`) and
-      have the picker call it on selection. Note this means adding a call that
-      does not exist: `handleSelect`
+- [ ] Add the on-demand Ollama route as `GET /ollama/model-context?model=<id>`,
+      matching the existing `/ollama/models` and `/openai-compatible/models`
+      naming (`api/system.ts:63`, `:96`). One model id, one `POST /api/show`
+      upstream. It returns `{ contextLength: number | null }` and never errors
+      on a dead or unsupported server — `null` means "no metadata", the same
+      contract the discovery routes already use for `available: false`.
+
+      Have the picker call it on selection. That means adding a call that does
+      not exist: `handleSelect`
       (`web/src/components/model-selector.tsx:428`) is currently synchronous
-      state only — `onChange(model); setOpen(false);`. Do **not** fan out across
-      `/api/tags`; see the Ollama section above for why.
+      state only — `onChange(model); setOpen(false);`. Keep it that way from the
+      user's point of view — fire the request without awaiting it, close the
+      picker immediately, show no spinner, and swallow any error. The probe is
+      an optimisation, not a step in choosing a model, and nobody should wait on
+      a local server to pick one.
+
+      Do **not** fan out across `/api/tags`; see the Ollama section above for
+      why.
 - [ ] Fire the same probe, unawaited, when a run resolves an Ollama ref with no
       cache entry, so restored chats converge on the next turn instead of
       staying on the fallback forever. Nothing on the run path may await it.

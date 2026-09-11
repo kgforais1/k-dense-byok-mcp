@@ -179,7 +179,7 @@ specific rather than leaving the implementer to choose. Add a fifth export to
 `local-context.ts`:
 
 ```
-probeContextWindow(providerId, baseUrl, modelId, opts?: { force?: boolean }): Promise<number | null>
+probeContextWindow(providerId, baseUrl, modelId?: string, opts?: { force?: boolean }): Promise<number | null>
 ```
 
 It returns the shared in-flight promise from the dedup map. That promise
@@ -240,11 +240,21 @@ Pi's lowercase provider ids (`models.ts:228`, `:253`), which is the server-side
 vocabulary — not the capitalised display labels the picker uses. See the note in
 Phase 2 about that trap.
 
-The two probes differ, and `probeContextWindow` already dispatches on provider:
-Ollama does one `POST /api/show` for that model, OpenAI-compatible does the
-server-wide `/api/v0/models` call that fills every entry at once. Same entry
-point, same dedup map, same fire-and-forget lifecycle — only the upstream call
-and the dedup scope differ, which is the split the cache keys already encode.
+The two probes differ, and `probeContextWindow` dispatches on provider: Ollama
+does one `POST /api/show` for that model, OpenAI-compatible does the server-wide
+`/api/v0/models` call that fills every entry at once. Same entry point, same
+dedup map, same lifecycle — only the upstream call and the dedup scope differ.
+
+**`modelId` is therefore optional, and that is load-bearing.** The
+OpenAI-compatible probe has no single model to name: it fetches the whole list
+and writes every entry. If the signature demanded a `modelId`, the LM Studio
+discovery route could not call this function at all, and an implementer would
+write a bare `fetch("/api/v0/models")` inside `api/system.ts` instead. That
+second fetch would bypass the dedup map, race the run-path probe, and duplicate
+the `loaded_context_length` parsing — reintroducing exactly what the dedup rule
+exists to prevent. So: `modelId` is required for `ollama`, ignored for
+`openai-compatible`, and the dedup key is `(providerId, baseUrl)` in the second
+case regardless of what is passed.
 
 `resolveModel` itself stays untouched and synchronous; the probe is fired by its
 caller, not from inside it. That distinction is the whole reason this design
@@ -464,14 +474,27 @@ plan said "exactly one hit", which was wrong — that grep had been run against
 lives under `web/src`. The conclusion survives the correction, but the evidence
 for it was not what the plan claimed.
 
-**Unverified, and worth stating:** this assumes Pi classifies a local server's
-rejection as a context overflow in the first place. That path
-(`agent-session.js:1586`) keys off recognising the provider's error, and LM
-Studio's and Ollama's error shapes are not OpenAI's. If Pi does not recognise
-them, the failure surfaces as an ordinary `message_update` provider error —
-which `toClientFrame` already forwards at `:313-324`, so the user still sees
-something, but Phase 0 would be aimed at the wrong event. Phase 0 must confirm
-which event actually fires before writing the mapping.
+**Now verified, with one real exception.** An earlier draft flagged as unknown
+whether Pi even classifies a local server's rejection as a context overflow.
+It does: `pi-ai/dist/utils/overflow.js` carries an explicit pattern list, and
+both local servers are named in it — LM Studio's `"tokens to keep from the
+initial prompt is greater than the context length"` and Ollama's `"prompt too
+long; exceeded max context length by X tokens"`. So the `compaction_end` path
+is the right target for Phase 0.
+
+The exception is documented in that same file and matters: *"Ollama: Some
+deployments truncate silently, others return errors."* Against a silently
+truncating Ollama there is no error to classify and no event to forward, so the
+run neither fails loudly nor uses the whole prompt — it answers from a quietly
+truncated one. Phase 0 cannot fix that and neither can this plan; it is a
+property of the server. It does narrow the asymmetry argument, which holds for
+LM Studio and for erroring Ollama builds, and not for silently truncating ones.
+
+Two further qualifications on "loudly", from the same code path. The *first*
+overflow triggers a silent compact-and-retry; the message only appears on the
+second consecutive failure (`agent-session.js:1593`). And if `prepareCompaction`
+returns falsy, no event fires at all. "Loud" here means within about two turns,
+not immediately.
 
 So today, over-declaring does **not** fail loudly. It produces a dead run and an
 empty assistant bubble, which is the same symptom this plan is chasing. That
@@ -600,8 +623,9 @@ documentation or from this plan's guesses.
       URL; `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
       `recordContextWindow(key, value): void`, which writes only when `value` is
       a positive integer and is otherwise a no-op; and
-      `probeContextWindow(providerId, baseUrl, modelId, opts?): Promise<number
-      | null>`, the entry point described in the Ollama section above, with its
+      `probeContextWindow(providerId, baseUrl, modelId?, opts?): Promise<number
+      | null>` — `modelId` optional, and ignored for `openai-compatible`, so the
+      discovery route can call it without inventing one — the entry point described in the Ollama section above, with its
       `force` flag, its dedup map and its 2 s timeout. It returns the shared
       in-flight promise so the on-demand route can await the same work the
       fire-and-forget callers start. The promise never rejects — every failure
@@ -780,7 +804,8 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A stale entry fails loudly and is repairable | Reduce the loaded window in LM Studio; the run fails with the overflow message rather than compacting silently, and reopening the picker fixes it |
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored LM Studio chat converges too | Restore an `openai-compatible` chat without opening the picker; the run path probes, and the cache holds the probed value once it settles. This is the gap a draft left open by gating the run probe on Ollama alone |
-| A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
+| A restored Ollama chat converges | Restore an Ollama chat and send a message **without opening the picker**, so the discovery and selection probes cannot mask a broken run path. The first run uses 128,000; once the probe settles the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
+| The discovery route uses the shared probe | Assert `GET /openai-compatible/models` goes through `probeContextWindow`, not a private `fetch`; a second probe started while it is in flight is deduped rather than racing it |
 | An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
 | The probe never rejects | Point the probe at a closed port, a 404 and a malformed body in turn; each resolves to `null`, the route returns `{ contextLength: null }` without a 500, and no unhandled rejection is logged |

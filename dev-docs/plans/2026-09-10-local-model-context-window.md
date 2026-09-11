@@ -437,6 +437,28 @@ Three requirements follow, and the implementation is not correct without them:
   not afford on the picker's path. `/api/tags` carries the value, so that split
   is gone along with the selection gesture it justified.
 
+**The picker's own context badge lags by one open, and that is accepted.**
+Review asked whether the displayed `context_length` needs a refresh path after
+the unawaited probe lands. It does not, because of what the picker already does
+with the field: `model-selector.tsx:250` renders the badge behind
+`{model.context_length > 0 && (…)}`, so a zero hides the badge rather than
+printing "0".
+
+That makes the sequence safe at every step. Today every local model reports `0`
+and shows no badge. On the first open after this change the probe has not landed
+yet, so the row still carries `0` and still shows no badge — identical to
+today's behaviour, not a regression. On the next open the cache is warm, the
+route returns the real figure, and the badge appears. The picker therefore never
+displays a wrong number; it displays the right one or none.
+
+So no push, no polling, and no refetch-on-probe-settle. Adding any of those
+would put a second refresh mechanism into a design whose whole point is that one
+gesture — opening the picker — refreshes everything. If the one-open lag ever
+becomes worth closing, the cheap fix is for the route to await the probe on a
+*cold* cache only, which trades one slow first open for an accurate badge. Not
+now: it reintroduces the awaiting-the-probe hazard this plan deliberately
+removed.
+
 **The env knob outranks the probe, and is a blunt instrument on purpose.** The
 first draft resolved cache first and still called these knobs "overrides",
 which they would not have been: the LM Studio route fills the cache the moment
@@ -673,7 +695,8 @@ documentation or from this plan's guesses.
 
       The cost is that the `context_length` in the row returned by *this* open
       may lag by one open. That field is not what the fix depends on — the
-      builders read the cache, not the route's response. `/api/v0/models` is
+      builders read the cache, not the route's response — and the picker
+      degrades safely rather than showing a wrong number. See the note below. `/api/v0/models` is
       LM Studio's own endpoint; vLLM, text-generation-webui and the rest answer
       `/v1/models` and 404 the native one. A 404, a timeout or a malformed body
       means "no context metadata", never "no models" — the route must still
@@ -824,6 +847,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` takes the architectural figure from the `/api/tags` payload it already has, and makes at most one extra unawaited `/api/ps` call for the loaded figures, so its response timing is unchanged with 10+ models present |
 | The loaded figure wins over the architectural one | With `allenai/olmocr-2-7b` loaded in LM Studio, the declared window is 64,000 (`loaded_context_length`), not 128,000 (`max_context_length`). With `num_ctx: 8192` set on Ollama, it is 8,192, not 40,960 |
+| The picker never shows a wrong context badge | With a cold cache the local rows carry `0` and render no badge, exactly as today; after one reopen they carry the probed figure and render it. At no point is a stale or fallback number displayed as if it were the model's own |
 | An empty `/api/ps` is the normal case | Let the keep-alive expire so no model is resident; the cache keeps the architectural values rather than clearing them |
 | Opening the picker repairs either provider | Change the served context on each server in turn, reopen the picker, and confirm the cached value follows. There is no longer a provider for which opening is the wrong gesture |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |

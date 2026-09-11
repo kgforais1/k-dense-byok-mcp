@@ -444,12 +444,21 @@ with the field: `model-selector.tsx:250` renders the badge behind
 `{model.context_length > 0 && (…)}`, so a zero hides the badge rather than
 printing "0".
 
-That makes the sequence safe at every step. Today every local model reports `0`
-and shows no badge. On the first open after this change the probe has not landed
-yet, so the row still carries `0` and still shows no badge — identical to
-today's behaviour, not a regression. On the next open the cache is warm, the
-route returns the real figure, and the badge appears. The picker therefore never
-displays a wrong number; it displays the right one or none.
+That makes a cold cache safe. Today every local model reports `0` and shows no
+badge. After this change an LM Studio row still carries `0` on the first open,
+because its probe has not landed — identical to today, not a regression — and
+carries the real figure on the next. Ollama differs, and better: its
+architectural figure is parsed inline from the payload the route already holds,
+so the badge is right on the *first* open.
+
+What is **not** guaranteed is freshness within a single open. If the cache holds
+a figure and the server's context then changes, the row carries the old value
+until the unawaited probe lands, so a stale badge can show for one open. That is
+the same one-open lag the rest of this design accepts, and it is bounded the
+same way — the next open is correct. The guarantee worth stating is narrower
+than "never wrong": the badge is never the 128,000 fallback presented as the
+model's own number, because the fallback lives in the builders and never reaches
+this field.
 
 So no push, no polling, and no refetch-on-probe-settle. Adding any of those
 would put a second refresh mechanism into a design whose whole point is that one
@@ -461,9 +470,9 @@ removed.
 
 **The env knob outranks the probe, and is a blunt instrument on purpose.** The
 first draft resolved cache first and still called these knobs "overrides",
-which they would not have been: the LM Studio route fills the cache the moment
-the picker opens, and the Ollama probe fills it on selection or at run start, so
-a probed value would have silently beaten anything the operator configured. Resolve env first. That is what makes the knob an escape
+which they would not have been: both discovery routes fill the cache the moment
+the picker opens, so a probed value would have silently beaten anything the
+operator configured. Resolve env first. That is what makes the knob an escape
 hatch, for the case where the probe answers but answers wrongly.
 
 Note the tension with the argument two paragraphs up, which rejected env-only
@@ -672,15 +681,22 @@ documentation or from this plan's guesses.
       server, no model argument, with its dedup map keyed on
       `(providerId, baseUrl)` and its 2 s timeout. It returns the shared
       in-flight promise so a second caller joins the first rather than starting
-      a rival. The promise never rejects — every failure leaves the cache
-      untouched — so no caller needs a `.catch()`.
+      a rival.
+
+      It resolves to nothing. The probe's product is the cache write, not a
+      return value, so there is no `null` result to inspect — callers read the
+      cache with `getContextWindow` afterwards. It never rejects either: every
+      failure leaves the cache untouched and resolves normally, so no caller
+      needs a `.catch()`. (An earlier draft returned `Promise<number | null>`,
+      from when a deleted per-model route needed a value to hand back.)
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails must be a
       no-op, not a downgrade to the fallback.
 - [ ] Fill the cache from `GET /openai-compatible/models` with a **second,
       independent** call to `/api/v0/models`, preferring
-      `loaded_context_length` over `max_context_length`. **Do not await it and
+      `loaded_context_length` where present and writing `max_context_length`
+      when it is absent — never skip an entry because it is not loaded. **Do not await it and
       do not share its `AbortController`.** The route answers as soon as
       `/v1/models` returns; the native probe writes to the cache whenever it
       finishes, exactly like the Ollama probes.
@@ -706,17 +722,27 @@ documentation or from this plan's guesses.
       `details.context_length` out of the `/api/tags` response the route already
       fetches. That costs no extra HTTP call and there is no fan-out — the
       architectural figure is already in the payload the route holds.
-- [ ] Then overlay the loaded figures with **one** extra call to `/api/ps`.
-      This is where the two providers stop being identical, and the plan should
-      not pretend otherwise: LM Studio returns both figures from a single
-      `/api/v0/models` call, while Ollama needs `/api/tags` for the
-      architectural number and `/api/ps` for the loaded one. Two calls, not one.
+- [ ] Then overlay the loaded figures with **one** extra call to `/api/ps`,
+      unawaited, with its own `AbortController`, failing into a no-op.
 
-      It is still bounded and still not a fan-out — `/api/ps` returns every
-      running model at once, and there are usually one or two. Treat it exactly
-      like the LM Studio native probe: unawaited, its own `AbortController`, and
-      a failure leaves the architectural values in place rather than clearing
-      them.
+      Both providers cost two HTTP calls per open; they differ only in which
+      call carries which figure. LM Studio: `/v1/models` for the list and
+      `/api/v0/models` for both figures. Ollama: `/api/tags` for the list *and*
+      the architectural figure, `/api/ps` for the loaded one. An earlier draft
+      said "two calls, not one" as though Ollama were the expensive side. It is
+      not — it is the cheaper one, because its list call does double duty.
+
+      `/api/ps` returns every running model at once, so this is bounded and not
+      a fan-out.
+
+      **Which work goes through `probeContextWindows` and which does not.** The
+      Ollama architectural figure does *not*: it is parsed inline from the
+      payload the route already holds, synchronously, before the route replies.
+      Everything that needs a *new* HTTP call goes through the shared probe —
+      LM Studio's `/api/v0/models`, Ollama's `/api/ps`, and both run-path
+      probes. Routing the inline parse through a function that re-fetches
+      `/api/tags` would buy nothing and cost a second call for a payload
+      already in hand.
 - [ ] Prefer the loaded figure over the architectural one wherever both exist,
       for both providers. **Merge, do not replace:** start from the
       architectural map, then overwrite only the entries reported as loaded.
@@ -725,13 +751,25 @@ documentation or from this plan's guesses.
       loaded figure is only readable *while* the model is resident — Ollama unloads after its keep-alive expires, so
       `/api/ps` is frequently empty and the fallback is the normal case, not the
       exception.
-- [ ] Fire the same probe, unawaited, when a run resolves **either local
-      provider's** ref with no cache entry, so restored chats converge on the
-      next turn instead of staying on the fallback forever. That means Ollama
-      *and* OpenAI-compatible: a restored LM Studio chat never opens the picker
-      either, so its discovery route never runs. Gate on
-      `provider === "ollama" || provider === "openai-compatible"`, matching the
-      run-path note above. Nothing on the run path may await it.
+- [ ] Fire the probe, unawaited, when a run resolves **either local provider's**
+      ref and `getContextWindow` returns `undefined` for it. A restored LM Studio
+      chat never opens the picker either, so gate on
+      `provider === "ollama" || provider === "openai-compatible"`, not on Ollama
+      alone. Nothing on the run path may await it.
+
+      **The cache-miss guard is deliberate, and it does not cover staleness.**
+      Skipping when an entry exists is what stops a probe firing on every turn
+      of every local chat. The cost is that a *stale* entry is not refreshed
+      here: a restored chat whose cached figure is out of date keeps using it
+      until the picker is opened. That is the same trade the no-expiry rule
+      makes — a stale value that is too high fails loudly and is repaired by one
+      picker open, which is why the run path is not the repair mechanism.
+
+      **On the run path, Ollama costs both calls.** Nothing is in hand there, so
+      a cold Ollama entry needs `/api/tags` for the architectural figure *and*
+      `/api/ps` for the loaded one. Only the picker path gets `/api/tags` for
+      free. An implementer who writes `/api/ps` alone here leaves the
+      architectural entries missing.
 - [ ] Return the real value in each route's `context_length` field instead of
       the hardcoded `0`.
 
@@ -837,9 +875,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored LM Studio chat converges too | Restore an `openai-compatible` chat without opening the picker; the run path probes, and the cache holds the probed value once it settles. This is the gap a draft left open by gating the run probe on Ollama alone |
 | A restored Ollama chat converges | Restore an Ollama chat and send a message **without opening the picker**, so the discovery and selection probes cannot mask a broken run path. The first run uses 128,000; once the probe settles the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
-| Both discovery routes use the shared probe | Assert each goes through `probeContextWindows`, not a private `fetch`; a second probe started while one is in flight joins it rather than racing |
+| Every *new* HTTP call goes through the shared probe | Assert `/api/v0/models`, `/api/ps` and both run-path probes go through `probeContextWindows`, not a private `fetch`, and that a second one started while the first is in flight joins it. Ollama's architectural figure is exempt — it is parsed inline from the `/api/tags` payload the route already holds |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
-| The probe never rejects | Point the probe at a closed port, a 404 and a malformed body in turn; each resolves to `null`, the route returns `{ contextLength: null }` without a 500, and no unhandled rejection is logged |
+| The probe never rejects | Point it at a closed port, a 404 and a malformed body in turn; each resolves normally, leaves the cache untouched, and logs no unhandled rejection. The discovery route still returns its model list with `context_length` unchanged, and never a 500 |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |
@@ -847,7 +885,8 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` takes the architectural figure from the `/api/tags` payload it already has, and makes at most one extra unawaited `/api/ps` call for the loaded figures, so its response timing is unchanged with 10+ models present |
 | The loaded figure wins over the architectural one | With `allenai/olmocr-2-7b` loaded in LM Studio, the declared window is 64,000 (`loaded_context_length`), not 128,000 (`max_context_length`). With `num_ctx: 8192` set on Ollama, it is 8,192, not 40,960 |
-| The picker never shows a wrong context badge | With a cold cache the local rows carry `0` and render no badge, exactly as today; after one reopen they carry the probed figure and render it. At no point is a stale or fallback number displayed as if it were the model's own |
+| A cold cache hides the badge rather than faking one | With the cache empty, LM Studio rows carry `0` and render no badge, exactly as today. Ollama rows carry their architectural figure on the *first* open, because it is parsed inline rather than probed |
+| A stale badge can appear for one open, and that is accepted | Change the served context, reopen the picker: the row may still show the previous cached figure until the unawaited probe lands, and is correct on the next open. The badge is never the 128,000 fallback dressed as the model's own number, but it is not guaranteed fresh within a single open |
 | An empty `/api/ps` is the normal case | Let the keep-alive expire so no model is resident; the cache keeps the architectural values rather than clearing them |
 | Opening the picker repairs either provider | Change the served context on each server in turn, reopen the picker, and confirm the cached value follows. There is no longer a provider for which opening is the wrong gesture |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |

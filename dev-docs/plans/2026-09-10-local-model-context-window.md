@@ -189,6 +189,16 @@ Here the served figure equals the architectural one, but they can diverge when
 Read the loaded figure when the model is loaded and the architectural one
 otherwise, for both providers, by the same rule.
 
+These are the fields these servers actually return, re-checked on 2026-09-11:
+Ollama 0.33.2 carries `details.context_length` in `/api/tags`, and LM Studio's
+loaded entry carries exactly `max_context_length` and `loaded_context_length`
+and no other context field. Review suggested reading Ollama's figure from
+`/api/show` instead and LM Studio's from a `load_config.context_length`; neither
+matches what these servers return — `/api/tags` does carry it, and `load_config`
+is absent from a loaded entry here. Phase 1 still says to re-confirm against the
+reader's own versions, because these are observed fields rather than contract
+guarantees.
+
 **Both divergences were then reproduced deliberately, and neither is an edge
 case.**
 
@@ -221,15 +231,17 @@ The asymmetry was carrying roughly half the design. With it gone, so are:
   be verified. It can be, and now has been.
 
 What remains is one mechanism for both providers: each discovery route makes one
-extra call and fills every entry for its server. A probe is
-`(providerId, baseUrl)` and nothing else.
+extra call and fills every entry for its server. A probe is scoped to
+`(providerId, baseUrl)` and takes no model argument.
 
 ```
-probeContextWindows(providerId, baseUrl): Promise<void>
+probeLoaded(providerId, baseUrl): Promise<void>   // loaded figures only
+probeAll(providerId, baseUrl): Promise<void>      // from cold, for the run path
 ```
 
-It returns the shared in-flight promise from the dedup map, keyed on
-`(providerId, baseUrl)` for both providers. The promise **always resolves and
+Both return the shared in-flight promise from one dedup map keyed on
+`(providerId, baseUrl)`. Phase 2 explains why two entry points rather than
+one. The promise **always resolves and
 never rejects** — failures leave the cache untouched. Callers do not await it
 and need no `.catch()`, because there is nothing to catch.
 
@@ -297,7 +309,7 @@ Four requirements, because "fire and forget" is easy to implement as a leak:
 - **Deduplicate by canonical key.** Track in-flight probes in a
   `Map<key, Promise>` keyed on `(providerId, baseUrl)`, so several quick runs or
   picker opens cannot stack duplicate list calls at one local server.
-- **Absorb every failure inside `probeContextWindows`. The returned promise
+- **Absorb every failure inside the probe. The returned promise
   never rejects.** This is the single contract, and it is worth being exact
   because an earlier draft stated two incompatible ones. A timeout, a dead
   daemon, a 404, a malformed body: all of them resolve to `null`. Nothing
@@ -675,11 +687,13 @@ documentation or from this plan's guesses.
       Export four things, so the callers do not each invent a shape:
       `cacheKey(providerId, baseUrl, modelId): string`, normalising the base
       URL; `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
-      `recordContextWindow(key, value): void`, which writes only when `value` is
-      a positive integer and is otherwise a no-op; and
-      `probeContextWindows(providerId, baseUrl): Promise<void>` — one call per
-      server, no model argument, with its dedup map keyed on
-      `(providerId, baseUrl)` and its 2 s timeout. It returns the shared
+      `recordArchitectural(key, value)` and `recordLoaded(key, value |
+      undefined)`, the two setters described above — the first writes a positive
+      integer and no-ops otherwise, the second clears the loaded slot when
+      passed `undefined`; and
+      `probeLoaded(providerId, baseUrl)` and `probeAll(providerId, baseUrl)`,
+      both `Promise<void>`, sharing one dedup map keyed on
+      `(providerId, baseUrl)` and a 2 s timeout. Each returns the shared
       in-flight promise so a second caller joins the first rather than starting
       a rival.
 
@@ -735,22 +749,59 @@ documentation or from this plan's guesses.
       `/api/ps` returns every running model at once, so this is bounded and not
       a fan-out.
 
-      **Which work goes through `probeContextWindows` and which does not.** The
-      Ollama architectural figure does *not*: it is parsed inline from the
+      **The probe needs two entry points, because the picker and the run path
+      start from different places.** A single
+      `probeContextWindows(providerId, baseUrl)` cannot express "the caller
+      already holds the `/api/tags` body" versus "fetch everything from cold",
+      and an earlier draft tried to carry that distinction in prose alone.
+
+      - `probeLoaded(providerId, baseUrl)` — the loaded figures only:
+        `/api/ps` for Ollama, `/api/v0/models` for LM Studio. This is what a
+        discovery route fires after writing what it already had.
+      - `probeAll(providerId, baseUrl)` — everything from cold, for the run
+        path, where nothing is in hand. Ollama needs `/api/tags` *and*
+        `/api/ps`; LM Studio's single `/api/v0/models` carries both, so the two
+        entry points do the same work there.
+
+      Both are unawaited, share one dedup map keyed `(providerId, baseUrl)`,
+      resolve to nothing and never reject. The Ollama architectural figure on
+      the picker path goes through **neither**: it is parsed inline from the
       payload the route already holds, synchronously, before the route replies.
-      Everything that needs a *new* HTTP call goes through the shared probe —
-      LM Studio's `/api/v0/models`, Ollama's `/api/ps`, and both run-path
-      probes. Routing the inline parse through a function that re-fetches
-      `/api/tags` would buy nothing and cost a second call for a payload
-      already in hand.
-- [ ] Prefer the loaded figure over the architectural one wherever both exist,
-      for both providers. **Merge, do not replace:** start from the
-      architectural map, then overwrite only the entries reported as loaded.
-      Models absent from the loaded set keep their architectural value, and a
-      failed loaded-probe leaves the whole architectural map intact. Note the
-      loaded figure is only readable *while* the model is resident — Ollama unloads after its keep-alive expires, so
-      `/api/ps` is frequently empty and the fallback is the normal case, not the
-      exception.
+      Re-fetching `/api/tags` to route it through a shared function would buy
+      nothing and cost a duplicate call.
+- [ ] **Store the two figures in separate slots. Do not overlay them into one
+      value.** An earlier draft said to "overwrite the entries reported as
+      loaded", which is wrong in a way that goes quietly bad.
+
+      Overlaying loses the architectural figure, and the loaded one is the
+      transient of the pair. Load a model with `num_ctx: 8192` and the entry
+      becomes 8,192; let it unload and the server serves 40,960 again while the
+      cache still says 8,192. That is an under-declaration — the silent
+      early-compaction case — produced by the mechanism meant to stop
+      over-declaring. It also contradicts the acceptance row promising that an
+      empty `/api/ps` leaves the architectural values in place, which cannot
+      hold if they were overwritten.
+
+      So each entry holds `{ architectural?: number, loaded?: number }` and
+      `getContextWindow` returns `loaded ?? architectural`, recomputed on read
+      rather than stored as a merged number. Two setters, because their failure
+      modes differ:
+
+      - `recordArchitectural(key, value)` — writes a positive integer, no-ops
+        otherwise.
+      - `recordLoaded(key, value | undefined)` — `undefined` **clears** the
+        loaded slot, which is how an unloaded model reverts to its architectural
+        figure.
+
+      One rule that is easy to get backwards: a *successful* loaded-probe must
+      clear the loaded slot for every model it did **not** report, because that
+      is what unloading looks like. A *failed* loaded-probe must clear nothing.
+      Absent-from-a-good-answer and no-answer-at-all are opposite cases, and
+      treating them alike either strands stale loaded values or wipes good ones.
+
+      The loaded figure is only readable while the model is resident. Ollama
+      unloads after its keep-alive expires, so `/api/ps` is empty most of the
+      time and falling back to the architectural slot is the normal path.
 - [ ] Fire the probe, unawaited, when a run resolves **either local provider's**
       ref and `getContextWindow` returns `undefined` for it. A restored LM Studio
       chat never opens the picker either, so gate on
@@ -875,7 +926,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored LM Studio chat converges too | Restore an `openai-compatible` chat without opening the picker; the run path probes, and the cache holds the probed value once it settles. This is the gap a draft left open by gating the run probe on Ollama alone |
 | A restored Ollama chat converges | Restore an Ollama chat and send a message **without opening the picker**, so the discovery and selection probes cannot mask a broken run path. The first run uses 128,000; once the probe settles the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
-| Every *new* HTTP call goes through the shared probe | Assert `/api/v0/models`, `/api/ps` and both run-path probes go through `probeContextWindows`, not a private `fetch`, and that a second one started while the first is in flight joins it. Ollama's architectural figure is exempt — it is parsed inline from the `/api/tags` payload the route already holds |
+| Every *new* HTTP call goes through a shared probe | Assert `/api/v0/models`, `/api/ps` and both run-path probes go through `probeLoaded`/`probeAll`, not a private `fetch`, and that a second one started while the first is in flight joins it. Ollama's architectural figure on the picker path is exempt — parsed inline from the `/api/tags` payload the route already holds |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
 | The probe never rejects | Point it at a closed port, a 404 and a malformed body in turn; each resolves normally, leaves the cache untouched, and logs no unhandled rejection. The discovery route still returns its model list with `context_length` unchanged, and never a 500 |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
@@ -887,7 +938,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | The loaded figure wins over the architectural one | With `allenai/olmocr-2-7b` loaded in LM Studio, the declared window is 64,000 (`loaded_context_length`), not 128,000 (`max_context_length`). With `num_ctx: 8192` set on Ollama, it is 8,192, not 40,960 |
 | A cold cache hides the badge rather than faking one | With the cache empty, LM Studio rows carry `0` and render no badge, exactly as today. Ollama rows carry their architectural figure on the *first* open, because it is parsed inline rather than probed |
 | A stale badge can appear for one open, and that is accepted | Change the served context, reopen the picker: the row may still show the previous cached figure until the unawaited probe lands, and is correct on the next open. The badge is never the 128,000 fallback dressed as the model's own number, but it is not guaranteed fresh within a single open |
-| An empty `/api/ps` is the normal case | Let the keep-alive expire so no model is resident; the cache keeps the architectural values rather than clearing them |
+| An empty `/api/ps` is the normal case | Let the keep-alive expire so no model is resident; the architectural slots survive and `getContextWindow` falls back to them |
+| An unloaded model reverts, rather than stranding its loaded figure | Load with `num_ctx: 8192`, confirm 8,192 is declared, let it unload, and confirm the next successful loaded-probe clears the loaded slot so 40,960 is declared again — not 8,192 forever |
+| A failed loaded-probe clears nothing | Warm both slots, then make `/api/ps` fail; the loaded slot survives, because absent-from-a-good-answer and no-answer are different cases |
 | Opening the picker repairs either provider | Change the served context on each server in turn, reopen the picker, and confirm the cached value follows. There is no longer a provider for which opening is the wrong gesture |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |
 | The env knob is actually an override | Set `OPENAI_COMPATIBLE_CONTEXT_WINDOW`, warm the cache, confirm the env value is what `resolveModel` returns |

@@ -179,10 +179,18 @@ specific rather than leaving the implementer to choose. Add a fifth export to
 `local-context.ts`:
 
 ```
-probeContextWindow(providerId, baseUrl, modelId, opts?: { force?: boolean }): void
+probeContextWindow(providerId, baseUrl, modelId, opts?: { force?: boolean }): Promise<number | null>
 ```
 
-It always returns immediately. Two behaviours, and conflating them is the
+It returns the shared in-flight promise from the dedup map, resolving to the
+probed value or `null`. Fire-and-forget callers simply do not await it — that is
+a caller's choice, not a property of the function — while the on-demand route
+awaits the very same promise rather than starting a second probe. An earlier
+draft typed this `void`, which left the route with nothing to await and no way
+to return anything but the cold `null`.
+
+Callers that do not await it **must** attach a terminal `.catch()`, per the
+lifecycle rules below; an un-awaited rejected promise is an unhandled rejection. Two behaviours, and conflating them is the
 mistake this spec exists to prevent:
 
 - **`force: false` (the run path).** Do nothing if an entry already exists.
@@ -580,9 +588,12 @@ documentation or from this plan's guesses.
       URL; `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
       `recordContextWindow(key, value): void`, which writes only when `value` is
       a positive integer and is otherwise a no-op; and
-      `probeContextWindow(providerId, baseUrl, modelId, opts?): void`, the
-      fire-and-forget entry point described in the Ollama section above, with
-      its `force` flag, its dedup map and its 2 s timeout.
+      `probeContextWindow(providerId, baseUrl, modelId, opts?): Promise<number
+      | null>`, the entry point described in the Ollama section above, with its
+      `force` flag, its dedup map and its 2 s timeout. It returns the shared
+      in-flight promise so the on-demand route can await the same work the
+      fire-and-forget callers start; those callers ignore the result and attach
+      a `.catch()`.
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails must be a
@@ -618,14 +629,11 @@ documentation or from this plan's guesses.
       or unsupported server; `null` means "no metadata", the same contract the
       discovery routes already use for `available: false`.
 
-      Do not confuse the two sides of this. `probeContextWindow` is
-      fire-and-forget for its *callers inside the server*, and the browser does
-      not await this route either. The route handler itself is the one place
-      that does wait, by awaiting the shared in-flight promise the dedup map
-      already holds, so the endpoint returns something meaningful to anyone
-      calling it directly. An earlier draft specified a `void` probe and a
-      value-returning route, which could only ever have returned the cold
-      `null`.
+      Do not confuse the two sides of this. `probeContextWindow` returns the
+      shared in-flight promise; the run path ignores it, and the browser does
+      not await this route either. The route handler is the one place that does
+      wait, awaiting that same promise rather than starting a second probe, so
+      the endpoint returns something meaningful to anyone calling it directly.
 
       Have the picker call it on selection, gated with the **existing**
       `isOllama` helper (`web/src/components/model-selector.tsx:81`).
@@ -658,9 +666,13 @@ documentation or from this plan's guesses.
 
       Do **not** fan out across `/api/tags`; see the Ollama section above for
       why.
-- [ ] Fire the same probe, unawaited, when a run resolves an Ollama ref with no
-      cache entry, so restored chats converge on the next turn instead of
-      staying on the fallback forever. Nothing on the run path may await it.
+- [ ] Fire the same probe, unawaited, when a run resolves **either local
+      provider's** ref with no cache entry, so restored chats converge on the
+      next turn instead of staying on the fallback forever. That means Ollama
+      *and* OpenAI-compatible: a restored LM Studio chat never opens the picker
+      either, so its discovery route never runs. Gate on
+      `provider === "ollama" || provider === "openai-compatible"`, matching the
+      run-path note above. Nothing on the run path may await it.
 - [ ] Return the real value in each route's `context_length` field instead of
       the hardcoded `0`.
 

@@ -249,9 +249,10 @@ Three requirements follow, and the implementation is not correct without them:
 
   What remains, stated plainly, in both directions:
 
-  After a 256K-to-32K swap the cache serves 262,144 until a discovery call
-  replaces it, and runs in between fail with the overflow message rather than
-  working. That is loud, actionable, and repaired by any picker interaction.
+  After a 256K-to-32K swap the cache serves 262,144 until something overwrites
+  it, and runs in between fail with the overflow message rather than working.
+  That is loud and actionable. What repairs it differs by provider, and the
+  difference is not cosmetic — see the repair note below.
 
   The *opposite* swap is the accepted limitation. If the loaded window grows —
   32,768 to 262,144 — the cache keeps serving 32,768 until something overwrites
@@ -262,14 +263,27 @@ Three requirements follow, and the implementation is not correct without them:
   with a monotonic max-wins update: that would make the downward swap
   unrepairable, trading a silent inefficiency for a permanent broken state.
   Overwrite in both directions and accept the window between refreshes.
-- **Refresh on every discovery call.** The routes overwrite, never merge, so
-  reopening the picker is always a repair.
+- **Refresh on every write, but know which action repairs which provider.**
+  Writes overwrite, never merge. The two providers are not repaired by the same
+  gesture, because only one of them probes during discovery:
+
+  - **OpenAI-compatible / LM Studio:** repaired by *opening the picker*. The
+    discovery route probes `/api/v0/models` for every model, so one open
+    refreshes every entry.
+  - **Ollama:** **not** repaired by opening the picker. The discovery route
+    deliberately does not fan out across `/api/tags`, so opening it writes
+    nothing. An Ollama entry is refreshed by *selecting the model* or by
+    *starting a run* with a cold entry — the two probe paths above.
+
+  An earlier draft said "reopening the picker is always a repair". That is true
+  for LM Studio and false for Ollama, and the difference follows directly from
+  the N+1 decision.
 
 **The env knob outranks the probe, and is a blunt instrument on purpose.** The
 first draft resolved cache first and still called these knobs "overrides",
-which they would not have been: both discovery routes fill the cache the moment
-the picker opens, so a probed value would have silently beaten anything the
-operator configured. Resolve env first. That is what makes the knob an escape
+which they would not have been: the LM Studio route fills the cache the moment
+the picker opens, and the Ollama probe fills it on selection or at run start, so
+a probed value would have silently beaten anything the operator configured. Resolve env first. That is what makes the knob an escape
 hatch, for the case where the probe answers but answers wrongly.
 
 Note the tension with the argument two paragraphs up, which rejected env-only
@@ -452,8 +466,11 @@ documentation or from this plan's guesses.
 - [ ] Return the real value in each route's `context_length` field instead of
       the hardcoded `0`.
 
-**Exit criteria:** opening the picker populates the cache; reopening it after
-the local server changes overwrites the entry; `npm run verify -- server` green.
+**Exit criteria:** opening the picker populates the cache for
+OpenAI-compatible models, and reopening it after the local server changes
+overwrites those entries. For Ollama, selecting a model populates its entry and
+re-selecting after a change overwrites it — opening the picker alone does
+neither, by design. `npm run verify -- server` green.
 
 ### Phase 3 — Consume it
 
@@ -530,6 +547,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A stale entry fails loudly and is repairable | Reduce the loaded window in LM Studio; the run fails with the overflow message rather than compacting silently, and reopening the picker fixes it |
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
+| An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` still returns within the shared 2 s deadline |

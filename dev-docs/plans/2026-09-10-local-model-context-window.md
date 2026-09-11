@@ -661,7 +661,8 @@ an over-declared window surfaces an actionable error, and today it does not.
       `reason: "error"`, which was a conflation of two different fields: the
       `reason` on a `message_update` error is Pi's `"error" | "aborted"`
       (`events.ts:314`), while the `compaction_end` event carries its own
-      `reason: "overflow"` (`agent-session.js:1598`). Those vocabularies are
+      `reason: "overflow"` (`agent-session.js:1599`; the emit block runs `:1597-1604`,
+with `type` at `:1598` and `errorMessage` at `:1603`). Those vocabularies are
       unrelated. Nothing reads the field either: the client dispatches on
       `frame.type` (`use-agent.ts:190`, `:319`, `:578`) and reads exactly one
       other field on an `error` frame, `frame.kind` (`:579`). `frame.reason` is

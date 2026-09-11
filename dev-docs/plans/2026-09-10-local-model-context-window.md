@@ -268,6 +268,20 @@ Three requirements follow, and the implementation is not correct without them:
   with a monotonic max-wins update: that would make the downward swap
   unrepairable, trading a silent inefficiency for a permanent broken state.
   Overwrite in both directions and accept the window between refreshes.
+- **Order writes by generation, not by arrival.** Last-write-wins is wrong here
+  because writes can land out of order. Open the picker, open it again, and the
+  first `/api/v0/models` response can return *after* the second, overwriting
+  fresh data with stale. The Ollama paths are partly protected by the dedup rule
+  — one in-flight probe per key — but the LM Studio discovery route fires a new
+  fetch on every open and has no such guard.
+
+  Take a monotonically increasing generation number per canonical key when a
+  probe *starts*, and discard its result on completion if a newer generation has
+  since been recorded for that key. Apply it to every write path, not just the
+  discovery route, so the rule holds no matter which probe wins the race. Test
+  it in both directions — a delayed response carrying a larger window and one
+  carrying a smaller one — since the two failure modes differ and only one of
+  them is loud.
 - **Refresh on every write, but know which action repairs which provider.**
   Writes overwrite, never merge. The two providers are not repaired by the same
   gesture, because only one of them probes during discovery:
@@ -517,9 +531,18 @@ whenever one is set regardless of cache state.
 - [ ] Confirm compaction does not fire on the first turn.
 - [ ] Load the same model in LM Studio at a *reduced* context length without
       reopening the picker. Expect the run to fail with the overflow message
-      from Phase 0, not to work and not to silently compact, and expect
-      reopening the picker to repair it. If the message does not appear, Phase 0
-      is incomplete and the fallback argument is still resting on nothing.
+      from Phase 0, not to work and not to silently compact. If the message does
+      not appear, Phase 0 is incomplete and the fallback argument is still
+      resting on nothing.
+- [ ] Then reopen the picker, and be careful about what "repair" means. It
+      refreshes the *declared value*; it does not make an impossible prompt fit.
+      Pick the reduced window deliberately:
+      - Reduce to **65,536**, above the 60,793 floor (44,409 + 16,384). After
+        reopening, the run should succeed. This is the repair case.
+      - Reduce to something **below** the floor, say 16,384. After reopening,
+        the run should still fail, and still fail *visibly*. That is correct
+        behaviour, not a regression — the model genuinely cannot hold Kady's
+        prompt, which is the scope limit recorded in the goal.
 - [ ] If the empty-message symptom survives, stop and say so. The mechanism in
       this plan is a hypothesis, and a surviving symptom falsifies it rather
       than calling for a bigger number.
@@ -560,6 +583,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
 | An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
+| A late probe cannot clobber a newer one | Delay one `/api/v0/models` response past a second open; the newer generation's value survives, in both the larger and smaller directions |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` still returns within the shared 2 s deadline |

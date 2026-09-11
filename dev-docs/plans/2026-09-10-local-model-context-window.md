@@ -272,7 +272,9 @@ would leave every restored *local* run on the 128,000 fallback forever — exact
 the bug the probe was added to fix.
 
 Anchor on the variable instead, not the call. Put it after the `try`/`catch`
-closes (`:271`), where `requestedModel` is populated on all three branches.
+closes — the `catch` block's closing brace is `sessions.ts:272` and
+`const runId = mintRunId()` follows at `:274` — where `requestedModel` is
+populated on all three branches.
 Take the bare id from `requestedModel.id`, which is already the stripped form
 the builders received (`models.ts:432`) — do not re-parse the ref. Nothing
 awaits it.
@@ -684,7 +686,7 @@ documentation or from this plan's guesses.
       is the **bare** id, not the provider-prefixed ref — see the note below on
       why.
 
-      Export four things, so the callers do not each invent a shape:
+      Export six things, so the callers do not each invent a shape:
       `cacheKey(providerId, baseUrl, modelId): string`, normalising the base
       URL; `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
       `recordArchitectural(key, value)` and `recordLoaded(key, value |
@@ -736,8 +738,10 @@ documentation or from this plan's guesses.
       `details.context_length` out of the `/api/tags` response the route already
       fetches. That costs no extra HTTP call and there is no fan-out — the
       architectural figure is already in the payload the route holds.
-- [ ] Then overlay the loaded figures with **one** extra call to `/api/ps`,
-      unawaited, with its own `AbortController`, failing into a no-op.
+- [ ] Then fetch the loaded figures with **one** extra call to `/api/ps`,
+      unawaited, with its own `AbortController`, failing into a no-op. They go
+      into the entry's separate `loaded` slot — see the two-slot rule below,
+      which explicitly forbids merging them into the architectural value.
 
       Both providers cost two HTTP calls per open; they differ only in which
       call carries which figure. LM Studio: `/v1/models` for the list and

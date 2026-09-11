@@ -245,11 +245,13 @@ The asymmetry was carrying roughly half the design. With it gone, so are:
   be verified. It can be, and now has been.
 
 What remains is one mechanism for both providers: each discovery route makes one
-extra call and fills every entry for its server. A probe is scoped to
-`(providerId, baseUrl)` and takes no model argument.
+extra call and fills every entry for its server. A probe is scoped to a server,
+not a model — it takes no model argument, and its dedup key is
+`(providerId, baseUrl, scope)`, where scope distinguishes the two entry points
+below.
 
 ```
-probeLoaded(providerId, baseUrl): Promise<void>   // loaded figures only
+probeLoaded(providerId, baseUrl): Promise<void>   // after a discovery route
 probeAll(providerId, baseUrl): Promise<void>      // from cold, for the run path
 ```
 
@@ -355,12 +357,20 @@ Four requirements, because "fire and forget" is easy to implement as a leak:
   promise rather than mutating the original. The hazard was only the
   ambiguity.
 - **Clear the pending entry on settle, success or failure.** Otherwise a single
-  failed probe blocks every later retry for the life of the process.
+  failed probe blocks every later retry for the life of the process. A probe
+  clears the one key it registered under and no other, so a server may hold two
+  entries at once — one per scope — that settle and clear independently.
 - **Give the probe its own `AbortController` timeout**, matching the 2 s the
   discovery routes already use. Without one, a hanging Ollama leaves an entry in
   the in-flight map forever, and the dedup rule above then blocks every
-  subsequent probe for that model — the two requirements combine into a wedge if
-  the timeout is missing.
+  subsequent probe *at that server and scope* — the two requirements combine
+  into a wedge if the timeout is missing.
+
+  Read that scope limit as narrowing the blast radius, not as a reason to skip
+  the timeout. A hung `probeLoaded` wedges later `probeLoaded` calls but leaves
+  `probeAll` free, since they no longer share a key. The wedge is real either
+  way, and the half that survives is the picker path, which is the one the user
+  is watching.
 
 Be honest about what this buys: the *next* run is correct only if the probe has
 finished by then. A user who sends two messages quickly gets the fallback twice.
@@ -482,6 +492,16 @@ Three requirements follow, and the implementation is not correct without them:
   back to 128,000. That is precisely the restored-chat case `probeAll` exists
   for, defeated by the dedup that was supposed to be an optimisation.
 
+  The empty `/api/ps` is what makes the failure total, but it is not what
+  causes it. `/api/tags` carries `details.context_length` whether or not
+  anything is loaded, so the skipped call starves the architectural slot of
+  *every* model on that server, not just the one being run. With a model
+  loaded the run still works — `getContextWindow` returns `loaded ??
+  architectural` — while every sibling model stays on the fallback until some
+  later `probeAll` fetches tags. Do not read the "nothing loaded" condition as
+  the boundary of the bug; it is just the case where the damage is visible
+  immediately.
+
   The window is small but ordinary: a restored chat's run-path `probeAll` firing
   while a picker-fired `probeLoaded` is still outstanding at the same server.
 
@@ -495,6 +515,18 @@ Three requirements follow, and the implementation is not correct without them:
     saves a call and cannot lose data. Implement it as an explicit check for an
     in-flight `all` entry, not as a shared key, so the asymmetry is visible in
     the code rather than implied.
+
+    Two things must hold on that join path, and neither is implied by "check
+    for an in-flight entry". **Do the check and the store as one step** —
+    `map.get(allKey) ?? startLoadedProbe()` — rather than reading the map,
+    then awaiting something, then writing. An `await` between the two lets the
+    `all` probe settle and clear its entry in the gap, so the join adopts a
+    promise that is already gone. **A `probeLoaded` that joins must register
+    no `loaded` entry of its own**, because it started no request. If it
+    registers one anyway, nothing clears it — the `all` probe clears only its
+    own key on settle — and that orphan then blocks every later `probeLoaded`
+    for the life of the process, which is the exact wedge the timeout
+    requirement below exists to prevent.
 
   For LM Studio the two entry points do identical work — one `/api/v0/models`
   carrying both figures — so keying by scope costs at most one redundant call
@@ -833,9 +865,13 @@ documentation or from this plan's guesses.
       already holds the `/api/tags` body" versus "fetch everything from cold",
       and an earlier draft tried to carry that distinction in prose alone.
 
-      - `probeLoaded(providerId, baseUrl)` — the loaded figures only:
-        `/api/ps` for Ollama, `/api/v0/models` for LM Studio. This is what a
-        discovery route fires after writing what it already had.
+      - `probeLoaded(providerId, baseUrl)` — what a discovery route fires after
+        writing what it already had. It calls `/api/ps` for Ollama and
+        `/api/v0/models` for LM Studio. "Loaded" names the *purpose*, not a
+        narrower endpoint: LM Studio has no loaded-only route, and that one
+        response carries `max_context_length` alongside
+        `loaded_context_length`, so record both figures here rather than
+        hunting for a second endpoint that does not exist.
       - `probeAll(providerId, baseUrl)` — everything from cold, for the run
         path, where nothing is in hand. Ollama needs `/api/tags` *and*
         `/api/ps`; LM Studio's single `/api/v0/models` carries both, so the two
@@ -1009,9 +1045,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored LM Studio chat converges too | Restore an `openai-compatible` chat without opening the picker; the run path probes, and the cache holds the probed value once it settles. This is the gap a draft left open by gating the run probe on Ollama alone |
 | A restored Ollama chat converges | Restore an Ollama chat and send a message **without opening the picker**, so the discovery and selection probes cannot mask a broken run path. The first run uses 128,000; once the probe settles the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
-| Every *new* HTTP call goes through a shared probe | Assert `/api/v0/models`, `/api/ps` and both run-path probes go through `probeLoaded`/`probeAll`, not a private `fetch`, and that a second one started while the first is in flight joins it. Ollama's architectural figure on the picker path is exempt — parsed inline from the `/api/tags` payload the route already holds |
+| Every *new* HTTP call goes through a shared probe | Assert `/api/v0/models`, `/api/ps` and the run path's `probeAll` go through `probeLoaded`/`probeAll`, not a private `fetch`, and that a second one started while the first is in flight *at the same scope* joins it. Ollama's architectural figure on the picker path is exempt — parsed inline from the `/api/tags` payload the route already holds |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
-| A `probeAll` does not join an in-flight `probeLoaded` | On Ollama, hold `/api/ps` open, fire `probeLoaded(providerId, baseUrl)`, then fire `probeAll` for the same server while it is outstanding. Assert `probeAll` issues its own `/api/tags` and that the architectural slot is populated once it settles. With a single-scope key this fails: `probeAll` resolves on the shared `/api/ps` alone and the slot stays empty, so with no model loaded the run falls back to 128,000 |
+| A `probeAll` does not join an in-flight `probeLoaded` | On Ollama, hold `/api/ps` open, fire `probeLoaded(providerId, baseUrl)`, then fire `probeAll` for the same server while it is outstanding. Assert `probeAll` issues its own `/api/tags` and that the architectural slot is populated once *that* call returns — not once `probeAll` settles, which is later, because its own `/api/ps` is held open until the 2 s timeout. With a single-scope key this fails: `probeAll` resolves on the shared `/api/ps` alone and the slot stays empty, so with no model loaded the run falls back to 128,000 |
 | A `probeLoaded` may join an in-flight `probeAll` | Same setup, reversed order. Assert only one `/api/ps` is issued and the loaded slot is still written, confirming the superset join is wired as an explicit check rather than a shared key |
 | The probe never rejects | Point it at a closed port, a 404 and a malformed body in turn; each resolves normally, leaves the cache untouched, and logs no unhandled rejection. The discovery route still returns its model list with `context_length` unchanged, and never a 500 |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |

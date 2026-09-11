@@ -601,14 +601,19 @@ documentation or from this plan's guesses.
       on a dead or unsupported server — `null` means "no metadata", the same
       contract the discovery routes already use for `available: false`.
 
-      Have the picker call it on selection. That means adding a call that does
-      not exist: `handleSelect`
-      (`web/src/components/model-selector.tsx:428`) is currently synchronous
-      state only — `onChange(model); setOpen(false);`. Keep it that way from the
-      user's point of view — fire the request without awaiting it, close the
-      picker immediately, show no spinner, and swallow any error. The probe is
-      an optimisation, not a step in choosing a model, and nobody should wait on
-      a local server to pick one.
+      Have the picker call it on selection, **gated on the model being an
+      Ollama one**. `handleSelect`
+      (`web/src/components/model-selector.tsx:428`) serves every provider in the
+      list, so an ungated call would fire a request at the local Ollama daemon
+      every time someone picks Opus or a GPT model. Check the provider first and
+      send nothing otherwise.
+
+      That means adding a call that does not exist: `handleSelect` is currently
+      synchronous state only — `onChange(model); setOpen(false);`. Keep it that
+      way from the user's point of view — fire the request without awaiting it,
+      close the picker immediately, show no spinner, and swallow any error. The
+      probe is an optimisation, not a step in choosing a model, and nobody
+      should wait on a local server to pick one.
 
       Do **not** fan out across `/api/tags`; see the Ollama section above for
       why.
@@ -712,7 +717,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
-| A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` still returns within the shared 2 s deadline |
+| A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |
+| The native probe still lands afterwards | With the probe merely slow rather than hung, the route returns first; once the probe settles, the cache holds the probed value |
+| Picking a non-local model probes nothing | Select an Anthropic or OpenRouter model; no request reaches the Ollama daemon |
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |

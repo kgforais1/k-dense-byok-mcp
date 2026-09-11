@@ -189,6 +189,25 @@ Here the served figure equals the architectural one, but they can diverge when
 Read the loaded figure when the model is loaded and the architectural one
 otherwise, for both providers, by the same rule.
 
+**Both divergences were then reproduced deliberately, and neither is an edge
+case.**
+
+On Ollama, one `POST /api/generate` carrying `options.num_ctx: 8192` left
+`/api/tags` still reporting `40960` while `/api/ps` reported `8192`. A
+tags-only probe would over-declare by 5x on this exact machine.
+
+On LM Studio the divergence needs no user action at all. Loading
+`allenai/olmocr-2-7b` with a single chat completion and re-probing returned
+`state: "loaded"`, `max_context_length: 128000`, **`loaded_context_length:
+64000`** — it defaults to half the architectural maximum. Reading
+`max_context_length` would over-declare 2x on a default install. That settles
+the field carried as unverified since the first draft.
+
+So "prefer the loaded figure" is load-bearing on both sides, not a refinement.
+Note also that Pi never sends `num_ctx` itself — the string appears nowhere in
+`pi-ai/dist` — so any divergence is the operator's or the server's, which is
+exactly the case an architectural-only probe gets wrong.
+
 ### What this removes
 
 The asymmetry was carrying roughly half the design. With it gone, so are:
@@ -237,7 +256,7 @@ requestedModel = body.model
 
 A restored chat arrives with `session.model` already populated, so the `??`
 short-circuits and `resolveModel` is never called. Anchoring to `resolveModel`
-would leave every restored Ollama run on the 128,000 fallback forever — exactly
+would leave every restored *local* run on the 128,000 fallback forever — exactly
 the bug the probe was added to fix.
 
 Anchor on the variable instead, not the call. Put it after the `try`/`catch`
@@ -550,8 +569,7 @@ todo for the prompt floor itself. Do not quietly widen this plan to cover it.
 server/src/agent/events.ts             MODIFIED — forward compaction_end errors (Phase 0)
 server/src/agent/local-context.ts      NEW — probe helpers + the canonical-key cache
 server/src/agent/models.ts             MODIFIED — builders read the cache, fallback 128K
-server/src/api/system.ts               MODIFIED — LM Studio route fills the cache;
-                                       NEW route probes one Ollama model on demand
+server/src/api/system.ts               MODIFIED — both discovery routes fill the cache
 server/src/config.ts                   MODIFIED — two env override knobs
 server/test/local-context.test.ts      NEW — cache, probe parsing, precedence
 server/test/openai-compatible.test.ts  MODIFIED — the context_length: 0 assertions
@@ -599,17 +617,11 @@ overflow text instead of an empty assistant bubble.
 - [ ] Load a model in LM Studio and re-probe `/api/v0/models`. Record whether
       `loaded_context_length` appears, and whether it differs from
       `max_context_length` when the model is loaded below its maximum.
-- [ ] Ollama is already verified (see the section above): `/api/tags` carries
-      `details.context_length` and `/api/ps` carries the loaded
-      `context_length`. Re-confirm against the reader's own Ollama version
-      before relying on it — this was checked on 0.33.2, and the field is not in
-      older releases.
-- [ ] Prefer the *loaded* figure over the architectural one for both providers,
-      and confirm they can actually diverge. `/api/tags` gives Ollama's
-      architectural number and `/api/ps` the loaded one; on the probe above they
-      matched at 40,960, but they separate when `num_ctx` is set. Set `num_ctx`
-      low, reload, and confirm `/api/ps` follows it — over-declaring here is the
-      failure mode that silently truncates.
+- [ ] Both providers are verified, including the loaded-versus-architectural
+      divergence on each — see the evidence above. Nothing in Phase 1 is
+      blocked. Re-confirm against the reader's own Ollama version before relying
+      on it: this was checked on 0.33.2 and the field is absent in older
+      releases.
 - [ ] Check the model-name round trip before writing any cache code. `/api/tags`
       returns names that usually carry a tag (`llama3:latest`), and the bare id
       `resolveModel` hands the builder comes from the user's ref
@@ -683,9 +695,11 @@ documentation or from this plan's guesses.
       a failure leaves the architectural values in place rather than clearing
       them.
 - [ ] Prefer the loaded figure over the architectural one wherever both exist,
-      for both providers, and fall back to the architectural number when the
-      model is not loaded. Note the loaded figure is only readable *while* the
-      model is resident — Ollama unloads after its keep-alive expires, so
+      for both providers. **Merge, do not replace:** start from the
+      architectural map, then overwrite only the entries reported as loaded.
+      Models absent from the loaded set keep their architectural value, and a
+      failed loaded-probe leaves the whole architectural map intact. Note the
+      loaded figure is only readable *while* the model is resident — Ollama unloads after its keep-alive expires, so
       `/api/ps` is frequently empty and the fallback is the normal case, not the
       exception.
 - [ ] Fire the same probe, unawaited, when a run resolves **either local
@@ -772,9 +786,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 - The probe is best-effort. A local server that is down, slow, or returns
   nonsense must fall back silently, exactly as the two routes already do
   today — a dead Ollama must never make a run fail.
-- No fan-out inside a discovery route. The Ollama probe is one model per call,
-  on demand; an N+1 across `/api/tags` would blow the 2 s budget on the
-  picker's path.
+- No fan-out inside a discovery route. Each provider costs a bounded number of
+  calls per open — Ollama reads `/api/tags` (already fetched) plus one
+  `/api/ps`; LM Studio adds one `/api/v0/models`. Never one call per model.
 - The native LM Studio probe must never be able to empty the model list. The
   OpenAI-compatible route serves vLLM and others that do not implement
   `/api/v0/models`; losing context metadata is acceptable, losing the models is
@@ -809,6 +823,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | The native probe still lands afterwards | With the probe merely slow rather than hung, the route returns first; once the probe settles, the cache holds the probed value |
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` takes the architectural figure from the `/api/tags` payload it already has, and makes at most one extra unawaited `/api/ps` call for the loaded figures, so its response timing is unchanged with 10+ models present |
+| The loaded figure wins over the architectural one | With `allenai/olmocr-2-7b` loaded in LM Studio, the declared window is 64,000 (`loaded_context_length`), not 128,000 (`max_context_length`). With `num_ctx: 8192` set on Ollama, it is 8,192, not 40,960 |
 | An empty `/api/ps` is the normal case | Let the keep-alive expire so no model is resident; the cache keeps the architectural values rather than clearing them |
 | Opening the picker repairs either provider | Change the served context on each server in turn, reopen the picker, and confirm the cached value follows. There is no longer a provider for which opening is the wrong gesture |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |

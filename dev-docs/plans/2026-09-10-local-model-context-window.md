@@ -216,10 +216,26 @@ would leave every restored Ollama run on the 128,000 fallback forever — exactl
 the bug the probe was added to fix.
 
 Anchor on the variable instead, not the call. Put it after the `try`/`catch`
-closes (`:271`), where `requestedModel` is populated on all three branches,
-gated on `requestedModel.provider === "ollama"`. Take the bare id from
-`requestedModel.id`, which is already the stripped form the builders received
-(`models.ts:432`) — do not re-parse the ref. Nothing awaits it.
+closes (`:271`), where `requestedModel` is populated on all three branches.
+Take the bare id from `requestedModel.id`, which is already the stripped form
+the builders received (`models.ts:432`) — do not re-parse the ref. Nothing
+awaits it.
+
+**Gate it on "is a local provider", not on Ollama.** An earlier draft said
+`requestedModel.provider === "ollama"`, which left the same hole one provider
+over. LM Studio has the identical problem: a restored chat never opens the
+picker, so the discovery route never runs, so its entry is never written, and
+every run sits on the 128,000 fallback until the user happens to open the
+picker. Gate on `provider === "ollama" || provider === "openai-compatible"`. These are
+Pi's lowercase provider ids (`models.ts:228`, `:253`), which is the server-side
+vocabulary — not the capitalised display labels the picker uses. See the note in
+Phase 2 about that trap.
+
+The two probes differ, and `probeContextWindow` already dispatches on provider:
+Ollama does one `POST /api/show` for that model, OpenAI-compatible does the
+server-wide `/api/v0/models` call that fills every entry at once. Same entry
+point, same dedup map, same fire-and-forget lifecycle — only the upstream call
+and the dedup scope differ, which is the split the cache keys already encode.
 
 `resolveModel` itself stays untouched and synchronous; the probe is fired by its
 caller, not from inside it. That distinction is the whole reason this design
@@ -597,16 +613,41 @@ documentation or from this plan's guesses.
 - [ ] Add the on-demand Ollama route as `GET /ollama/model-context?model=<id>`,
       matching the existing `/ollama/models` and `/openai-compatible/models`
       naming (`api/system.ts:63`, `:96`). One model id, one `POST /api/show`
-      upstream. It returns `{ contextLength: number | null }` and never errors
-      on a dead or unsupported server — `null` means "no metadata", the same
-      contract the discovery routes already use for `available: false`.
+      upstream. The route **awaits** its probe — bounded by the same 2 s timeout
+      — and returns `{ contextLength: number | null }`, never erroring on a dead
+      or unsupported server; `null` means "no metadata", the same contract the
+      discovery routes already use for `available: false`.
 
-      Have the picker call it on selection, **gated on the model being an
-      Ollama one**. `handleSelect`
-      (`web/src/components/model-selector.tsx:428`) serves every provider in the
-      list, so an ungated call would fire a request at the local Ollama daemon
-      every time someone picks Opus or a GPT model. Check the provider first and
-      send nothing otherwise.
+      Do not confuse the two sides of this. `probeContextWindow` is
+      fire-and-forget for its *callers inside the server*, and the browser does
+      not await this route either. The route handler itself is the one place
+      that does wait, by awaiting the shared in-flight promise the dedup map
+      already holds, so the endpoint returns something meaningful to anyone
+      calling it directly. An earlier draft specified a `void` probe and a
+      value-returning route, which could only ever have returned the cold
+      `null`.
+
+      Have the picker call it on selection, gated with the **existing**
+      `isOllama` helper (`web/src/components/model-selector.tsx:81`).
+      `handleSelect` (`:428`) serves every provider in the list, so an ungated
+      call would fire a request at the local Ollama daemon every time someone
+      picks Opus or a GPT model.
+
+      Do not write `model.provider === "ollama"`. The browser and the server use
+      different vocabularies for the same provider, and this is the trap: the
+      discovery route builds rows with `provider: "Ollama"`, capitalised, as a
+      display label (`api/system.ts:76`), while the resolved Pi model carries
+      `provider: "ollama"` as an id (`models.ts:228`). A lowercase comparison
+      matches no row the picker ever holds, so the gate would never fire and the
+      probe would never run — a silent no-op that looks like working code.
+      `isOllama` already handles both forms
+      (`m.provider === "Ollama" || m.id.startsWith("ollama/")`); use it.
+
+      Only Ollama is gated here. LM Studio needs no selection probe, because
+      opening the picker already refreshes every one of its entries through the
+      discovery route. There is also an `isLocal` helper at `:85` — it is the
+      wrong one for this call site, and right for anything that must cover both
+      local providers.
 
       That means adding a call that does not exist: `handleSelect` is currently
       synchronous state only — `onChange(model); setOpen(false);`. Keep it that
@@ -712,6 +753,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | Overflow is visible at all | A `compaction_end` carrying an `errorMessage` reaches the client as an `error` frame, instead of being dropped at `events.ts:349` |
 | A stale entry fails loudly and is repairable | Reduce the loaded window in LM Studio; the run fails with the overflow message rather than compacting silently, and reopening the picker fixes it |
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
+| A restored LM Studio chat converges too | Restore an `openai-compatible` chat without opening the picker; the run path probes, and the cache holds the probed value once it settles. This is the gap a draft left open by gating the run probe on Ollama alone |
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
 | An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
@@ -720,6 +762,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |
 | The native probe still lands afterwards | With the probe merely slow rather than hung, the route returns first; once the probe settles, the cache holds the probed value |
 | Picking a non-local model probes nothing | Select an Anthropic or OpenRouter model; no request reaches the Ollama daemon |
+| The picker gate actually fires | Select an Ollama model from a discovery-built row, whose `provider` is `"Ollama"`; the probe runs. A lowercase comparison would silently never fire, so assert the positive case, not only the negative |
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |

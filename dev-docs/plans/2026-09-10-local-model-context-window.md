@@ -159,11 +159,25 @@ under-declaration, which is the silent-compaction case again.
 
 Close it with a **fire-and-forget probe at run start**. When a run resolves an
 Ollama ref whose entry is missing, kick off the `/api/show` probe without
-awaiting it. The current run proceeds on the fallback; the result lands in the
-cache and the next run in that session is correct. `resolveModel` stays
-synchronous, nothing on the run path blocks, and a dead Ollama is still
-harmless. It is one turn late rather than never, which is the difference
-between a bug and a wrinkle.
+awaiting it. `resolveModel` stays synchronous, nothing on the run path blocks,
+and a dead Ollama is still harmless.
+
+Three requirements, because "fire and forget" is easy to implement as a leak:
+
+- **Deduplicate by canonical key.** Track in-flight probes in a
+  `Map<key, Promise>` so several quick runs cannot stack duplicate `/api/show`
+  requests at one local server.
+- **Attach terminal rejection handling.** An unhandled rejection from a
+  forgotten promise is a crash risk in Node, and a dead Ollama must stay
+  harmless. Catch and discard.
+- **Clear the pending entry on settle, success or failure.** Otherwise a single
+  failed probe blocks every later retry for the life of the process.
+
+Be honest about what this buys: the *next* run is correct only if the probe has
+finished by then. A user who sends two messages quickly gets the fallback twice.
+This converges rather than guarantees, and that is enough here — the fallback is
+runnable, so the cost of losing the race is one turn of a less accurate window,
+not a failure.
 
 ## Design decisions
 
@@ -233,10 +247,21 @@ Three requirements follow, and the implementation is not correct without them:
   expiring to a fallback, and it is also simpler. So: entries live until
   something overwrites them.
 
-  What remains, stated plainly: after a 256K-to-32K swap the cache serves
-  262,144 until a discovery call replaces it, and runs in between fail with the
-  overflow message rather than working. That is a loud, actionable failure that
-  any picker interaction repairs, and it is the better half of a real trade.
+  What remains, stated plainly, in both directions:
+
+  After a 256K-to-32K swap the cache serves 262,144 until a discovery call
+  replaces it, and runs in between fail with the overflow message rather than
+  working. That is loud, actionable, and repaired by any picker interaction.
+
+  The *opposite* swap is the accepted limitation. If the loaded window grows —
+  32,768 to 262,144 — the cache keeps serving 32,768 until something overwrites
+  it, and Kady compacts earlier than it needs to. That is silent. It is
+  accepted rather than solved because the only clean fix is a refresh on the
+  run path, which is the async round trip this whole design avoids, and because
+  the cost is degraded efficiency rather than a failed run. Do **not** "fix" it
+  with a monotonic max-wins update: that would make the downward swap
+  unrepairable, trading a silent inefficiency for a permanent broken state.
+  Overwrite in both directions and accept the window between refreshes.
 - **Refresh on every discovery call.** The routes overwrite, never merge, so
   reopening the picker is always a repair.
 
@@ -269,7 +294,14 @@ from what it has, and no signature changes.
 present, per the reasoning above: the loaded value is what the request is
 measured against, and it can be lower.
 
-**Raise the fallback to 128,000.** Two arguments. It matches what the repo
+**Raise the fallback to 128,000 — but not before Phase 0.** These ship
+together or not at all. Until `compaction_end` is forwarded, a 128,000 fallback
+against a real 32,768 server reproduces exactly the empty-run failure this plan
+exists to remove, because the rejection is invisible. The fallback is only safe
+once the overflow is visible, so treat Phase 0 as a hard dependency rather than
+a first step that could be deferred.
+
+Two arguments for the number itself. It matches what the repo
 already uses when it has no better information (`models.ts:132`, and `:71`).
 And the two failure directions are not symmetric — but only after a
 prerequisite fix, and the earlier drafts of this plan were wrong to assume
@@ -354,8 +386,13 @@ an over-declared window surfaces an actionable error, and today it does not.
 
 - [ ] Add a `compaction_end` case to `toClientFrame`
       (`server/src/agent/events.ts:283`). When the event carries an
-      `errorMessage`, emit the existing `error` frame with it; when it does not,
-      keep returning `null` so ordinary successful compaction stays invisible.
+      `errorMessage`, emit the **complete** `error` frame — all three fields the
+      contract requires: `{ type: "error", message: errorMessage, reason:
+      "error" }`. `reason` is `"error" | "aborted"` (see the note at `:314`),
+      and an overflow failure is `"error"`. Do not reuse the `Model error: `
+      prefix from `:321`; this is not a provider failure and Pi's message is
+      already a complete sentence. When there is no `errorMessage`, keep
+      returning `null` so ordinary successful compaction stays invisible.
 - [ ] Confirm the client renders it. The `error` frame is already handled, so
       this should need no frontend change — verify rather than assume.
 - [ ] Add a test that a `compaction_end` with an `errorMessage` produces an
@@ -383,6 +420,10 @@ documentation or from this plan's guesses.
       and a lookup. No TTL — entries live until overwritten, for the reason
       given above. Note the key is the **bare** id, not the provider-prefixed
       ref — see the note below on why.
+- [ ] Never let a failed probe destroy a good entry. Write only when the parsed
+      value is a positive integer; on a 404, a timeout, a malformed body or a
+      zero, leave the existing entry alone. A refresh that fails must be a
+      no-op, not a downgrade to the fallback.
 - [ ] Fill the cache from `GET /openai-compatible/models` with a **second,
       independent** call to `/api/v0/models`, preferring
       `loaded_context_length` over `max_context_length`. Issue it
@@ -417,7 +458,12 @@ the local server changes overwrites the entry; `npm run verify -- server` green.
 ### Phase 3 — Consume it
 
 - [ ] Add `OLLAMA_CONTEXT_WINDOW` and `OPENAI_COMPATIBLE_CONTEXT_WINDOW` to
-      `config.ts`, beside the existing `*_BASE_URL` knobs.
+      `config.ts`, beside the existing `*_BASE_URL` knobs. Trim, and accept only
+      a positive finite integer. Blank, non-numeric, zero, negative and
+      fractional values are ignored so resolution falls through to the cache and
+      then 128,000 — a typo must not become a context window. Test each case;
+      note `OPENAI_COMPATIBLE_BASE_URL` already uses `?.trim() ||` at
+      `config.ts:100` for the same reason.
 - [ ] In both builders, resolve in order: env knob, then cache, then 128,000. The env value wins over a probed one — see the precedence
       note in the design decisions.
 - [ ] Update the comment at `models.ts:243`. It is currently correct about
@@ -483,7 +529,9 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | Overflow is visible at all | A `compaction_end` carrying an `errorMessage` reaches the client as an `error` frame, instead of being dropped at `events.ts:357` |
 | A stale entry fails loudly and is repairable | Reduce the loaded window in LM Studio; the run fails with the overflow message rather than compacting silently, and reopening the picker fixes it |
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
-| A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000 and the next run in that session uses the probed value |
+| A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
+| A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
+| A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` still returns within the shared 2 s deadline |
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
 | Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |

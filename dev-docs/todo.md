@@ -107,7 +107,7 @@ project scoping, cancellation, tool policy, and accounting.
 
 ## 5. Local-model context window is hardcoded to 32K
 
-`buildOllamaModel` and `buildOpenAICompatibleModel` (`server/src/agent/models.ts:223`, `:246`) both hardcode `contextWindow: 32_768`. The comment explains the choice honestly — the OpenAI-compatible `/v1/models` endpoint carries no context length — but the default is now wrong in a way that breaks the local path outright.
+`buildOllamaModel` and `buildOpenAICompatibleModel` (`server/src/agent/models.ts:233`, `:257`) both hardcode `contextWindow: 32_768`. The comment explains the choice honestly — the OpenAI-compatible `/v1/models` endpoint carries no context length — but the default is now wrong in a way that breaks the local path outright.
 
 Measured on 2026-09-08 while running the MCP Phase 2 external-client check against LM Studio:
 

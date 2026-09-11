@@ -80,13 +80,27 @@ The 44,409 figure is an empirical measurement from the Phase 2 external-client
 check, not a constant in the code. Re-measure it during implementation rather
 than treating it as fixed.
 
-This also supplies a **likely** mechanism for the observed symptom, and it is
-worth being precise about how much of that is established. The arithmetic is
-verified: the prompt exceeds the effective budget, so `shouldCompact` returns
-true on the first turn, and compaction cannot cut what is over budget — the
-system prompt, the seeded `AGENTS.md` and the tool surface are all fixed. The
-step that is *not* verified is the last one, that this is what produces a `done`
-run with an empty assistant message and no error frame. That symptom was
+This also supplies a **possible** mechanism for the observed symptom, and the
+detail matters because an earlier draft of this plan got it wrong.
+
+That draft said compaction "fires on the very first turn" and blocks the prompt
+before it is sent. It does not. The pre-send check is guarded:
+`const lastAssistant = this._findLastAssistantMessage(); if (lastAssistant) {
+await this._checkCompaction(lastAssistant, false); }`
+(`pi-coding-agent/dist/core/agent-session.js:866-868`). On the first turn of a
+new session there is no prior assistant message, so the check is skipped
+entirely and the full 44,409-token prompt goes to the model regardless of the
+declared window.
+
+That weakens the hypothesis rather than strengthening it, which is worth saying
+plainly. The declared window cannot block the first send. It can only bite
+afterwards, when `_checkCompaction` runs against the response and finds the
+context far over the 16,384 effective budget, or when Pi's overflow path fires
+on a rejection. Either way compaction cannot cut a fixed system prompt, so it
+fails — and the failure is invisible for the reason given below.
+
+The step that is *not* verified is the last one, that this is what produces a
+`done` run with an empty assistant message and no error frame. That symptom was
 observed during the Phase 2 external-client check, and this chain explains it,
 but the two have not been connected by observation. Treat it as the leading
 hypothesis rather than a finding. Phase 4 exists to test it, and if the symptom
@@ -162,17 +176,49 @@ under-declaration, which is the silent-compaction case again.
 
 Close it with a **fire-and-forget probe at run start**, and put it somewhere
 specific rather than leaving the implementer to choose. Add a fifth export to
-`local-context.ts`, `ensureProbed(providerId, baseUrl, modelId): void`, which
-returns immediately: it looks the key up, does nothing if an entry or an
-in-flight probe already exists, and otherwise starts one via the shared dedup
-map, the generation counter and the 2 s timeout described below. The same
-function backs the picker's route handler, so both paths share one
-implementation and one set of guarantees.
+`local-context.ts`:
 
-Call it from the `/run` handler in `server/src/api/sessions.ts`, immediately
-after `resolveModel` returns (`:254-255`), gated on
-`model.provider === "ollama"`. Take the bare id from the resolved
-`model.id`, which is already the stripped form the builders received
+```
+probeContextWindow(providerId, baseUrl, modelId, opts?: { force?: boolean }): void
+```
+
+It always returns immediately. Two behaviours, and conflating them is the
+mistake this spec exists to prevent:
+
+- **`force: false` (the run path).** Do nothing if an entry already exists.
+  Without this guard, a background probe fires on *every turn* of every Ollama
+  chat, which is a request to the local daemon per message for a value that has
+  not changed.
+- **`force: true` (the picker's selection route).** Probe even when an entry
+  exists, because refreshing a stale entry is the entire point of the selection
+  gesture. An earlier draft specified a single function that skipped when an
+  entry existed, and also claimed re-selecting repairs a stale Ollama entry.
+  Those cannot both be true: with the skip, selection would never repair
+  anything.
+
+Both paths share the in-flight dedup map, so `force` overrides the
+entry-exists check and never the already-in-flight one.
+
+Call it from the `/run` handler in `server/src/api/sessions.ts`, and **not**
+where an earlier draft said. That draft said "immediately after `resolveModel`
+returns (`:254-255`)", which would have missed the only case this probe exists
+for. The resolution is:
+
+```ts
+requestedModel = body.model
+  ? resolveModel(body.model, getModelRegistry(), body.fusionConfig)
+  : session.model ?? resolveModel(undefined, getModelRegistry());
+```
+
+A restored chat arrives with `session.model` already populated, so the `??`
+short-circuits and `resolveModel` is never called. Anchoring to `resolveModel`
+would leave every restored Ollama run on the 128,000 fallback forever — exactly
+the bug the probe was added to fix.
+
+Anchor on the variable instead, not the call. Put it after the `try`/`catch`
+closes (`:271`), where `requestedModel` is populated on all three branches,
+gated on `requestedModel.provider === "ollama"`. Take the bare id from
+`requestedModel.id`, which is already the stripped form the builders received
 (`models.ts:432`) — do not re-parse the ref. Nothing awaits it.
 
 `resolveModel` itself stays untouched and synchronous; the probe is fired by its
@@ -286,20 +332,25 @@ Three requirements follow, and the implementation is not correct without them:
   with a monotonic max-wins update: that would make the downward swap
   unrepairable, trading a silent inefficiency for a permanent broken state.
   Overwrite in both directions and accept the window between refreshes.
-- **Order writes by generation, not by arrival.** Last-write-wins is wrong here
-  because writes can land out of order. Open the picker, open it again, and the
-  first `/api/v0/models` response can return *after* the second, overwriting
-  fresh data with stale. The Ollama paths are partly protected by the dedup rule
-  — one in-flight probe per key — but the LM Studio discovery route fires a new
-  fetch on every open and has no such guard.
+- **Close the reordering window with dedup, not with a generation counter.**
+  Out-of-order writes are a real hazard: open the picker twice and the first
+  `/api/v0/models` response could return after the second, overwriting fresh
+  data with stale. An earlier draft answered this with a monotonic generation
+  number per key, stamped at probe start and checked at write.
 
-  Take a monotonically increasing generation number per canonical key when a
-  probe *starts*, and discard its result on completion if a newer generation has
-  since been recorded for that key. Apply it to every write path, not just the
-  discovery route, so the rule holds no matter which probe wins the race. Test
-  it in both directions — a delayed response carrying a larger window and one
-  carrying a smaller one — since the two failure modes differ and only one of
-  them is loud.
+  That is more machinery than the hazard needs, and review was right to push
+  back. The reordering window only exists if two probes for the same scope are
+  in flight at once, and the dedup map already forbids that — a second open
+  while the first probe is running reuses the in-flight probe rather than
+  starting a rival. Close the window at the source instead of reconciling
+  writes afterwards.
+
+  One requirement follows: **dedup the LM Studio probe by
+  `(providerId, baseUrl)`, not by model key.** One `/api/v0/models` call fills
+  every model's entry, so its dedup scope is the call, not the row. The Ollama
+  probes stay deduped per model key, because there one call fills one entry.
+  Get that wrong and the guarantee disappears, which is why it is stated rather
+  than left to inference.
 - **Refresh on every write, but know which action repairs which provider.**
   Writes overwrite, never merge. The two providers are not repaired by the same
   gesture, because only one of them probes during discovery:
@@ -328,8 +379,10 @@ Note the tension with the argument two paragraphs up, which rejected env-only
 per-provider, not per-model, so setting it to correct one model caps every model
 on that provider. That is an acceptable escape hatch and an unacceptable primary
 mechanism, which is why it is second in precedence and the probe is first.
-Document it in `docs/model-selection.md` as a last resort, not as the normal way
-to configure a window.
+Document it as a last resort, not as the normal way to configure a window.
+Check both `docs/model-selection.md` and `docs/local-models-ollama.md` and put
+it where the local-model setup instructions already live, rather than assuming
+the former.
 
 **Key the cache on the bare model id, not the provider-prefixed ref.** This is
 easy to get backwards. `resolveModel` strips the prefix before it calls either
@@ -365,10 +418,24 @@ larger-context model."` (`pi-coding-agent/dist/core/agent-session.js:1595`).
 The problem is what Kady does with it. That message rides on a
 `type: "compaction_end"` event, and `toClientFrame`
 (`server/src/agent/events.ts:283`) has no `compaction_end` case. It falls to
-`default: return null` at `:349` and is dropped. Nothing anywhere in
-`server/src` or `web/src` handles a compaction event — a repo-wide grep for
-`compaction` returns exactly one hit, an unrelated comment at
-`cost/ledger.ts:50`.
+`default: return null` at `:349` and is dropped. No `compaction_end` handler
+exists anywhere. A repo-wide grep for `compaction` returns four hits, none of
+them a handler: a comment at `cost/ledger.ts:50`, a comment and a test name in
+`web/src/lib/use-agent.ts:95` and `use-agent.test.ts:91`, and tooltip prose in
+`web/src/components/context-usage-indicator.tsx:35`. An earlier draft of this
+plan said "exactly one hit", which was wrong — that grep had been run against
+`web/app`, `web/components` and `web/lib`, none of which exist; the frontend
+lives under `web/src`. The conclusion survives the correction, but the evidence
+for it was not what the plan claimed.
+
+**Unverified, and worth stating:** this assumes Pi classifies a local server's
+rejection as a context overflow in the first place. That path
+(`agent-session.js:1586`) keys off recognising the provider's error, and LM
+Studio's and Ollama's error shapes are not OpenAI's. If Pi does not recognise
+them, the failure surfaces as an ordinary `message_update` provider error —
+which `toClientFrame` already forwards at `:313-324`, so the user still sees
+something, but Phase 0 would be aimed at the wrong event. Phase 0 must confirm
+which event actually fires before writing the mapping.
 
 So today, over-declaring does **not** fail loudly. It produces a dead run and an
 empty assistant bubble, which is the same symptom this plan is chasing. That
@@ -386,7 +453,11 @@ first, so that every later decision rests on something true.
 The fallback must clear the prompt floor with reserve headroom. `44409 + 16384`
 = 60,793, so 128,000 clears it with room for the conversation itself; 65,536
 would clear the arithmetic but leave 4,743 tokens of actual working space
-(49,152 effective minus the 44,409 prompt), which is not a usable agent.
+(49,152 effective minus the 44,409 prompt) — enough for a trivial exchange, and
+not enough for real work. That is why 65,536 is rejected as a *blind fallback*
+while still being the right window for the Phase 4 success case: there it is a
+deliberate, measured choice testing one trivial request, not a guess applied to
+every unknown server.
 
 **Keep the two providers on parallel paths.** `models.ts:238` documents that
 `buildOllamaModel` and `buildOpenAICompatibleModel` are deliberately not
@@ -424,7 +495,8 @@ server/test/model-refusal.test.ts      MODIFIED — compaction_end forwarding (P
                                        there is no events.test.ts, and this file
                                        already covers toClientFrame error mapping
 web/src/components/model-selector.tsx  MODIFIED — call the Ollama probe on select
-docs/model-selection.md                MODIFIED — document the knobs
+docs/model-selection.md                MODIFIED — document the knobs (or
+docs/local-models-ollama.md            — whichever already covers local setup)
 dev-docs/todo.md                       MODIFIED — delete section 5 on completion
 ```
 
@@ -465,7 +537,15 @@ overflow text instead of an empty assistant bubble.
       `loaded_context_length` appears, and whether it differs from
       `max_context_length` when the model is loaded below its maximum.
 - [ ] Start Ollama, `POST /api/show` for a pulled model, and record the actual
-      field carrying the context length. Do not assume it mirrors LM Studio.
+      field carrying the context length **and the request body shape** — this
+      plan does not specify either, deliberately, because both are guesses until
+      seen. Do not assume it mirrors LM Studio.
+- [ ] Check the model-name round trip before writing any cache code. `/api/tags`
+      returns names that usually carry a tag (`llama3:latest`), and the bare id
+      `resolveModel` hands the builder comes from the user's ref
+      (`models.ts:432`), which may omit it. If `llama3` and `llama3:latest` can
+      denote one model, they are two cache keys and every lookup misses. Record
+      which form each side uses and normalise in `cacheKey` if they differ.
 - [ ] Write both real response fragments into this plan before writing code.
 
 **Exit criteria:** both field names are quoted from live output, not from
@@ -479,36 +559,36 @@ documentation or from this plan's guesses.
       is the **bare** id, not the provider-prefixed ref — see the note below on
       why.
 
-      Export five things, so the callers do not each invent a shape. Four are
-      cache primitives; the fifth, `ensureProbed`, is described in the Ollama
-      section above and is what both the picker route and the `/run` handler
-      call:
-      `cacheKey(providerId, baseUrl, modelId): string` (normalising the base
-      URL); `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
-      `nextGeneration(key): number`, called when a probe starts; and
-      `recordContextWindow(key, generation, value): void`, which writes only if
-      `value` is a positive integer and `generation` is still the newest for
-      that key. And `ensureProbed(providerId, baseUrl, modelId): void`, which
-      returns immediately and starts a deduplicated, generation-stamped,
-      timed-out probe only if there is neither an entry nor one already in
-      flight. Keep the generation counter in its own map, not inside the cache
-      entry — an entry that does not exist yet has no counter to advance, and
-      storing it in the entry makes the first probe for a key unorderable.
+      Export four things, so the callers do not each invent a shape:
+      `cacheKey(providerId, baseUrl, modelId): string`, normalising the base
+      URL; `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
+      `recordContextWindow(key, value): void`, which writes only when `value` is
+      a positive integer and is otherwise a no-op; and
+      `probeContextWindow(providerId, baseUrl, modelId, opts?): void`, the
+      fire-and-forget entry point described in the Ollama section above, with
+      its `force` flag, its dedup map and its 2 s timeout.
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails must be a
       no-op, not a downgrade to the fallback.
 - [ ] Fill the cache from `GET /openai-compatible/models` with a **second,
       independent** call to `/api/v0/models`, preferring
-      `loaded_context_length` over `max_context_length`. Issue it
-      **concurrently** with `/v1/models` under one shared 2 s deadline, not
-      after it — serially they would double the route's worst case to 4 s on
-      the picker's path. It must not replace the `/v1/models` call and must not
-      share its failure. Concretely: attach the `.catch()` to the native
-      probe's own promise *before* combining, or use `Promise.allSettled`. A
-      shared `AbortSignal` firing inside a bare `Promise.all` rejects the whole
-      route and empties the model list — which is exactly the guardrail below,
-      broken by the mechanism meant to satisfy it. `/api/v0/models` is
+      `loaded_context_length` over `max_context_length`. **Do not await it and
+      do not share its `AbortController`.** The route answers as soon as
+      `/v1/models` returns; the native probe writes to the cache whenever it
+      finishes, exactly like the Ollama probes.
+
+      An earlier draft had the two run concurrently under one shared 2 s
+      deadline, which was worse in two ways. One shared signal aborts *both*
+      fetches, so a slow native probe kills the `/v1/models` call that had
+      already succeeded. And even with per-promise `.catch()`, awaiting both
+      makes the picker wait the full 2 s for the native probe to time out before
+      rendering a list it already had. Not awaiting it removes both problems and
+      the reasoning needed to avoid them.
+
+      The cost is that the `context_length` in the row returned by *this* open
+      may lag by one open. That field is not what the fix depends on — the
+      builders read the cache, not the route's response. `/api/v0/models` is
       LM Studio's own endpoint; vLLM, text-generation-webui and the rest answer
       `/v1/models` and 404 the native one. A 404, a timeout or a malformed body
       means "no context metadata", never "no models" — the route must still
@@ -629,7 +709,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
 | An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
-| A late probe cannot clobber a newer one | Delay one `/api/v0/models` response past a second open; the newer generation's value survives, in both the larger and smaller directions |
+| Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` still returns within the shared 2 s deadline |

@@ -172,6 +172,11 @@ Three requirements, because "fire and forget" is easy to implement as a leak:
   harmless. Catch and discard.
 - **Clear the pending entry on settle, success or failure.** Otherwise a single
   failed probe blocks every later retry for the life of the process.
+- **Give the probe its own `AbortController` timeout**, matching the 2 s the
+  discovery routes already use. Without one, a hanging Ollama leaves an entry in
+  the in-flight map forever, and the dedup rule above then blocks every
+  subsequent probe for that model — the two requirements combine into a wedge if
+  the timeout is missing.
 
 Be honest about what this buys: the *next* run is correct only if the probe has
 finished by then. A user who sends two messages quickly gets the fallback twice.
@@ -328,7 +333,7 @@ larger-context model."` (`pi-coding-agent/dist/core/agent-session.js:1595`).
 The problem is what Kady does with it. That message rides on a
 `type: "compaction_end"` event, and `toClientFrame`
 (`server/src/agent/events.ts:283`) has no `compaction_end` case. It falls to
-`default: return null` at `:357` and is dropped. Nothing anywhere in
+`default: return null` at `:349` and is dropped. Nothing anywhere in
 `server/src` or `web/src` handles a compaction event — a repo-wide grep for
 `compaction` returns exactly one hit, an unrelated comment at
 `cost/ledger.ts:50`.
@@ -400,13 +405,20 @@ an over-declared window surfaces an actionable error, and today it does not.
 
 - [ ] Add a `compaction_end` case to `toClientFrame`
       (`server/src/agent/events.ts:283`). When the event carries an
-      `errorMessage`, emit the **complete** `error` frame — all three fields the
-      contract requires: `{ type: "error", message: errorMessage, reason:
-      "error" }`. `reason` is `"error" | "aborted"` (see the note at `:314`),
-      and an overflow failure is `"error"`. Do not reuse the `Model error: `
-      prefix from `:321`; this is not a provider failure and Pi's message is
-      already a complete sentence. When there is no `errorMessage`, keep
-      returning `null` so ordinary successful compaction stays invisible.
+      `errorMessage`, emit `{ type: "error", message: errorMessage }` and
+      **omit `reason`**. An earlier draft of this plan said to send
+      `reason: "error"`, which was a conflation of two different fields: the
+      `reason` on a `message_update` error is Pi's `"error" | "aborted"`
+      (`events.ts:314`), while the `compaction_end` event carries its own
+      `reason: "overflow"` (`agent-session.js:1598`). Those vocabularies are
+      unrelated. Nothing reads the field either — the client checks
+      `frame.kind`, never `frame.reason` — and `ClientFrame` (`events.ts:18`)
+      is `{ type: string; [k: string]: unknown }`, so nothing requires it.
+      Passing the event's own `"overflow"` through would also be defensible;
+      inventing `"error"` is not. Do not reuse the `Model error: ` prefix from
+      `:321`; this is not a provider failure and Pi's message is already a
+      complete sentence. When there is no `errorMessage`, keep returning `null`
+      so ordinary successful compaction stays invisible.
 - [ ] Confirm the client renders it. The `error` frame is already handled, so
       this should need no frontend change — verify rather than assume.
 - [ ] Add a test that a `compaction_end` with an `errorMessage` produces an
@@ -543,7 +555,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 |---|---|
 | The declared window matches the server | `resolveModel` returns 262,144 for `qwen/qwen3.8-27b` against live LM Studio |
 | Cold start no longer under-declares | With the cache empty, the builders return 128,000, above the 44,409 + 16,384 floor |
-| Overflow is visible at all | A `compaction_end` carrying an `errorMessage` reaches the client as an `error` frame, instead of being dropped at `events.ts:357` |
+| Overflow is visible at all | A `compaction_end` carrying an `errorMessage` reaches the client as an `error` frame, instead of being dropped at `events.ts:349` |
 | A stale entry fails loudly and is repairable | Reduce the loaded window in LM Studio; the run fails with the overflow message rather than compacting silently, and reopening the picker fixes it |
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |

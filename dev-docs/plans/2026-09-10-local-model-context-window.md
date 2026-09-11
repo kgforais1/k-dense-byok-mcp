@@ -178,6 +178,18 @@ NAME          ID            SIZE     PROCESSOR   CONTEXT   UNTIL
 qwen3:0.6b    7df6b6e09427  5.6 GB   100% GPU    40960     4 minutes from now
 ```
 
+The CLI is not the endpoint, and this plan's own Phase 1 standard says field
+names must be quoted from live output. So, the JSON — taken after loading the
+same model with `options.num_ctx: 8192`, which is also the divergence proof:
+
+```console
+$ curl -s http://localhost:11434/api/ps
+{"models":[{"name":"qwen3:0.6b", …, "context_length":8192}]}
+```
+
+The field is `context_length`, and it reports the loaded 8,192 rather than the
+architectural 40,960.
+
 Here the served figure equals the architectural one, but they can diverge when
 `num_ctx` is set. That makes the mapping exactly parallel to LM Studio's:
 
@@ -278,6 +290,15 @@ populated on all three branches.
 Take the bare id from `requestedModel.id`, which is already the stripped form
 the builders received (`models.ts:432`) — do not re-parse the ref. Nothing
 awaits it.
+
+That is proven for the `body.model` branch, where `resolveModel` strips the
+prefix itself. On the restored branch `resolveModel` is never called, so the id
+is whatever Pi persisted. It is bare there too, for a reason worth stating
+rather than assuming: local models are never in Pi's registry, so they are
+always built by `buildOllamaModel` / `buildOpenAICompatibleModel`, which set
+`id` to the bare name. Confirm it holds during implementation instead of
+trusting this paragraph — a prefixed id here would key every restored-chat
+lookup into a permanent miss.
 
 The base URL needs wiring that does not exist yet. `sessions.ts` imports neither
 `OLLAMA_BASE_URL` nor `OPENAI_COMPATIBLE_BASE_URL`; both are module constants in
@@ -641,9 +662,18 @@ an over-declared window surfaces an actionable error, and today it does not.
       `reason` on a `message_update` error is Pi's `"error" | "aborted"`
       (`events.ts:314`), while the `compaction_end` event carries its own
       `reason: "overflow"` (`agent-session.js:1598`). Those vocabularies are
-      unrelated. Nothing reads the field either — the client checks
-      `frame.kind`, never `frame.reason` — and `ClientFrame` (`events.ts:18`)
-      is `{ type: string; [k: string]: unknown }`, so nothing requires it.
+      unrelated. Nothing reads the field either: the client dispatches on
+      `frame.type` (`use-agent.ts:190`, `:319`, `:578`) and reads exactly one
+      other field on an `error` frame, `frame.kind` (`:579`). `frame.reason` is
+      never read anywhere. `ClientFrame` (`events.ts:18`) is
+      `{ type: string; [k: string]: unknown }`, so nothing requires it either.
+
+      **Omit `kind` as well, and know why.** `use-agent.ts:579` reads
+      `frame.kind === "budget" ? "blocked" : "error"`, so leaving it off makes
+      an overflow resolve to `"error"` — which is what we want. An overflow is
+      not a spend-cap block, and labelling it `budget` would send the user to
+      project settings to raise a limit that is not the problem. The omission is
+      deliberate, not an oversight.
       Passing the event's own `"overflow"` through would also be defensible;
       inventing `"error"` is not. Do not reuse the `Model error: ` prefix from
       `:321`; this is not a provider failure and Pi's message is already a

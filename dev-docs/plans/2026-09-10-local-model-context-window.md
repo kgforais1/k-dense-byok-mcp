@@ -230,6 +230,13 @@ Take the bare id from `requestedModel.id`, which is already the stripped form
 the builders received (`models.ts:432`) — do not re-parse the ref. Nothing
 awaits it.
 
+The base URL needs wiring that does not exist yet. `sessions.ts` imports neither
+`OLLAMA_BASE_URL` nor `OPENAI_COMPATIBLE_BASE_URL`; both are module constants in
+`config.ts` (`:90`, `:99`). Import them and map provider to base URL at the call
+site, passing the same string the builders pass, normalised the same way. An
+un-normalised URL produces a key that never matches the one the discovery route
+wrote — a permanent cache miss presenting as a silent fallback.
+
 **Gate it on "is a local provider", not on Ollama.** An earlier draft said
 `requestedModel.provider === "ollama"`, which left the same hole one provider
 over. LM Studio has the identical problem: a restored chat never opens the
@@ -261,7 +268,7 @@ caller, not from inside it. That distinction is the whole reason this design
 avoids an async run path, so do not "tidy" it by moving the call into
 `resolveModel`.
 
-Three requirements, because "fire and forget" is easy to implement as a leak:
+Four requirements, because "fire and forget" is easy to implement as a leak:
 
 - **Deduplicate by canonical key.** Track in-flight probes in a
   `Map<key, Promise>` so several quick runs cannot stack duplicate `/api/show`
@@ -311,7 +318,7 @@ would put a network round trip — with its own timeout and failure mode — bet
 the user pressing send and the run starting.
 
 There is no need for any of that. `GET /ollama/models` (`api/system.ts:63`) and
-`GET /openai-compatible/models` (`api/system.ts:96`) already call both servers
+`GET /openai-compatible/models` (`api/system.ts:97`) already call both servers
 whenever the model picker opens, both already run async with a 2 s
 `AbortController` timeout, and both currently hardcode `context_length: 0` in
 the rows they return. Read the real value there, cache it by model id, and have
@@ -561,6 +568,21 @@ dev-docs/todo.md                       MODIFIED — delete section 5 on completi
 
 ## Implementation sequence
 
+**Ship this in two slices.** The phase order already supports it, and saying so
+keeps the verifiable half from being held hostage to a multi-gigabyte model
+download.
+
+- **Slice 1 — LM Studio and the shared machinery.** Phase 0, the LM Studio parts
+  of Phases 1 and 2, then Phases 3 and 4. This fixes the reported bug and every
+  piece of it is verifiable today against the LM Studio instance already running
+  on the owner's machine.
+- **Slice 2 — Ollama.** The on-demand route, the picker hook and the Ollama
+  run-path probe. Gated on Phase 1's Ollama verification, which needs a model
+  pulled first and which may yet find that `/api/show` reports a number the
+  daemon does not honour. That is roughly half the design's complexity serving
+  the provider this plan cannot currently verify at all, so it should not block
+  the half that can be.
+
 ### Phase 0 — Make the loud failure actually loud
 
 This is a prerequisite, not a nicety. Every later decision in this plan assumes
@@ -599,6 +621,16 @@ overflow text instead of an empty assistant bubble.
       field carrying the context length **and the request body shape** — this
       plan does not specify either, deliberately, because both are guesses until
       seen. Do not assume it mirrors LM Studio.
+- [ ] **Establish whether `/api/show` reports the served context or the
+      architectural maximum.** This is the finding that could make the Ollama
+      half actively harmful rather than merely inert. Ollama serves
+      `min(architectural max, num_ctx)`, and `num_ctx` defaults low on many
+      setups. If the probe reports the architectural figure while the daemon
+      serves something far smaller, this plan would replace an under-declaration
+      with an over-declaration — loud failure on erroring builds, silent
+      truncation on the others. Record which number the field carries. If it is
+      the architectural max, find the runtime one, or leave Ollama on the
+      fallback rather than declaring a number the server will not honour.
 - [ ] Check the model-name round trip before writing any cache code. `/api/tags`
       returns names that usually carry a tag (`llama3:latest`), and the bare id
       `resolveModel` hands the builder comes from the user's ref
@@ -750,7 +782,12 @@ whenever one is set regardless of cache state.
 
 - [ ] Run one trivial request against LM Studio end to end and confirm a
       non-empty assistant message.
-- [ ] Confirm compaction does not fire on the first turn.
+- [ ] Confirm compaction does not fire on the first turn — and decide *how you
+      will see that* before asserting it. There is no UI signal:
+      `compaction_start` is dropped by `toClientFrame` exactly as
+      `compaction_end` is, and Phase 0 only forwards the latter, and only when
+      it carries an `errorMessage`. Observe it from the Pi session JSONL or a
+      temporary log line instead. Do not assert a negative you cannot see.
 - [ ] Load the same model in LM Studio at a *reduced* context length without
       reopening the picker. Expect the run to fail with the overflow message
       from Phase 0, not to work and not to silently compact. If the message does
@@ -765,6 +802,14 @@ whenever one is set regardless of cache state.
         the run should still fail, and still fail *visibly*. That is correct
         behaviour, not a regression — the model genuinely cannot hold Kady's
         prompt, which is the scope limit recorded in the goal.
+- [ ] Distinguish the two candidate mechanisms before declaring the bug fixed.
+      If the loaded server really holds 262,144, the 44,409-token prompt *fits*,
+      so there may have been no rejection and no overflow path at all — and the
+      empty bubble would instead be the server returning an empty success
+      (`stop` or `length`, no error, run `done`). Declaring the window truthfully
+      cures that path too, but Phase 0's machinery is irrelevant to it, so a
+      green run does not by itself confirm the compaction story. Check the raw
+      response shape or the server log and say which one it was.
 - [ ] If the empty-message symptom survives, stop and say so. The mechanism in
       this plan is a hypothesis, and a surviving symptom falsifies it rather
       than calling for a bigger number.
@@ -822,4 +867,4 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A warm cache entry is actually found | The builders' bare-id lookup hits an entry written by the discovery route, rather than silently falling back |
 | A dead local server is harmless | Probe with nothing listening; run still resolves at the fallback |
 | The original symptom is fixed | One local run returns a non-empty assistant message |
-| No regression elsewhere | `npm run verify -- server` green; 785 tests pass |
+| No regression elsewhere | `npm run verify -- server` green, with no drop in the suite's test count — re-count at implementation time rather than trusting a number written here |

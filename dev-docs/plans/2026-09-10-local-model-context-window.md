@@ -182,15 +182,16 @@ specific rather than leaving the implementer to choose. Add a fifth export to
 probeContextWindow(providerId, baseUrl, modelId, opts?: { force?: boolean }): Promise<number | null>
 ```
 
-It returns the shared in-flight promise from the dedup map, resolving to the
-probed value or `null`. Fire-and-forget callers simply do not await it — that is
-a caller's choice, not a property of the function — while the on-demand route
-awaits the very same promise rather than starting a second probe. An earlier
-draft typed this `void`, which left the route with nothing to await and no way
-to return anything but the cold `null`.
+It returns the shared in-flight promise from the dedup map. That promise
+**always resolves and never rejects** — to the probed window, or to `null` if
+anything at all went wrong. See the lifecycle rules below.
 
-Callers that do not await it **must** attach a terminal `.catch()`, per the
-lifecycle rules below; an un-awaited rejected promise is an unhandled rejection. Two behaviours, and conflating them is the
+Fire-and-forget callers simply do not await it, which is a caller's choice
+rather than a property of the function, and they need no `.catch()` because
+there is nothing to catch. The on-demand route awaits the very same promise
+rather than starting a second probe. An earlier draft typed this `void`, which
+left the route with nothing to await and no way to return anything but the cold
+`null`. Two behaviours, and conflating them is the
 mistake this spec exists to prevent:
 
 - **`force: false` (the run path).** Do nothing if an entry already exists.
@@ -255,9 +256,20 @@ Three requirements, because "fire and forget" is easy to implement as a leak:
 - **Deduplicate by canonical key.** Track in-flight probes in a
   `Map<key, Promise>` so several quick runs cannot stack duplicate `/api/show`
   requests at one local server.
-- **Attach terminal rejection handling.** An unhandled rejection from a
-  forgotten promise is a crash risk in Node, and a dead Ollama must stay
-  harmless. Catch and discard.
+- **Absorb every failure inside `probeContextWindow`. The returned promise
+  never rejects.** This is the single contract, and it is worth being exact
+  because an earlier draft stated two incompatible ones. A timeout, a dead
+  daemon, a 404, a malformed body: all of them resolve to `null`. Nothing
+  rejects, so no caller needs a `.catch()`, the route needs no `try`/`catch`,
+  and a forgotten promise cannot become an unhandled rejection.
+
+  The alternative — propagate and make each caller handle it — was rejected
+  because it puts the burden in three places instead of one, and the route is
+  already required never to error on a dead server. Note the hazard is *not*
+  promise sharing itself: a `.catch()` attached by one consumer does not swallow
+  the rejection for another awaiting the same promise, since it derives a new
+  promise rather than mutating the original. The hazard was only the
+  ambiguity.
 - **Clear the pending entry on settle, success or failure.** Otherwise a single
   failed probe blocks every later retry for the life of the process.
 - **Give the probe its own `AbortController` timeout**, matching the 2 s the
@@ -592,8 +604,9 @@ documentation or from this plan's guesses.
       | null>`, the entry point described in the Ollama section above, with its
       `force` flag, its dedup map and its 2 s timeout. It returns the shared
       in-flight promise so the on-demand route can await the same work the
-      fire-and-forget callers start; those callers ignore the result and attach
-      a `.catch()`.
+      fire-and-forget callers start. The promise never rejects — every failure
+      resolves to `null` — so no caller needs a `.catch()` and the route needs
+      no `try`/`catch`.
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails must be a
@@ -625,8 +638,9 @@ documentation or from this plan's guesses.
       matching the existing `/ollama/models` and `/openai-compatible/models`
       naming (`api/system.ts:63`, `:96`). One model id, one `POST /api/show`
       upstream. The route **awaits** its probe — bounded by the same 2 s timeout
-      — and returns `{ contextLength: number | null }`, never erroring on a dead
-      or unsupported server; `null` means "no metadata", the same contract the
+      — and returns `{ contextLength: number | null }`. It cannot error on a
+      dead or unsupported server, because the probe resolves to `null` rather
+      than rejecting, so no `try`/`catch` is needed here; `null` means "no metadata", the same contract the
       discovery routes already use for `available: false`.
 
       Do not confuse the two sides of this. `probeContextWindow` returns the
@@ -769,6 +783,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A restored Ollama chat converges | Resolve an Ollama ref with a cold cache; the first run uses 128,000, and once the probe has settled the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
 | An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
+| The probe never rejects | Point the probe at a closed port, a 404 and a malformed body in turn; each resolves to `null`, the route returns `{ contextLength: null }` without a 500, and no unhandled rejection is logged |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |

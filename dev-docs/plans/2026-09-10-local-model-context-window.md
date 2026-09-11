@@ -137,76 +137,119 @@ every model read `"state": "not-loaded"`, and the field was absent from all of
 them. Treat its exact shape as **unverified** and confirm it against a loaded
 model during implementation rather than trusting this plan for it.
 
-### Ollama is not symmetrical with LM Studio, and that shapes the design
+### Ollama is symmetrical with LM Studio after all — verified 2026-09-11
 
-Ollama's `POST /api/show` is the stated equivalent, and it is still
-**unverified**: the daemon is installed and reachable, but `ollama list` returns
-an empty set on this machine, so there is no model to probe and no real response
-to quote. Pulling one is a multi-gigabyte download and was out of scope for
-writing a plan. The implementing PR must probe a live Ollama and record the real
-field name rather than assuming it mirrors LM Studio.
+Earlier drafts of this plan built a whole second mechanism on the belief that
+`/api/tags` carries no context length, so covering every Ollama model would mean
+one `POST /api/show` per model — an N+1 fan-out inside a 2 s budget. That
+belief was never verified, because no model was pulled on this machine. It is
+**wrong** on Ollama 0.33.2.
 
-What *is* clear without a live probe is a structural difference that the first
-draft of this plan missed. LM Studio answers for every model in **one** call:
-`/api/v0/models` returns `max_context_length` per entry. Ollama does not.
-`/api/tags`, which `GET /ollama/models` already calls, carries no context length
-at all, so covering every model would mean one `POST /api/show` **per model** —
-an N+1 fan-out inside a route that holds a single 2 s budget. For a user with a
-dozen models that either blows the timeout or forces the timeout up, and this
-route is on the picker's path.
+Pulled `qwen3:0.6b` and probed a live daemon:
 
-So the two providers get different probe strategies, which is consistent with
-them already being deliberately parallel paths:
-
-- **LM Studio / OpenAI-compatible:** probe in the discovery route. One call,
-  every model, no extra cost over what the route already pays.
-- **Ollama:** do **not** fan out in the discovery route. Probe `/api/show` for a
-  single model id, on demand, through a separate lightweight endpoint the picker
-  calls when a model is actually selected. One model is selected at a time, so
-  there is no fan-out, and the run path stays synchronous because nothing on it
-  ever waits for the probe. Selection does **not** guarantee a populated cache
-  before the next run — the probe is unawaited, so a run started immediately
-  after selecting correctly uses the fallback. See the convergence note below;
-  do not read this bullet as a promise that the first run is already correct.
-
-That leaves a gap the first draft waved through: a restored chat never touches
-the picker, so its Ollama entry is never written and every run in that session
-uses the 128,000 fallback. For a large Ollama model that is an
-under-declaration, which is the silent-compaction case again.
-
-Close it with a **fire-and-forget probe at run start**, and put it somewhere
-specific rather than leaving the implementer to choose. Add a fifth export to
-`local-context.ts`:
-
-```
-probeContextWindow(providerId, baseUrl, modelId?: string, opts?: { force?: boolean }): Promise<number | null>
+```console
+$ curl -s http://localhost:11434/api/tags
+{"models":[{"name":"qwen3:0.6b","model":"qwen3:0.6b","size":522653767,
+  "details":{"family":"qwen3","parameter_size":"751.63M",
+             "quantization_level":"Q4_K_M",
+             "context_length":40960,"embedding_length":1024},
+  "capabilities":["completion","tools","thinking"]}]}
 ```
 
-It returns the shared in-flight promise from the dedup map. That promise
-**always resolves and never rejects** — to the probed window, or to `null` if
-anything at all went wrong. See the lifecycle rules below.
+`details.context_length` is right there, per model, in the call
+`GET /ollama/models` already makes (`api/system.ts:67`). There is no N+1 and
+never was. The two providers have the same shape: one list call carries every
+model's window.
 
-Fire-and-forget callers simply do not await it, which is a caller's choice
-rather than a property of the function, and they need no `.catch()` because
-there is nothing to catch. The on-demand route awaits the very same promise
-rather than starting a second probe. An earlier draft typed this `void`, which
-left the route with nothing to await and no way to return anything but the cold
-`null`. Two behaviours, and conflating them is the
-mistake this spec exists to prevent:
+For completeness, `POST /api/show` does also carry it, but awkwardly — under
+`model_info` behind an architecture-prefixed key, `"qwen3.context_length":
+40960`, so a caller would have to find the key *ending* in `.context_length`
+rather than read a fixed field. That is a second reason to read `/api/tags`
+instead.
 
-- **`force: false` (the run path).** Do nothing if an entry already exists.
-  Without this guard, a background probe fires on *every turn* of every Ollama
-  chat, which is a request to the local daemon per message for a value that has
-  not changed.
-- **`force: true` (the picker's selection route).** Probe even when an entry
-  exists, because refreshing a stale entry is the entire point of the selection
-  gesture. An earlier draft specified a single function that skipped when an
-  entry existed, and also claimed re-selecting repairs a stale Ollama entry.
-  Those cannot both be true: with the skip, selection would never repair
-  anything.
+**And the `num_ctx` worry has an answer.** Review flagged that Ollama serves
+`min(architectural max, num_ctx)`, so a probe reporting the architectural figure
+could over-declare. `/api/ps` reports the actually-loaded figure for running
+models:
 
-Both paths share the in-flight dedup map, so `force` overrides the
-entry-exists check and never the already-in-flight one.
+```console
+$ ollama ps
+NAME          ID            SIZE     PROCESSOR   CONTEXT   UNTIL
+qwen3:0.6b    7df6b6e09427  5.6 GB   100% GPU    40960     4 minutes from now
+```
+
+Here the served figure equals the architectural one, but they can diverge when
+`num_ctx` is set. That makes the mapping exactly parallel to LM Studio's:
+
+| | all models, architectural | loaded model, actual |
+|---|---|---|
+| LM Studio | `/api/v0/models` → `max_context_length` | `loaded_context_length` |
+| Ollama | `/api/tags` → `details.context_length` | `/api/ps` → `context_length` |
+
+Read the loaded figure when the model is loaded and the architectural one
+otherwise, for both providers, by the same rule.
+
+### What this removes
+
+The asymmetry was carrying roughly half the design. With it gone, so are:
+
+- the on-demand `GET /ollama/model-context` route,
+- the picker hook in `handleSelect` and its `isOllama` gating,
+- the `force` flag, and the selection-as-repair gesture it existed for,
+- the two different dedup scopes,
+- the per-model `modelId` argument to the probe,
+- and the two-slice release split, which existed only because Ollama could not
+  be verified. It can be, and now has been.
+
+What remains is one mechanism for both providers: each discovery route makes one
+extra call and fills every entry for its server. A probe is
+`(providerId, baseUrl)` and nothing else.
+
+```
+probeContextWindows(providerId, baseUrl): Promise<void>
+```
+
+It returns the shared in-flight promise from the dedup map, keyed on
+`(providerId, baseUrl)` for both providers. The promise **always resolves and
+never rejects** — failures leave the cache untouched. Callers do not await it
+and need no `.catch()`, because there is nothing to catch.
+
+No `force` flag: every discovery call overwrites unconditionally, so opening the
+picker is the repair gesture for **both** providers, and the earlier split
+between "LM Studio repaired by opening, Ollama by selecting" is gone with it.
+
+### The restored-chat gap remains, and is now simpler
+
+A restored chat never opens the picker, so nothing fills its cache and every run
+uses the fallback. That is true for both providers and is the one reason to
+touch the run path at all.
+
+Call `probeContextWindows` from the `/run` handler in
+`server/src/api/sessions.ts`, and **not** where an earlier draft said. That
+draft said "immediately after `resolveModel` returns (`:254-255`)", which would
+have missed the only case this exists for. The resolution is:
+
+```ts
+requestedModel = body.model
+  ? resolveModel(body.model, getModelRegistry(), body.fusionConfig)
+  : session.model ?? resolveModel(undefined, getModelRegistry());
+```
+
+A restored chat arrives with `session.model` already populated, so the `??`
+short-circuits and `resolveModel` is never called. Anchoring to `resolveModel`
+would leave every restored local run on the 128,000 fallback forever.
+
+Anchor on the variable instead, not the call. Put it after the `try`/`catch`
+closes (`:271`), where `requestedModel` is populated on all three branches, and
+skip it when the cache already holds an entry for that model — otherwise a
+background probe fires on every turn of every local chat.
+
+The base URL needs wiring that does not exist yet. `sessions.ts` imports neither
+`OLLAMA_BASE_URL` nor `OPENAI_COMPATIBLE_BASE_URL`; both are module constants in
+`config.ts` (`:90`, `:99`). Import them and map provider to base URL at the call
+site, passing the same string the builders pass, normalised the same way. An
+un-normalised URL produces a key that never matches the one the discovery route
+wrote — a permanent cache miss presenting as a silent fallback.
 
 Call it from the `/run` handler in `server/src/api/sessions.ts`, and **not**
 where an earlier draft said. That draft said "immediately after `resolveModel`
@@ -247,21 +290,10 @@ Pi's lowercase provider ids (`models.ts:228`, `:253`), which is the server-side
 vocabulary — not the capitalised display labels the picker uses. See the note in
 Phase 2 about that trap.
 
-The two probes differ, and `probeContextWindow` dispatches on provider: Ollama
-does one `POST /api/show` for that model, OpenAI-compatible does the server-wide
-`/api/v0/models` call that fills every entry at once. Same entry point, same
-dedup map, same lifecycle — only the upstream call and the dedup scope differ.
-
-**`modelId` is therefore optional, and that is load-bearing.** The
-OpenAI-compatible probe has no single model to name: it fetches the whole list
-and writes every entry. If the signature demanded a `modelId`, the LM Studio
-discovery route could not call this function at all, and an implementer would
-write a bare `fetch("/api/v0/models")` inside `api/system.ts` instead. That
-second fetch would bypass the dedup map, race the run-path probe, and duplicate
-the `loaded_context_length` parsing — reintroducing exactly what the dedup rule
-exists to prevent. So: `modelId` is required for `ollama`, ignored for
-`openai-compatible`, and the dedup key is `(providerId, baseUrl)` in the second
-case regardless of what is passed.
+Both probes have the same shape: one list call per server, filling every entry.
+Ollama reads `details.context_length` from `/api/tags`; OpenAI-compatible reads
+`max_context_length` / `loaded_context_length` from `/api/v0/models`. There is
+no per-model argument and no per-model dedup scope on either side.
 
 `resolveModel` itself stays untouched and synchronous; the probe is fired by its
 caller, not from inside it. That distinction is the whole reason this design
@@ -271,9 +303,9 @@ avoids an async run path, so do not "tidy" it by moving the call into
 Four requirements, because "fire and forget" is easy to implement as a leak:
 
 - **Deduplicate by canonical key.** Track in-flight probes in a
-  `Map<key, Promise>` so several quick runs cannot stack duplicate `/api/show`
-  requests at one local server.
-- **Absorb every failure inside `probeContextWindow`. The returned promise
+  `Map<key, Promise>` keyed on `(providerId, baseUrl)`, so several quick runs or
+  picker opens cannot stack duplicate list calls at one local server.
+- **Absorb every failure inside `probeContextWindows`. The returned promise
   never rejects.** This is the single contract, and it is worth being exact
   because an earlier draft stated two incompatible ones. A timeout, a dead
   daemon, a 404, a malformed body: all of them resolve to `null`. Nothing
@@ -398,12 +430,11 @@ Three requirements follow, and the implementation is not correct without them:
   starting a rival. Close the window at the source instead of reconciling
   writes afterwards.
 
-  One requirement follows: **dedup the LM Studio probe by
-  `(providerId, baseUrl)`, not by model key.** One `/api/v0/models` call fills
-  every model's entry, so its dedup scope is the call, not the row. The Ollama
-  probes stay deduped per model key, because there one call fills one entry.
-  Get that wrong and the guarantee disappears, which is why it is stated rather
-  than left to inference.
+  One requirement follows: **dedup by `(providerId, baseUrl)`, not by model
+  key.** One list call fills every model's entry, so the dedup scope is the
+  call, not the row. The Ollama
+  probes dedupe at the same scope, because they are also one call per server
+  filling every entry. One rule, both providers.
 - **Refresh on every write, but know which action repairs which provider.**
   Writes overwrite, never merge. The two providers are not repaired by the same
   gesture, because only one of them probes during discovery:
@@ -560,28 +591,12 @@ server/test/openai-compatible.test.ts  MODIFIED — the context_length: 0 assert
 server/test/model-refusal.test.ts      MODIFIED — compaction_end forwarding (Phase 0);
                                        there is no events.test.ts, and this file
                                        already covers toClientFrame error mapping
-web/src/components/model-selector.tsx  MODIFIED — call the Ollama probe on select
 docs/model-selection.md                MODIFIED — document the knobs (or
 docs/local-models-ollama.md            — whichever already covers local setup)
 dev-docs/todo.md                       MODIFIED — delete section 5 on completion
 ```
 
 ## Implementation sequence
-
-**Ship this in two slices.** The phase order already supports it, and saying so
-keeps the verifiable half from being held hostage to a multi-gigabyte model
-download.
-
-- **Slice 1 — LM Studio and the shared machinery.** Phase 0, the LM Studio parts
-  of Phases 1 and 2, then Phases 3 and 4. This fixes the reported bug and every
-  piece of it is verifiable today against the LM Studio instance already running
-  on the owner's machine.
-- **Slice 2 — Ollama.** The on-demand route, the picker hook and the Ollama
-  run-path probe. Gated on Phase 1's Ollama verification, which needs a model
-  pulled first and which may yet find that `/api/show` reports a number the
-  daemon does not honour. That is roughly half the design's complexity serving
-  the provider this plan cannot currently verify at all, so it should not block
-  the half that can be.
 
 ### Phase 0 — Make the loud failure actually loud
 
@@ -617,20 +632,17 @@ overflow text instead of an empty assistant bubble.
 - [ ] Load a model in LM Studio and re-probe `/api/v0/models`. Record whether
       `loaded_context_length` appears, and whether it differs from
       `max_context_length` when the model is loaded below its maximum.
-- [ ] Start Ollama, `POST /api/show` for a pulled model, and record the actual
-      field carrying the context length **and the request body shape** — this
-      plan does not specify either, deliberately, because both are guesses until
-      seen. Do not assume it mirrors LM Studio.
-- [ ] **Establish whether `/api/show` reports the served context or the
-      architectural maximum.** This is the finding that could make the Ollama
-      half actively harmful rather than merely inert. Ollama serves
-      `min(architectural max, num_ctx)`, and `num_ctx` defaults low on many
-      setups. If the probe reports the architectural figure while the daemon
-      serves something far smaller, this plan would replace an under-declaration
-      with an over-declaration — loud failure on erroring builds, silent
-      truncation on the others. Record which number the field carries. If it is
-      the architectural max, find the runtime one, or leave Ollama on the
-      fallback rather than declaring a number the server will not honour.
+- [ ] Ollama is already verified (see the section above): `/api/tags` carries
+      `details.context_length` and `/api/ps` carries the loaded
+      `context_length`. Re-confirm against the reader's own Ollama version
+      before relying on it — this was checked on 0.33.2, and the field is not in
+      older releases.
+- [ ] Prefer the *loaded* figure over the architectural one for both providers,
+      and confirm they can actually diverge. `/api/tags` gives Ollama's
+      architectural number and `/api/ps` the loaded one; on the probe above they
+      matched at 40,960, but they separate when `num_ctx` is set. Set `num_ctx`
+      low, reload, and confirm `/api/ps` follows it — over-declaring here is the
+      failure mode that silently truncates.
 - [ ] Check the model-name round trip before writing any cache code. `/api/tags`
       returns names that usually carry a tag (`llama3:latest`), and the bare id
       `resolveModel` hands the builder comes from the user's ref
@@ -655,14 +667,12 @@ documentation or from this plan's guesses.
       URL; `getContextWindow(providerId, baseUrl, modelId): number | undefined`;
       `recordContextWindow(key, value): void`, which writes only when `value` is
       a positive integer and is otherwise a no-op; and
-      `probeContextWindow(providerId, baseUrl, modelId?, opts?): Promise<number
-      | null>` — `modelId` optional, and ignored for `openai-compatible`, so the
-      discovery route can call it without inventing one — the entry point described in the Ollama section above, with its
-      `force` flag, its dedup map and its 2 s timeout. It returns the shared
-      in-flight promise so the on-demand route can await the same work the
-      fire-and-forget callers start. The promise never rejects — every failure
-      resolves to `null` — so no caller needs a `.catch()` and the route needs
-      no `try`/`catch`.
+      `probeContextWindows(providerId, baseUrl): Promise<void>` — one call per
+      server, no model argument, with its dedup map keyed on
+      `(providerId, baseUrl)` and its 2 s timeout. It returns the shared
+      in-flight promise so a second caller joins the first rather than starting
+      a rival. The promise never rejects — every failure leaves the cache
+      untouched — so no caller needs a `.catch()`.
 - [ ] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails must be a
@@ -690,52 +700,13 @@ documentation or from this plan's guesses.
       means "no context metadata", never "no models" — the route must still
       return every row `/v1/models` gave it. Keep the existing lenient parsing
       style, so a bad or missing length is absent rather than zero.
-- [ ] Add the on-demand Ollama route as `GET /ollama/model-context?model=<id>`,
-      matching the existing `/ollama/models` and `/openai-compatible/models`
-      naming (`api/system.ts:63`, `:96`). One model id, one `POST /api/show`
-      upstream. The route **awaits** its probe — bounded by the same 2 s timeout
-      — and returns `{ contextLength: number | null }`. It cannot error on a
-      dead or unsupported server, because the probe resolves to `null` rather
-      than rejecting, so no `try`/`catch` is needed here; `null` means "no metadata", the same contract the
-      discovery routes already use for `available: false`.
-
-      Do not confuse the two sides of this. `probeContextWindow` returns the
-      shared in-flight promise; the run path ignores it, and the browser does
-      not await this route either. The route handler is the one place that does
-      wait, awaiting that same promise rather than starting a second probe, so
-      the endpoint returns something meaningful to anyone calling it directly.
-
-      Have the picker call it on selection, gated with the **existing**
-      `isOllama` helper (`web/src/components/model-selector.tsx:81`).
-      `handleSelect` (`:428`) serves every provider in the list, so an ungated
-      call would fire a request at the local Ollama daemon every time someone
-      picks Opus or a GPT model.
-
-      Do not write `model.provider === "ollama"`. The browser and the server use
-      different vocabularies for the same provider, and this is the trap: the
-      discovery route builds rows with `provider: "Ollama"`, capitalised, as a
-      display label (`api/system.ts:76`), while the resolved Pi model carries
-      `provider: "ollama"` as an id (`models.ts:228`). A lowercase comparison
-      matches no row the picker ever holds, so the gate would never fire and the
-      probe would never run — a silent no-op that looks like working code.
-      `isOllama` already handles both forms
-      (`m.provider === "Ollama" || m.id.startsWith("ollama/")`); use it.
-
-      Only Ollama is gated here. LM Studio needs no selection probe, because
-      opening the picker already refreshes every one of its entries through the
-      discovery route. There is also an `isLocal` helper at `:85` — it is the
-      wrong one for this call site, and right for anything that must cover both
-      local providers.
-
-      That means adding a call that does not exist: `handleSelect` is currently
-      synchronous state only — `onChange(model); setOpen(false);`. Keep it that
-      way from the user's point of view — fire the request without awaiting it,
-      close the picker immediately, show no spinner, and swallow any error. The
-      probe is an optimisation, not a step in choosing a model, and nobody
-      should wait on a local server to pick one.
-
-      Do **not** fan out across `/api/tags`; see the Ollama section above for
-      why.
+- [ ] Fill the cache from `GET /ollama/models` with a second read of the
+      `/api/tags` response it already fetches — `details.context_length` per
+      entry. No extra HTTP call at all on this side, and no fan-out: the value
+      is in the payload the route has in hand.
+- [ ] Prefer the loaded figure where one exists. Read `/api/ps` for Ollama and
+      `loaded_context_length` for LM Studio, falling back to the architectural
+      number when the model is not loaded.
 - [ ] Fire the same probe, unawaited, when a run resolves **either local
       provider's** ref with no cache entry, so restored chats converge on the
       next turn instead of staying on the fallback forever. That means Ollama
@@ -850,18 +821,16 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A large model never silently loses its window | Warm the cache at 262,144, wait, and confirm the declared window is still 262,144 rather than having decayed to the fallback |
 | A restored LM Studio chat converges too | Restore an `openai-compatible` chat without opening the picker; the run path probes, and the cache holds the probed value once it settles. This is the gap a draft left open by gating the run probe on Ollama alone |
 | A restored Ollama chat converges | Restore an Ollama chat and send a message **without opening the picker**, so the discovery and selection probes cannot mask a broken run path. The first run uses 128,000; once the probe settles the cache holds the probed value. Convergence is not per-turn — a second run started before the probe finishes correctly uses the fallback again |
-| The discovery route uses the shared probe | Assert `GET /openai-compatible/models` goes through `probeContextWindow`, not a private `fetch`; a second probe started while it is in flight is deduped rather than racing it |
-| An Ollama entry is repaired by selection, not by opening | Change the Ollama model's context, reopen the picker, confirm the entry is unchanged; re-select the model and confirm it updates |
+| Both discovery routes use the shared probe | Assert each goes through `probeContextWindows`, not a private `fetch`; a second probe started while one is in flight joins it rather than racing |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
 | The probe never rejects | Point the probe at a closed port, a 404 and a malformed body in turn; each resolves to `null`, the route returns `{ contextLength: null }` without a 500, and no unhandled rejection is logged |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |
 | The native probe still lands afterwards | With the probe merely slow rather than hung, the route returns first; once the probe settles, the cache holds the probed value |
-| Picking a non-local model probes nothing | Select an Anthropic or OpenRouter model; no request reaches the Ollama daemon |
-| The picker gate actually fires | Select an Ollama model from a discovery-built row, whose `provider` is `"Ollama"`; the probe runs. A lowercase comparison would silently never fire, so assert the positive case, not only the negative |
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
-| Ollama discovery stays inside its budget | `GET /ollama/models` issues no `/api/show` calls; the route's timing is unchanged with 10+ models present |
+| Ollama discovery stays inside its budget | `GET /ollama/models` makes no extra HTTP call for context length — the value comes from the `/api/tags` payload it already has — so its timing is unchanged with 10+ models present |
+| Opening the picker repairs either provider | Change the served context on each server in turn, reopen the picker, and confirm the cached value follows. There is no longer a provider for which opening is the wrong gesture |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |
 | The env knob is actually an override | Set `OPENAI_COMPATIBLE_CONTEXT_WINDOW`, warm the cache, confirm the env value is what `resolveModel` returns |
 | A warm cache entry is actually found | The builders' bare-id lookup hits an entry written by the discovery route, rather than silently falling back |

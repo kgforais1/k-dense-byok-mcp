@@ -224,33 +224,6 @@ A restored chat never opens the picker, so nothing fills its cache and every run
 uses the fallback. That is true for both providers and is the one reason to
 touch the run path at all.
 
-Call `probeContextWindows` from the `/run` handler in
-`server/src/api/sessions.ts`, and **not** where an earlier draft said. That
-draft said "immediately after `resolveModel` returns (`:254-255`)", which would
-have missed the only case this exists for. The resolution is:
-
-```ts
-requestedModel = body.model
-  ? resolveModel(body.model, getModelRegistry(), body.fusionConfig)
-  : session.model ?? resolveModel(undefined, getModelRegistry());
-```
-
-A restored chat arrives with `session.model` already populated, so the `??`
-short-circuits and `resolveModel` is never called. Anchoring to `resolveModel`
-would leave every restored local run on the 128,000 fallback forever.
-
-Anchor on the variable instead, not the call. Put it after the `try`/`catch`
-closes (`:271`), where `requestedModel` is populated on all three branches, and
-skip it when the cache already holds an entry for that model — otherwise a
-background probe fires on every turn of every local chat.
-
-The base URL needs wiring that does not exist yet. `sessions.ts` imports neither
-`OLLAMA_BASE_URL` nor `OPENAI_COMPATIBLE_BASE_URL`; both are module constants in
-`config.ts` (`:90`, `:99`). Import them and map provider to base URL at the call
-site, passing the same string the builders pass, normalised the same way. An
-un-normalised URL produces a key that never matches the one the discovery route
-wrote — a permanent cache miss presenting as a silent fallback.
-
 Call it from the `/run` handler in `server/src/api/sessions.ts`, and **not**
 where an earlier draft said. That draft said "immediately after `resolveModel`
 returns (`:254-255`)", which would have missed the only case this probe exists
@@ -435,21 +408,15 @@ Three requirements follow, and the implementation is not correct without them:
   call, not the row. The Ollama
   probes dedupe at the same scope, because they are also one call per server
   filling every entry. One rule, both providers.
-- **Refresh on every write, but know which action repairs which provider.**
-  Writes overwrite, never merge. The two providers are not repaired by the same
-  gesture, because only one of them probes during discovery:
+- **Refresh on every write, and one gesture repairs both providers.** Writes
+  overwrite, never merge. Opening the picker runs both discovery routes, and
+  each fills every entry for its server, so reopening the picker is the repair
+  for LM Studio and Ollama alike.
 
-  - **OpenAI-compatible / LM Studio:** repaired by *opening the picker*. The
-    discovery route probes `/api/v0/models` for every model, so one open
-    refreshes every entry.
-  - **Ollama:** **not** repaired by opening the picker. The discovery route
-    deliberately does not fan out across `/api/tags`, so opening it writes
-    nothing. An Ollama entry is refreshed by *selecting the model* or by
-    *starting a run* with a cold entry — the two probe paths above.
-
-  An earlier draft said "reopening the picker is always a repair". That is true
-  for LM Studio and false for Ollama, and the difference follows directly from
-  the N+1 decision.
+  Earlier drafts split this — LM Studio repaired by opening, Ollama only by
+  selecting — because Ollama was believed to need a per-model fan-out it could
+  not afford on the picker's path. `/api/tags` carries the value, so that split
+  is gone along with the selection gesture it justified.
 
 **The env knob outranks the probe, and is a blunt instrument on purpose.** The
 first draft resolved cache first and still called these knobs "overrides",
@@ -700,13 +667,27 @@ documentation or from this plan's guesses.
       means "no context metadata", never "no models" — the route must still
       return every row `/v1/models` gave it. Keep the existing lenient parsing
       style, so a bad or missing length is absent rather than zero.
-- [ ] Fill the cache from `GET /ollama/models` with a second read of the
-      `/api/tags` response it already fetches — `details.context_length` per
-      entry. No extra HTTP call at all on this side, and no fan-out: the value
-      is in the payload the route has in hand.
-- [ ] Prefer the loaded figure where one exists. Read `/api/ps` for Ollama and
-      `loaded_context_length` for LM Studio, falling back to the architectural
-      number when the model is not loaded.
+- [ ] Fill the cache from `GET /ollama/models` by reading
+      `details.context_length` out of the `/api/tags` response the route already
+      fetches. That costs no extra HTTP call and there is no fan-out — the
+      architectural figure is already in the payload the route holds.
+- [ ] Then overlay the loaded figures with **one** extra call to `/api/ps`.
+      This is where the two providers stop being identical, and the plan should
+      not pretend otherwise: LM Studio returns both figures from a single
+      `/api/v0/models` call, while Ollama needs `/api/tags` for the
+      architectural number and `/api/ps` for the loaded one. Two calls, not one.
+
+      It is still bounded and still not a fan-out — `/api/ps` returns every
+      running model at once, and there are usually one or two. Treat it exactly
+      like the LM Studio native probe: unawaited, its own `AbortController`, and
+      a failure leaves the architectural values in place rather than clearing
+      them.
+- [ ] Prefer the loaded figure over the architectural one wherever both exist,
+      for both providers, and fall back to the architectural number when the
+      model is not loaded. Note the loaded figure is only readable *while* the
+      model is resident — Ollama unloads after its keep-alive expires, so
+      `/api/ps` is frequently empty and the fallback is the normal case, not the
+      exception.
 - [ ] Fire the same probe, unawaited, when a run resolves **either local
       provider's** ref with no cache entry, so restored chats converge on the
       next turn instead of staying on the fallback forever. That means Ollama
@@ -717,11 +698,9 @@ documentation or from this plan's guesses.
 - [ ] Return the real value in each route's `context_length` field instead of
       the hardcoded `0`.
 
-**Exit criteria:** opening the picker populates the cache for
-OpenAI-compatible models, and reopening it after the local server changes
-overwrites those entries. For Ollama, selecting a model populates its entry and
-re-selecting after a change overwrites it — opening the picker alone does
-neither, by design. `npm run verify -- server` green.
+**Exit criteria:** opening the picker populates the cache for **both**
+providers, and reopening it after either local server changes overwrites those
+entries. `npm run verify -- server` green.
 
 ### Phase 3 — Consume it
 
@@ -829,7 +808,8 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |
 | The native probe still lands afterwards | With the probe merely slow rather than hung, the route returns first; once the probe settles, the cache holds the probed value |
 | An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
-| Ollama discovery stays inside its budget | `GET /ollama/models` makes no extra HTTP call for context length — the value comes from the `/api/tags` payload it already has — so its timing is unchanged with 10+ models present |
+| Ollama discovery stays inside its budget | `GET /ollama/models` takes the architectural figure from the `/api/tags` payload it already has, and makes at most one extra unawaited `/api/ps` call for the loaded figures, so its response timing is unchanged with 10+ models present |
+| An empty `/api/ps` is the normal case | Let the keep-alive expire so no model is resident; the cache keeps the architectural values rather than clearing them |
 | Opening the picker repairs either provider | Change the served context on each server in turn, reopen the picker, and confirm the cached value follows. There is no longer a provider for which opening is the wrong gesture |
 | A non-LM-Studio server still lists models | Point `OPENAI_COMPATIBLE_BASE_URL` at a server that 404s `/api/v0/models`; the route returns its full `/v1/models` list |
 | The env knob is actually an override | Set `OPENAI_COMPATIBLE_CONTEXT_WINDOW`, warm the cache, confirm the env value is what `resolveModel` returns |

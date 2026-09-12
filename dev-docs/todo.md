@@ -107,7 +107,7 @@ project scoping, cancellation, tool policy, and accounting.
 
 ## 5. Local-model context window is hardcoded to 32K
 
-`buildOllamaModel` and `buildOpenAICompatibleModel` (`server/src/agent/models.ts:223`, `:246`) both hardcode `contextWindow: 32_768`. The comment explains the choice honestly — the OpenAI-compatible `/v1/models` endpoint carries no context length — but the default is now wrong in a way that breaks the local path outright.
+`buildOllamaModel` and `buildOpenAICompatibleModel` (`server/src/agent/models.ts:233`, `:257`) both hardcode `contextWindow: 32_768`. The comment explains the choice honestly — the OpenAI-compatible `/v1/models` endpoint carries no context length — but the default is now wrong in a way that breaks the local path outright.
 
 Measured on 2026-09-08 while running the MCP Phase 2 external-client check against LM Studio:
 
@@ -115,13 +115,11 @@ Measured on 2026-09-08 while running the MCP Phase 2 external-client check again
 - The model actually loaded (`qwen/qwen3.8-27b`) reports `max_context_length: 262144`, loaded at the full 262,144. The declared value is 8× too low.
 - Observed effect: the model returned an empty assistant message and the run still completed as `done`, with no error frame and nothing logged. See the Phase 3 follow-up in the [Phase 2 plan](plans/completed/2026-09-06-mcp-server-phase-2-server.md).
 
-It does not need to be this low, and the value is discoverable rather than merely configurable:
+It does not need to be this low, and the value is discoverable rather than merely configurable. The approach is settled in the plan linked below: probe the local server from the discovery routes, resolve env knob then cache then a raised fallback, and keep `resolveModel` synchronous. Note the two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:238`), so a fix touches both.
 
-- **Cheap fix:** `OPENAI_COMPATIBLE_CONTEXT_WINDOW` / `OLLAMA_CONTEXT_WINDOW` env knobs beside the existing `*_BASE_URL` ones in `config.ts`, defaulting to today's 32K.
-- **Better fix:** probe the server. LM Studio's native `GET /api/v0/models` returns `max_context_length` and `loaded_context_length` per model; Ollama's `POST /api/show` returns the equivalent. Probe on model resolution, fall back to the env knob, then to 32K.
-- Whichever lands, raise the fallback: 32K is below Kady's own prompt floor.
+Planned in [Local-model context window: probe it instead of guessing 32K](plans/2026-09-10-local-model-context-window.md). Two findings from that research sharpen the entry above. The effective budget is 16,384 rather than 32,768, because Pi's compaction reserves 16,384 on top of the declared window and Kady never overrides that default, so the prompt is 2.7x over rather than 1.35x. That makes unrecoverable first-turn compaction the *leading hypothesis* for the empty assistant message, not an established mechanism — the arithmetic is verified but the link to the symptom has not been observed, and the plan's Phase 4 is what would confirm or falsify it. Separately, the value really is discoverable: LM Studio's `/api/v0/models` reports `max_context_length: 262144` for the model in question, while the standard `/v1/models` carries only `id`, `object` and `owned_by`, which is why the existing comment at `models.ts:243` was right about the endpoint it was reading.
 
-Note the two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:238`), so a fix touches both.
+Ollama's equivalent field is still unverified — no model is pulled on this machine, so `POST /api/show` has never been exercised.
 
 ## 6. Fork etiquette
 

@@ -50,7 +50,12 @@ that upgrade taught us, both worth carrying into the rest of this triage:
   surface we consume directly.
 - **Two gaps remain on the PDF viewer specifically.** Node cannot rasterise a
   canvas or build the DOM text layer, so those are still unverified by CI; they
-  were checked by hand in a browser for 6.x. And `pdfjs.renderTextLayer`, the
+  were checked by hand in a browser for 6.x. That manual pass is not a one-off
+  tick: `BROWSER_VERIFIED_MAJOR` in the integration test pins the major it
+  covered, so the next major bump fails a test and asks for the pass to be
+  redone before the number moves. Re-run it for a major bump, or for any change
+  to `buildWorkerUrl` or the text-layer construction, since those are the parts
+  only a browser exercises. And `pdfjs.renderTextLayer`, the
   fallback at `web/src/components/pdf-viewer/pdf-viewer.tsx`, no longer exists
   in v6 — it is dead code reached through an `as unknown as` cast, so its
   removal was silent. Worth deleting the fallback, and worth asking what else

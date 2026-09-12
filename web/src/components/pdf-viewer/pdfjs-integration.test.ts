@@ -25,9 +25,13 @@ import { fileURLToPath } from "node:url";
 const FIXTURE = fileURLToPath(
   new URL("./__fixtures__/one-line.pdf", import.meta.url),
 );
+// pdfjs joins `standardFontDataUrl` with a filename and fetches the result, so
+// the separators have to be forward slashes. `fileURLToPath` hands back native
+// ones, which on Windows — where CI also runs the frontend suite — would produce
+// a path pdfjs cannot load. Keep the filesystem path, swap the separators.
 const STANDARD_FONTS = fileURLToPath(
   new URL("../../../node_modules/pdfjs-dist/standard_fonts/", import.meta.url),
-);
+).replaceAll("\\", "/");
 
 async function loadPdfjs() {
   // The legacy build is the one that runs outside a browser.
@@ -41,7 +45,24 @@ async function openFixture(pdfjs: Awaited<ReturnType<typeof loadPdfjs>>) {
   }).promise;
 }
 
+/**
+ * The pdfjs major last checked by hand in a browser: a real PDF opened, page 1
+ * rasterised to a canvas, the DOM text layer built, and the blob-patched worker
+ * exercised. Node cannot do any of that, so this constant is what turns the
+ * manual check from a one-off into something with a trigger.
+ *
+ * When a major bump makes this fail, do the browser pass again before raising
+ * the number. `dev-docs/todo.md` §2 records what the pass covers.
+ */
+const BROWSER_VERIFIED_MAJOR = 6;
+
 describe("pdfjs-dist integration", () => {
+  it("is still on the pdfjs major that was verified in a browser", async () => {
+    const pdfjs = await loadPdfjs();
+
+    expect(Number(pdfjs.version.split(".")[0])).toBe(BROWSER_VERIFIED_MAJOR);
+  });
+
   it("opens a real PDF and reports its page count", async () => {
     const pdfjs = await loadPdfjs();
     const doc = await openFixture(pdfjs);

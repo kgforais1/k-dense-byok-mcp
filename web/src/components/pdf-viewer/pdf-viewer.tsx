@@ -153,6 +153,29 @@ function loadPdfjs(): Promise<PdfjsModule> {
 // 100% zoom; we set devicePixelRatio separately on the canvas.
 const BASE_SCALE = 1.5;
 
+/**
+ * Tears down a loaded document and its worker transport.
+ *
+ * pdfjs 6 removed `PDFDocumentProxy.destroy()`, which in 5.x was a one-line
+ * delegation to the owning loading task. Going through `loadingTask` directly
+ * is the same teardown, and keeps every call site here on one spelling.
+ *
+ * Teardown is best-effort and swallows its own failures, in both directions:
+ * `destroy()` is async, so a rejection (a transport already gone, say) would
+ * otherwise escape a caller's `try`/`catch` as an unhandled rejection. There is
+ * nothing useful to do about a document that failed to close, so callers can
+ * treat this as fire-and-forget.
+ */
+export function destroyDoc(doc: PdfDoc | null | undefined): void {
+  try {
+    doc?.loadingTask.destroy().catch(() => {
+      /* already gone */
+    });
+  } catch {
+    /* already gone */
+  }
+}
+
 export interface PdfSyncHighlight {
   page: number;
   h: number;
@@ -261,7 +284,7 @@ export function PdfViewer({
     task.promise.then(
       (loaded) => {
         if (cancelled) {
-          loaded.destroy();
+          destroyDoc(loaded);
           return;
         }
         const prev = docRef.current;
@@ -271,7 +294,7 @@ export function PdfViewer({
         setDoc(loaded);
         setNumPages(loaded.numPages);
         if (prev && prev !== loaded) {
-          try { prev.destroy(); } catch { /* already gone */ }
+          destroyDoc(prev);
         }
         if (savedScroll !== null) {
           requestAnimationFrame(() => {
@@ -285,7 +308,7 @@ export function PdfViewer({
         if (!cancelled) {
           // Release a previously-successful doc's transport now rather
           // than leaving it dangling until unmount.
-          try { docRef.current?.destroy(); } catch { /* ignore */ }
+          destroyDoc(docRef.current);
           docRef.current = null;
           setError(e?.message ?? "Failed to load PDF");
         }
@@ -298,7 +321,7 @@ export function PdfViewer({
       task.promise.then(
         (loaded) => {
           if (loaded !== docRef.current) {
-            try { loaded.destroy(); } catch { /* ignore */ }
+            destroyDoc(loaded);
           }
         },
         () => {},
@@ -308,7 +331,7 @@ export function PdfViewer({
 
   useEffect(
     () => () => {
-      try { docRef.current?.destroy(); } catch { /* ignore */ }
+      destroyDoc(docRef.current);
       docRef.current = null;
     },
     [],

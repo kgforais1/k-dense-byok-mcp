@@ -1,6 +1,6 @@
 ---
 title: "Local-model context window: what the servers actually report"
-status: reference
+status: proposed
 created: 2026-09-12
 branch: local-context-window
 ---
@@ -83,7 +83,7 @@ plainly. The declared window cannot block the first send. It can only bite
 afterwards, when `_checkCompaction` runs against the response and finds the
 context far over the 16,384 effective budget, or when Pi's overflow path fires
 on a rejection. Either way compaction cannot cut a fixed system prompt, so it
-fails — and the failure is invisible for the reason given below.
+fails — and the failure is invisible, for the reason the plan gives in its Phase 0 section.
 
 The step that is *not* verified is the last one, that this is what produces a
 `done` run with an empty assistant message and no error frame. That symptom was

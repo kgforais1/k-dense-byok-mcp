@@ -14,6 +14,14 @@ branch: local-context-window
 > final status and moves this file to `dev-docs/plans/completed/` in
 > its closing checklist — never after merge. See
 > `docs/development/workflow.md#archive-lifecycle`.
+>
+> **This plan is two files. Archive both together.** The companion
+> `2026-09-10-local-model-context-window-findings.md` carries the same status
+> and moves in the same commit. Moving only the plan breaks the findings
+> file's relative link to it, which `scripts/docs-check.mjs` fails as a
+> missing link target; leaving the findings file behind with a non-`completed`
+> status while it sits in `completed/` fails the same script at `:463`. Set
+> both statuses and move both paths.
 
 **Goal:** Make Kady declare the local model's real context window instead of
 guessing 32,768. Today `buildOllamaModel` and `buildOpenAICompatibleModel`
@@ -47,17 +55,23 @@ The four results that drive the design:
 - **The effective budget is 16,384 tokens, not 32,768.** Pi reserves
   `reserveTokens ?? 16384` on top of the declared window, so the real ceiling
   is `32768 - 16384` against a measured 44,409-token prompt. That is 2.7x
-  over, not 1.35x.
+  over, not 1.35x. **44,409 is an empirical measurement, not a constant in the
+  code** — re-measure it during implementation rather than treating it as
+  fixed. Several numbers below are derived from it, including the 60,793 floor
+  and the Phase 4 cases, so they move if it moves.
 - **Both servers report the real figure, on a non-standard endpoint.** LM
   Studio's `/api/v0/models` carries `max_context_length`; Ollama's `/api/tags`
   carries `details.context_length`. The standard `/v1/models` carries neither,
   which is why the original 32,768 guess was reasonable for the endpoint it
   was looking at.
-- **The loaded figure diverges from the architectural one, on both servers,
-  by default.** LM Studio loaded a model at `64000` against a
-  `max_context_length` of `128000`; Ollama reported `40960` from `/api/tags`
-  while `/api/ps` said `8192`. Preferring the loaded figure is load-bearing,
-  not a refinement.
+- **The loaded figure diverges from the architectural one on both servers.**
+  On LM Studio this happens with no user action at all: loading a model
+  returned `loaded_context_length: 64000` against a `max_context_length` of
+  `128000`, half the maximum, on a default install. On Ollama the divergence
+  was *induced* — one request carrying `options.num_ctx: 8192` left
+  `/api/tags` reporting `40960` while `/api/ps` reported `8192` — so it takes
+  an operator action rather than arriving by default. Preferring the loaded
+  figure is load-bearing on both, not a refinement.
 - **Ollama needs no per-model fan-out.** An earlier draft built a second
   mechanism around the belief that `/api/tags` omits the context length. It
   does not, on 0.33.2. That belief cost roughly half the original design.
@@ -239,7 +253,7 @@ not a failure.
 env-only as the cheap option. It is not much cheaper here, because the probe
 point already exists and already talks to both servers, and it is strictly
 worse: an env knob is one global number, while the right window differs per
-model — 262,144 and 393,216 and 128,000 all appeared in a single probe above.
+model — 262,144 and 393,216 and 128,000 all appeared in a single probe (quoted in the findings file).
 
 **Probe from the existing discovery routes, not from `resolveModel`.**
 `resolveModel` (`models.ts:412`) is synchronous, and it is on the run path
@@ -463,7 +477,7 @@ holds its own provider and base URL as constants, so it can construct the key
 from what it has, and no signature changes.
 
 **Prefer `loaded_context_length` over `max_context_length`** when both are
-present, per the reasoning above: the loaded value is what the request is
+present, for the reason the findings file records: the loaded value is what the request is
 measured against, and it can be lower.
 
 **Raise the fallback to 128,000 — but not before Phase 0.** These ship

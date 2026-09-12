@@ -13,6 +13,7 @@ import React from "react";
 import {
   installMapUpsertPolyfill,
   buildWorkerUrl,
+  destroyDoc,
   MAP_UPSERT_POLYFILL_SRC,
   PdfViewer,
 } from "./pdf-viewer";
@@ -225,5 +226,28 @@ describe("pdf-viewer initialization and helpers", () => {
 
     const observerDefault = new window.IntersectionObserver(() => {});
     expect(observerDefault.thresholds).toEqual([0]);
+  });
+});
+
+describe("destroyDoc", () => {
+  /**
+   * pdfjs 6 removed `PDFDocumentProxy.destroy()`. Every teardown path in the
+   * viewer now goes through the loading task, and that is a type-level change
+   * a mocked document would happily hide, so assert the delegation directly.
+   */
+  it("tears the document down through its loading task", () => {
+    const destroy = vi.fn();
+    const doc = { loadingTask: { destroy } } as unknown as Parameters<
+      typeof destroyDoc
+    >[0];
+
+    destroyDoc(doc);
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when there is no document", () => {
+    expect(() => destroyDoc(null)).not.toThrow();
+    expect(() => destroyDoc(undefined)).not.toThrow();
   });
 });

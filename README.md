@@ -9,9 +9,13 @@
 > **This is a fork.** The upstream project is
 > **[K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok)**, and
 > except where a section says otherwise, everything described below is their
-> work. This fork adds MCP server support and related changes. The badges,
-> social links, videos and star history on this page all refer to the upstream
-> project and its authors, not to this fork.
+> work. What this fork adds is the ability to [use Kady from another AI
+> tool](./docs/kady-as-mcp-server.md) — Kady acting as an MCP *server*, which is
+> the opposite direction from the [external-tool
+> connector](./docs/mcp-servers.md) upstream already provides — plus related
+> changes. The social links, videos and star history on this page refer to the
+> upstream project and its authors, not to this fork. The MIT License badge is
+> not in that group: that licence covers this repository too.
 >
 > The install commands below clone this fork, so they give you the MCP work as
 > well as everything upstream provides. This fork is public but not promoted —

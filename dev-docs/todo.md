@@ -155,7 +155,12 @@ staying accurate.
 Note also that removing the badges did not stop the claim. The same three
 numbers are still asserted in prose at `README.md:60-62`, `docs/basic-usage.md`
 and `docs/codebase-summary.md`. Those are accurate for workflows and databases
-and unverified for skills.
+and unverified for skills. The skills figure is not even self-consistent:
+`README.md:64` and `docs/codebase-summary.md:12` say 149 while
+`docs/basic-usage.md:20` says 140+. Skills are fetched from a remote catalogue
+(`server/src/agent/skills-fetch.ts`), so any number in prose is a claim about
+one revision of a repo we do not control. Either name that revision or drop the
+figure; a local JSON count can never settle it the way it settles 326 and 229.
 
 **If adding them back, add a check with them** — a script that counts the JSON
 files and a CI assertion, so the badge cannot drift unnoticed. Without that,
@@ -219,8 +224,8 @@ To check, before calling this done:
 
 - Whether `README.md` and `docs/` state the fork relationship at all, and where
   a short attribution line belongs. **Partly done:** the README now opens with
-  a fork notice and the star-history heading names upstream. `docs/` is
-  untouched.
+  a fork notice and the star-history heading names upstream. `docs/` now says
+  it for `installation.md` and `limitations.md`; the rest is untouched.
 - Whether the skills count asserted in prose (`README.md:60`,
   `docs/basic-usage.md`, `docs/codebase-summary.md`) is accurate, since it is
   the one number that cannot be counted from this repo. The workflows and

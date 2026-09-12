@@ -822,7 +822,7 @@ documentation or from this plan's guesses.
       timeout. Each returns the shared in-flight promise so a second caller at
       the same scope joins the first rather than starting a rival. A
       `probeAll` must not join an in-flight `probeLoaded`, which is what the
-      scope component prevents; a `probeLoaded` may join an in-flight
+      scope component prevents; a `probeLoaded` joins an in-flight
       `probeAll`, which is a superset, via an explicit check. The reasoning is
       under "A `probeAll` must never join a `probeLoaded`" above.
 
@@ -1100,7 +1100,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | Every *new* HTTP call goes through a shared probe | Assert `/api/v0/models`, `/api/ps` and the run path's `probeAll` go through `probeLoaded`/`probeAll`, not a private `fetch`, and that a second one started while the first is in flight *at the same scope* joins it. Ollama's architectural figure on the picker path is exempt — parsed inline from the `/api/tags` payload the route already holds |
 | Two picker opens cannot race | Delay one `/api/v0/models` response and open the picker again while it is in flight; the second open reuses the in-flight probe rather than starting a rival, so no reordering is possible |
 | A `probeAll` does not join an in-flight `probeLoaded` | On Ollama, hold `/api/ps` open, fire `probeLoaded(providerId, baseUrl)`, then fire `probeAll` for the same server while it is outstanding. Assert `probeAll` issues its own `/api/tags` and that the architectural slot is populated once *that* call returns — not once `probeAll` settles, which is later, because its own `/api/ps` is held open until the 2 s timeout. With a single-scope key this fails: `probeAll` resolves on the shared `/api/ps` alone and the slot stays empty, so with no model loaded the run falls back to 128,000 |
-| A `probeLoaded` may join an in-flight `probeAll` | Same setup, reversed order. Assert only one `/api/ps` is issued and the loaded slot is still written, confirming the superset join is wired as an explicit check rather than a shared key |
+| A `probeLoaded` joins an in-flight `probeAll` | Same setup, reversed order. Assert only one `/api/ps` is issued and the loaded slot is still written, confirming the superset join is wired as an explicit check rather than a shared key |
 | The probe never rejects | Point it at a closed port, a 404 and a malformed body in turn; each resolves normally, leaves the cache untouched, and logs no unhandled rejection. The discovery route still returns its model list with `context_length` unchanged, and never a 500 |
 | A failed refresh is a no-op | Warm the cache, then make the probe 404; the cached value survives rather than reverting to 128,000 |
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |

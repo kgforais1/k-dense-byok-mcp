@@ -342,10 +342,22 @@ Four requirements, because "fire and forget" is easy to implement as a leak:
   server. The scope component is not decoration: `probeAll` and `probeLoaded`
   do not fetch the same things on Ollama, so joining across them loses data.
   See "A `probeAll` must never join a `probeLoaded`" below.
+
+  A probe joins an in-flight one only when the **whole** key matches, so the two
+  scopes can overlap. Concretely, that happens in one direction: a `probeAll`
+  starting while a `probeLoaded` is in flight runs on its own and issues a
+  second `/api/ps`. That duplicate call is the intended cost of not losing
+  `/api/tags`. The other direction does not overlap, because a `probeLoaded`
+  starting while a `probeAll` is in flight joins it — see the superset join
+  below.
 - **Absorb every failure inside the probe. The returned promise
   never rejects.** This is the single contract, and it is worth being exact
   because an earlier draft stated two incompatible ones. A timeout, a dead
-  daemon, a 404, a malformed body: all of them resolve to `null`. Nothing
+  daemon, a 404, a malformed body: all of them resolve normally, with no value
+  and no cache write. (An earlier draft said they "resolve to `null`", which
+  was left over from a deleted per-model route that returned a figure. These
+  probes are `Promise<void>` — there is no result to inspect, `null` or
+  otherwise.) Nothing
   rejects, so no caller needs a `.catch()`, the route needs no `try`/`catch`,
   and a forgotten promise cannot become an unhandled rejection.
 
@@ -509,10 +521,13 @@ Three requirements follow, and the implementation is not correct without them:
 
   - A second `probeAll` joins the first `probeAll`. Same work, so sharing is
     correct.
-  - A `probeLoaded` arriving while a `probeAll` is in flight may either join it
-    or run on its own. Joining is sound, because `probeAll` is a superset — it
-    fetches `/api/ps` too and writes the loaded slot. Prefer joining, since it
-    saves a call and cannot lose data. Implement it as an explicit check for an
+  - A `probeLoaded` arriving while a `probeAll` is in flight **joins it**.
+    Joining is sound, because `probeAll` is a superset — it fetches `/api/ps`
+    too and writes the loaded slot — and it saves a call without losing data.
+    An earlier draft called this merely preferred, leaving "run on its own"
+    permitted; that is now required, because the test below asserts exactly one
+    `/api/ps` and an implementer taking the permitted path would fail it.
+    Implement it as an explicit check for an
     in-flight `all` entry, not as a shared key, so the asymmetry is visible in
     the code rather than implied.
 
@@ -585,7 +600,10 @@ Note the tension with the argument two paragraphs up, which rejected env-only
 *because* the right window differs per model. Both are true. The knob is
 per-provider, not per-model, so setting it to correct one model caps every model
 on that provider. That is an acceptable escape hatch and an unacceptable primary
-mechanism, which is why it is second in precedence and the probe is first.
+mechanism. Keep the two senses of "first" apart: the knob is resolved **first**
+and wins when set, while the probe is the **primary** mechanism because the knob
+is normally unset. An earlier draft wrote this as "second in precedence and the
+probe is first", which inverts the resolution order stated above and in Phase 3.
 Document it as a last resort, not as the normal way to configure a window.
 Check both `docs/model-selection.md` and `docs/local-models-ollama.md` and put
 it where the local-model setup instructions already live, rather than assuming
@@ -761,10 +779,11 @@ overflow text instead of an empty assistant bubble.
 
 ### Phase 1 — Verify the two probe shapes
 
-- [ ] Load a model in LM Studio and re-probe `/api/v0/models`. Record whether
-      `loaded_context_length` appears, and whether it differs from
-      `max_context_length` when the model is loaded below its maximum.
-- [ ] Both providers are verified, including the loaded-versus-architectural
+- [x] Load a model in LM Studio and re-probe `/api/v0/models`. Done on
+      2026-09-11: `loaded_context_length` appears and differs —
+      `allenai/olmocr-2-7b` returned `max_context_length: 128000` with
+      `loaded_context_length: 64000`, quoted in the evidence above.
+- [x] Both providers are verified, including the loaded-versus-architectural
       divergence on each — see the evidence above. Nothing in Phase 1 is
       blocked. Re-confirm against the reader's own Ollama version before relying
       on it: this was checked on 0.33.2 and the field is absent in older
@@ -775,7 +794,9 @@ overflow text instead of an empty assistant bubble.
       (`models.ts:432`), which may omit it. If `llama3` and `llama3:latest` can
       denote one model, they are two cache keys and every lookup misses. Record
       which form each side uses and normalise in `cacheKey` if they differ.
-- [ ] Write both real response fragments into this plan before writing code.
+- [x] Write both real response fragments into this plan before writing code.
+      Done — the `/api/tags`, `/api/ps` and `/api/v0/models` bodies are quoted
+      verbatim above. The model-name round trip is the only item left open.
 
 **Exit criteria:** both field names are quoted from live output, not from
 documentation or from this plan's guesses.
@@ -918,6 +939,25 @@ documentation or from this plan's guesses.
       Absent-from-a-good-answer and no-answer-at-all are opposite cases, and
       treating them alike either strands stale loaded values or wipes good ones.
 
+      Name the cost that rule buys, because it is real and it is accepted. A
+      model that unloads while `/api/ps` is failing keeps its stale loaded
+      figure until some later loaded-probe succeeds. During that window
+      `getContextWindow` returns the loaded value — say 8,192 from an old
+      `num_ctx` — while the server would now serve 40,960, so Kady
+      under-declares and compacts earlier than it needs to. A partial
+      `probeAll` produces the same state a different way: `/api/tags` succeeds
+      and refreshes the architectural slot, `/api/ps` aborts at 2 s and leaves
+      the stale loaded slot in place, and `loaded ?? architectural` keeps
+      returning the stale half.
+
+      That is under-declaration, which is the safe direction — it wastes
+      context rather than overflowing it — and it converges on the next
+      successful loaded-probe. Do **not** "fix" it by clearing the loaded slot
+      on a failed probe. That trades a bounded inefficiency for the opposite
+      bug: every transient `/api/ps` blip would wipe a good loaded figure and
+      fall back to an architectural number the server is not currently
+      honouring, which over-declares and overflows.
+
       The loaded figure is only readable while the model is resident. Ollama
       unloads after its keep-alive expires, so `/api/ps` is empty most of the
       time and falling back to the architectural slot is the normal path.
@@ -940,8 +980,20 @@ documentation or from this plan's guesses.
       `/api/ps` for the loaded one. Only the picker path gets `/api/tags` for
       free. An implementer who writes `/api/ps` alone here leaves the
       architectural entries missing.
-- [ ] Return the real value in each route's `context_length` field instead of
-      the hardcoded `0`.
+- [ ] Serve each route's `context_length` from the cache instead of the
+      hardcoded `0`: return the cached figure when there is one, and `0` when
+      there is not. **Do not make the route await the probe to avoid a cold
+      `0`.** On a cold first open the honest answer is `0`, which
+      `model-selector.tsx:250` already renders as "no badge" — the same thing
+      the user sees today. The probe fires unawaited and the next open shows
+      the figure.
+
+      Ollama is the asymmetric case and is worth stating so nobody "fixes" it:
+      its route already holds the `/api/tags` body, so it can parse the
+      architectural figure inline and be correct on the very first open. LM
+      Studio cannot, because the route reads `/v1/models` while the context
+      figures live in `/api/v0/models`, a different call. Expect one cold open
+      there, not a bug.
 
 **Exit criteria:** opening the picker populates the cache for **both**
 providers, and reopening it after either local server changes overwrites those
@@ -1054,7 +1106,7 @@ recorded as unexplained with the compaction hypothesis ruled out.
 | A bad env knob is ignored | Set the knob to `""`, `abc`, `0`, `-1` and `1.5`; each falls through to the cache or 128,000 rather than being declared |
 | A slow native probe cannot stall the picker | Stub `/api/v0/models` to hang; `GET /openai-compatible/models` returns as soon as `/v1/models` does, without waiting for the probe or its timeout |
 | The native probe still lands afterwards | With the probe merely slow rather than hung, the route returns first; once the probe settles, the cache holds the probed value |
-| An unknown small server fails loudly, not silently | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted |
+| An unknown small server fails loudly, not silently — *on a server that errors* | Native probe 404s and the real server holds 32,768; the 44,409-token prompt is rejected with the overflow message rather than silently compacted. Scope this to LM Studio, or to an Ollama build that returns the overflow error. A silently truncating Ollama is an accepted exception, not a failing test: there is no error to classify and no event to forward, as the Phase 0 discussion says |
 | Ollama discovery stays inside its budget | `GET /ollama/models` takes the architectural figure from the `/api/tags` payload it already has, and makes at most one extra unawaited `/api/ps` call for the loaded figures, so its response timing is unchanged with 10+ models present |
 | The loaded figure wins over the architectural one | With `allenai/olmocr-2-7b` loaded in LM Studio, the declared window is 64,000 (`loaded_context_length`), not 128,000 (`max_context_length`). With `num_ctx: 8192` set on Ollama, it is 8,192, not 40,960 |
 | A cold cache hides the badge rather than faking one | With the cache empty, LM Studio rows carry `0` and render no badge, exactly as today. Ollama rows carry their architectural figure on the *first* open, because it is parsed inline rather than probed |

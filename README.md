@@ -8,10 +8,13 @@
 
 > **This is a fork.** The upstream project is
 > **[K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok)**, and
-> essentially everything described below is their work. This fork adds MCP
-> server support and related changes. The badges, social links, videos and star
-> history on this page all refer to the upstream project and its authors, not to
-> this fork.
+> except where a section says otherwise, everything described below is their
+> work. This fork adds MCP server support and related changes. The badges,
+> social links, videos and star history on this page all refer to the upstream
+> project and its authors, not to this fork.
+>
+> Note that the install commands below clone **upstream**, not this fork. That
+> is deliberate for now — see `dev-docs/todo.md` §6.
 
 > ### 🎥 Webinar recording: **Getting Started with K-Dense BYOK**
 >

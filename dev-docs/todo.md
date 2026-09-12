@@ -166,6 +166,28 @@ shield and four links to K-Dense's own X, LinkedIn, YouTube and Reddit
 accounts. The social four present upstream's channels as this repo's, which the
 fork notice at the top of the README now qualifies rather than resolves.
 
+### Two that are defects, not etiquette — decide with the issue routing
+
+Found by review of PR #26. Both need a decision about whether this fork is
+meant to be *installed and run* by anyone, or is a private working copy. That
+answer determines both fixes, so decide it once.
+
+- **The install instructions clone upstream.** `README.md:111` and `:120`, and
+  `docs/installation.md:53`, all say
+  `git clone https://github.com/K-Dense-AI/k-dense-byok.git`. Anyone following
+  this fork's own front page installs upstream and never gets the MCP work.
+  If the fork is meant to be used, these must point here; if it is a private
+  copy, they are correct and should stay, and the fork notice should say so
+  plainly. A holding note is in the README now.
+- **The app's update check polls upstream's releases.**
+  `server/src/api/system.ts:14` sets
+  `GITHUB_REPO = "K-Dense-AI/k-dense-byok"` and `:33` fetches
+  `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`. On this fork
+  that compares the running version against *upstream's* latest release, so it
+  can tell a fork user they are out of date and point them at a release that
+  does not contain the fork's changes. Repointing it requires this fork to
+  actually publish releases, which is the same underlying decision.
+
 ### Issue routing — decide soon
 
 `README.md`'s "Issues, bugs, or feature requests" section sends every reporter

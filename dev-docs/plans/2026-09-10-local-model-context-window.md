@@ -343,13 +343,19 @@ Four requirements, because "fire and forget" is easy to implement as a leak:
   do not fetch the same things on Ollama, so joining across them loses data.
   See "A `probeAll` must never join a `probeLoaded`" below.
 
-  A probe joins an in-flight one only when the **whole** key matches, so the two
-  scopes can overlap. Concretely, that happens in one direction: a `probeAll`
-  starting while a `probeLoaded` is in flight runs on its own and issues a
-  second `/api/ps`. That duplicate call is the intended cost of not losing
-  `/api/tags`. The other direction does not overlap, because a `probeLoaded`
-  starting while a `probeAll` is in flight joins it — see the superset join
+  Two join mechanisms exist, and conflating them is the trap. The **map** joins
+  a probe to an in-flight one only when the whole key matches, scope included,
+  so the two scopes can overlap there. On top of that sits **one explicit
+  check**, outside the map: a `probeLoaded` starting while a `probeAll` is in
+  flight adopts it, across different keys, as required by the superset join
   below.
+
+  So the overlap is one-directional. A `probeAll` starting while a
+  `probeLoaded` is in flight runs on its own and issues a second `/api/ps`,
+  because neither the map nor the explicit check applies to it. That duplicate
+  call is the intended cost of not losing `/api/tags`. The reverse never
+  overlaps, because the explicit check catches it. Read the whole-key rule as
+  describing the map, not as forbidding the superset join.
 - **Absorb every failure inside the probe. The returned promise
   never rejects.** This is the single contract, and it is worth being exact
   because an earlier draft stated two incompatible ones. A timeout, a dead

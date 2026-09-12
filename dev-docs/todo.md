@@ -188,6 +188,32 @@ answer determines both fixes, so decide it once.
   does not contain the fork's changes. Repointing it requires this fork to
   actually publish releases, which is the same underlying decision.
 
+  This is one defect with two halves: the check above sets `updateAvailable`,
+  and `web/src/app/page.tsx:867` then renders an "A newer version is
+  available" link pointing at upstream's repository. Fix both together or
+  neither.
+
+**Full survey, done 2026-09-12.** Everywhere outside the README that still
+names upstream, so the follow-up does not have to rediscover it:
+
+| Location | What it does | Verdict |
+| --- | --- | --- |
+| `server/src/api/system.ts:14`, `:33` | Polls upstream's latest release | Defect — decide with the rest |
+| `web/src/app/page.tsx:867` | "Update available" links to upstream | Defect — same chain as above |
+| `docs/installation.md:53` | `git clone` upstream | Defect — same as README `:111`/`:120` |
+| `start.mjs:246` | Install failure says report at upstream's tracker | Misroutes fork bugs |
+| `start.mjs:417` | Launcher failure, same | Misroutes fork bugs |
+| `docs/installation.md:138` | "we read every one", upstream tracker | Promise made on upstream's behalf |
+| `docs/limitations.md:122` | Same, for Windows defects | Same |
+| `SECURITY.md:48` | Routes *unchanged upstream* bugs upstream | **Correct — leave it** |
+
+Checked and clean: all of `.github/` including every workflow, Dependabot and
+release config; `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONTRIBUTING.md`,
+`CHANGELOG.md`; every other file under `docs/`; all tracked source under
+`server/` and `web/` apart from the two rows above; `scripts/`, `env-file.mjs`
+and `package.json`. **No workflow or automation acts on the upstream repo** —
+that was the case worth ruling out, and it is ruled out.
+
 ### Issue routing — decide soon
 
 `README.md`'s "Issues, bugs, or feature requests" section sends every reporter

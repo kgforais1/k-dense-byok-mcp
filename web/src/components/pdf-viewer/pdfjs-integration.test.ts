@@ -38,6 +38,14 @@ async function loadPdfjs() {
   return import("pdfjs-dist/legacy/build/pdf.mjs");
 }
 
+/**
+ * The entry point the app itself imports. Only its exported surface is touched
+ * here — the modern build is not meant to *run* under Node.
+ */
+async function loadAppEntry() {
+  return import("pdfjs-dist");
+}
+
 async function openFixture(pdfjs: Awaited<ReturnType<typeof loadPdfjs>>) {
   return pdfjs.getDocument({
     data: new Uint8Array(readFileSync(FIXTURE)),
@@ -85,6 +93,20 @@ describe("pdfjs-dist integration", () => {
     expect(typeof doc.loadingTask.destroy).toBe("function");
 
     await expect(doc.loadingTask.destroy()).resolves.toBeUndefined();
+  });
+
+  /**
+   * Everything else in this file exercises the legacy build, because that is
+   * the one that runs under Node. The viewer imports plain `pdfjs-dist`. The
+   * two are different bundles, so assert they still agree on the facts the
+   * other tests here rely on — otherwise those tests could pass while the app
+   * loads something that behaves differently.
+   */
+  it("agrees with the build the app actually imports", async () => {
+    const [legacy, app] = await Promise.all([loadPdfjs(), loadAppEntry()]);
+
+    expect(app.version).toBe(legacy.version);
+    expect(Object.keys(app).sort()).toEqual(Object.keys(legacy).sort());
   });
 
   it("still exports the TextLayer constructor the viewer builds text with", async () => {

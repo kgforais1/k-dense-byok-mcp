@@ -11,6 +11,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "dependencies": {
     "@codemirror/merge": "^6.12.2",
     "@streamdown/cjk": "^1.0.2",

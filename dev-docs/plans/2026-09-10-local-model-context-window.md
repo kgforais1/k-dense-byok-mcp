@@ -50,7 +50,11 @@ The evidence behind this plan lives in a companion file:
 [`2026-09-10-local-model-context-window-findings.md`](2026-09-10-local-model-context-window-findings.md).
 Read it before implementing — it is the measurement record, not background
 colour, and four of the decisions below are only defensible with it in hand.
-The four results that drive the design:
+
+The four results that drive the design are summarised next. **The findings
+file is the source of truth for every number in them.** These bullets restate
+its measurements rather than deriving them, so if the two ever disagree, the
+findings file wins and these are stale. Update both together.
 
 - **The effective budget is 16,384 tokens, not 32,768.** Pi reserves
   `reserveTokens ?? 16384` on top of the declared window, so the real ceiling

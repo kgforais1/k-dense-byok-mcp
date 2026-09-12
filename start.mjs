@@ -243,7 +243,7 @@ function installPackages(dir, label, packages = []) {
         "    The most common cause is a network problem — check your internet\n" +
         "    connection and start Kady again. If it keeps failing, run\n" +
         `    'npm install' inside ${dir}/ to see the full error, or report it at\n` +
-        "    https://github.com/K-Dense-AI/k-dense-byok/issues",
+        "    https://github.com/kgforais1/k-dense-byok-mcp/issues",
     );
   }
 }
@@ -414,7 +414,7 @@ function startService(label, dir, npmArgs) {
       console.error(`\n  ${sym.err} The ${label} stopped unexpectedly.`);
       console.error("    Scroll up for its error message, then start Kady again.");
       console.error("    If you're stuck, report the error at");
-      console.error("    https://github.com/K-Dense-AI/k-dense-byok/issues");
+      console.error("    https://github.com/kgforais1/k-dense-byok-mcp/issues");
       stopAll(1);
     }
   });

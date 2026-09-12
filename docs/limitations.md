@@ -119,7 +119,7 @@ See [Durable Modal compute](./modal-compute.md) for lifecycle and recovery detai
 
 ## Native Windows support is new
 
-The app now runs natively on Windows 10/11 (no WSL needed) as of this release. It goes through the same test suite as macOS/Linux, but has had less real-world mileage — if you hit something Windows-specific, please [open a GitHub issue](https://github.com/K-Dense-AI/k-dense-byok/issues). WSL remains a supported alternative.
+The app now runs natively on Windows 10/11 (no WSL needed) as of this release. It goes through the same test suite as macOS/Linux, but has had less real-world mileage — if you hit something Windows-specific, please [open a GitHub issue](https://github.com/kgforais1/k-dense-byok-mcp/issues). WSL remains a supported alternative.
 
 ## Features deferred during the Pi migration
 

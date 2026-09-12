@@ -123,9 +123,11 @@ Ollama's equivalent field is still unverified — no model is pulled on this mac
 
 ## 6. Fork etiquette
 
-This repo is a fork of K-Dense-AI/k-dense-byok, and nothing in it says so.
-A reader arriving from a search result cannot tell whose work they are looking
-at, which is the part that matters — attribution, not paperwork.
+This repo is a fork of K-Dense-AI/k-dense-byok. The README now opens with a
+fork notice saying so, but the rest of the repo still does not — a reader
+arriving at `CONTRIBUTING.md`, `SECURITY.md` or `docs/` cannot tell whose work
+they are looking at, which is the part that matters — attribution, not
+paperwork.
 
 Two badges were wrong outright and are already gone: a Tests badge pointing at
 `K-Dense-AI/k-dense-byok/actions/workflows/tests.yml`, which rendered upstream's
@@ -133,17 +135,101 @@ CI result on this fork's front page, and a Version badge reading 0.7.3 against
 a `server/package.json` on 0.9.12. Repointing the Tests badge at this repo is
 still an option once the rest is decided.
 
-The eight that remain are a judgement call rather than a defect: one License
-shield, three count shields, and four links to K-Dense's own X, LinkedIn,
-YouTube and Reddit accounts. The social four present upstream's channels as
-this repo's.
+The three count shields — Skills 149, Workflows 326, Databases 229 — are now
+also gone. **They were removed for the wrong stated reason, and the record
+should say so.** The removal commit claimed they were inherited numbers never
+verified here. Two of the three were this fork's own correct numbers at the
+time of removal: `web/src/data/workflows.json` holds exactly 326 entries and
+`web/src/data/databases.json` exactly 229. Only Skills 149 is unverifiable
+locally — there is no skills manifest in the repo, and skills come from an
+external catalogue defaulting to `K-Dense-AI/scientific-agent-skills`
+(`server/src/agent/config.ts:42`), which this fork did not change.
+
+The defensible reason to leave them out is different: nothing regenerates or
+checks them, so they drift silently, exactly as the Version badge drifted to
+0.7.3 against a 0.9.12 `package.json`. Accuracy today is not the same as
+staying accurate.
+
+Note also that removing the badges did not stop the claim. The same three
+numbers are still asserted in prose at `README.md:68-70`, `docs/basic-usage.md`
+and `docs/codebase-summary.md`. Those are accurate for workflows and databases
+and unverified for skills. The skills figure is not even self-consistent:
+`README.md:68` and `docs/codebase-summary.md:12` say 149 while
+`docs/basic-usage.md:20` says 140+. Skills are fetched from a remote catalogue
+by `server/src/agent/skills-fetch.ts`, from the repo named at
+`server/src/config.ts:41` (`K-Dense-AI/scientific-agent-skills` unless
+`KADY_SKILLS_REPO` overrides it), so any number in prose is a claim about
+one revision of a repo we do not control. Either name that revision or drop the
+figure; a local JSON count can never settle it the way it settles 326 and 229.
+
+**If adding them back, add a check with them** — a script that counts the JSON
+files and a CI assertion, so the badge cannot drift unnoticed. Without that,
+leaving them out is the better option.
+
+Five remain, and they are a judgement call rather than a defect: one License
+shield and four links to K-Dense's own X, LinkedIn, YouTube and Reddit
+accounts. The social four present upstream's channels as this repo's, which the
+fork notice at the top of the README now qualifies rather than resolves.
+
+### Decided 2026-09-12: public fork, installable, not promoted
+
+Kevin settled the question these all turned on — this fork is public and
+anyone may install it, but it is not being promoted and carries no support
+commitment. That made every item below a mechanical fix, now done:
+
+- **Install instructions clone this fork.** `README.md`, `docs/installation.md`.
+  Someone following this fork's front page now gets the MCP work.
+- **The update check points here.** `server/src/api/system.ts:14`, and the
+  "update available" link at `web/src/app/page.tsx:867` now opens this fork's
+  releases page. Safe because this fork publishes releases — `v0.9.12`, which
+  matches `server/package.json` — so no false prompt. Had there been none, the
+  `!resp.ok` branch already degrades to "no update".
+- **Launcher failures report here.** `start.mjs:246`, `:417`.
+- **Issue routing split by cause.** Fork and MCP problems here, anything that
+  reproduces on upstream without this fork's changes goes upstream, and "if you
+  cannot tell, open it here" resolves the classification problem. The inherited
+  "We read every one" is gone — that was a promise made on K-Dense's behalf.
+
+Still open, deliberately:
+
+- The four social badges and the License shield still show K-Dense's channels.
+  Qualified by the fork notice rather than resolved.
+- `docs/` beyond `installation.md` and `limitations.md` has no fork notice.
+- The Skills 149 count remains unverifiable locally; see the badge note above.
+
+### Issue routing — background to the decision above
+
+Before the decision, `README.md`'s issues section sent every reporter
+to upstream's tracker, which was wrong for anything this fork added and rude to
+upstream, who would receive bug reports for code they never wrote.
+
+The likely answer is to split by cause: **report MCP and other fork-specific
+problems here, everything else upstream.** Do not write that until the
+practical questions are settled, because a reporter cannot classify their own
+bug:
+
+- Can a non-technical reporter tell an MCP bug from an upstream one? If not,
+  the rule needs a fallback — probably "if unsure, open it here and we will
+  redirect it".
+- Are this fork's issues even enabled, and is anyone watching them? Routing
+  people to an unwatched tracker is worse than routing them upstream.
+- Does upstream want fork traffic at all? Their README says "We read every
+  one", which this fork's README currently inherits verbatim and should not
+  claim on their behalf.
+
+Resolved by the decision above; kept because the reasoning still applies if the
+routing is revisited.
 
 To check, before calling this done:
 
 - Whether `README.md` and `docs/` state the fork relationship at all, and where
-  a short attribution line belongs.
-- Whether the version, skills, workflows and database counts in the badges are
-  this fork's numbers or inherited ones that have since drifted.
+  a short attribution line belongs. **Partly done:** the README now opens with
+  a fork notice and the star-history heading names upstream. `docs/` now says
+  it for `installation.md` and `limitations.md`; the rest is untouched.
+- Whether the skills count asserted in prose (`README.md:68`,
+  `docs/basic-usage.md`, `docs/codebase-summary.md`) is accurate, since it is
+  the one number that cannot be counted from this repo. The workflows and
+  databases figures were verified correct; the badges themselves are gone.
 - Whether `LICENSE`, `CONTRIBUTING.md` and `SECURITY.md` still route a reporter
   or contributor to upstream when they should reach this fork, or the reverse.
 - Whether any workflow, issue template or link still names the upstream repo.

@@ -1,13 +1,25 @@
 # K-Dense BYOK
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Skills](https://img.shields.io/badge/Skills-149-brightgreen.svg)](#what-can-it-do)
-[![Workflows](https://img.shields.io/badge/Workflows-326-blueviolet.svg)](#what-can-it-do)
-[![Databases](https://img.shields.io/badge/Databases-229-orange.svg)](#what-can-it-do)
 [![X](https://img.shields.io/badge/Follow_on_X-%40k__dense__ai-000000?logo=x)](https://x.com/k_dense_ai)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-K--Dense_Inc.-0A66C2?logo=linkedin)](https://www.linkedin.com/company/k-dense-inc)
 [![YouTube](https://img.shields.io/badge/YouTube-K--Dense_Inc.-FF0000?logo=youtube)](https://www.youtube.com/@K-Dense-Inc)
 [![Reddit](https://img.shields.io/badge/Reddit-u%2F--k--dense---FF4500?logo=reddit)](https://www.reddit.com/user/-k-dense-/)
+
+> **This is a fork.** The upstream project is
+> **[K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok)**, and
+> except where a section says otherwise, everything described below is their
+> work. What this fork adds is the ability to [use Kady from another AI
+> tool](./docs/kady-as-mcp-server.md) — Kady acting as an MCP *server*, which is
+> the opposite direction from the [external-tool
+> connector](./docs/mcp-servers.md) upstream already provides — plus related
+> changes. The social links, videos and star history on this page refer to the
+> upstream project and its authors, not to this fork. The MIT License badge is
+> not in that group: that licence covers this repository too.
+>
+> The install commands below clone this fork, so they give you the MCP work as
+> well as everything upstream provides. This fork is public but not promoted —
+> use it if it is useful to you, and expect no support commitment.
 
 > ### 🎥 Webinar recording: **Getting Started with K-Dense BYOK**
 >
@@ -104,8 +116,8 @@ You need a compatible computer and at least one model source:
 Open a terminal (on a Mac: press `Cmd+Space`, type "Terminal", press Enter) and run these four lines:
 
 ```bash
-git clone https://github.com/K-Dense-AI/k-dense-byok.git
-cd k-dense-byok
+git clone https://github.com/kgforais1/k-dense-byok-mcp.git
+cd k-dense-byok-mcp
 cp .env.example .env    # optional: add an OpenRouter key or other settings
 ./start.sh
 ```
@@ -113,8 +125,8 @@ cp .env.example .env    # optional: add an OpenRouter key or other settings
 On Windows (press `Win`, type "PowerShell" or "Terminal", press Enter):
 
 ```powershell
-git clone https://github.com/K-Dense-AI/k-dense-byok.git
-cd k-dense-byok
+git clone https://github.com/kgforais1/k-dense-byok-mcp.git
+cd k-dense-byok-mcp
 copy .env.example .env    # optional: add an OpenRouter key or other settings
 .\start.cmd
 ```
@@ -188,13 +200,29 @@ K-Dense BYOK is great for getting started, but if you want end-to-end research w
 
 ## Issues, bugs, or feature requests
 
-If you run into a problem or have an idea for something new, please [open a GitHub issue](https://github.com/K-Dense-AI/k-dense-byok/issues) — a free GitHub account is all you need. We read every one.
+If you run into a problem or have an idea for something new, please open a
+GitHub issue — a free GitHub account is all you need.
+
+- **Problems with this fork** — anything involving MCP, or anything you hit
+  after installing from here — belong in [this fork's
+  tracker](https://github.com/kgforais1/k-dense-byok-mcp/issues). This fork is
+  a side project and not promoted, so there is no response-time commitment.
+- **Problems with the app itself**, which reproduce on upstream without this
+  fork's changes, belong in [the upstream
+  tracker](https://github.com/K-Dense-AI/k-dense-byok/issues) — that is
+  K-Dense's project and they maintain it.
+
+If you cannot tell which it is, open it here and it will be redirected. Please
+do not send this fork's bugs upstream; they did not write this code.
 
 ## About K-Dense
 
 K-Dense BYOK is open source because [K-Dense](https://github.com/K-Dense-AI) believes in giving back to the community that makes this kind of work possible.
 
-## Star History
+## Star history — upstream project
+
+Stars for [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok),
+the upstream project. This fork is not counted here.
 
 <a href="https://star-history.dera.page/#K-Dense-AI/k-dense-byok">
  <picture>

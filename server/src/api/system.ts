@@ -11,7 +11,7 @@ import {
 } from "../config.ts";
 import { getSystemStats } from "../system-stats.ts";
 
-const GITHUB_REPO = "K-Dense-AI/k-dense-byok";
+const GITHUB_REPO = "kgforais1/k-dense-byok-mcp";
 const VERSION_CACHE_TTL_MS = 60 * 60 * 1000; // re-check at most once per hour
 let versionCache: { ts: number; latestVersion: string | null } | null = null;
 

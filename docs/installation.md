@@ -50,8 +50,8 @@ You can run entirely on free local models instead — see [Local models with Oll
 Open a terminal (on a Mac: press `Cmd+Space`, type "Terminal", press Enter; on Windows: press `Win`, type "PowerShell" or "Terminal", press Enter) and run:
 
 ```bash
-git clone https://github.com/K-Dense-AI/k-dense-byok.git
-cd k-dense-byok
+git clone https://github.com/kgforais1/k-dense-byok-mcp.git
+cd k-dense-byok-mcp
 ```
 
 This downloads the project into a folder called `k-dense-byok` and moves you into it.
@@ -135,4 +135,4 @@ The startup script picks up any new packages and skills automatically.
   ```
 
   Keep `localhost` in `NO_PROXY` so Ollama and the app's own services stay direct. On restart the backend log confirms it with `routing outbound HTTP through the configured proxy`. To check whether a 403 is really coming from the provider, call it directly from the same machine — `curl -sS https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTER_API_KEY"`. An error that isn't shaped like the provider's own JSON is coming from something in between.
-- **Something else?** — [Open a GitHub issue](https://github.com/K-Dense-AI/k-dense-byok/issues); we read every one.
+- **Something else?** — [Open a GitHub issue](https://github.com/kgforais1/k-dense-byok-mcp/issues) on this fork. If it reproduces on upstream without this fork's changes, [report it there](https://github.com/K-Dense-AI/k-dense-byok/issues) instead.

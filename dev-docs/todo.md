@@ -166,58 +166,36 @@ shield and four links to K-Dense's own X, LinkedIn, YouTube and Reddit
 accounts. The social four present upstream's channels as this repo's, which the
 fork notice at the top of the README now qualifies rather than resolves.
 
-### Two that are defects, not etiquette — decide with the issue routing
+### Decided 2026-09-12: public fork, installable, not promoted
 
-Found by review of PR #26. Both need a decision about whether this fork is
-meant to be *installed and run* by anyone, or is a private working copy. That
-answer determines both fixes, so decide it once.
+Kevin settled the question these all turned on — this fork is public and
+anyone may install it, but it is not being promoted and carries no support
+commitment. That made every item below a mechanical fix, now done:
 
-- **The install instructions clone upstream.** `README.md:111` and `:120`, and
-  `docs/installation.md:53`, all say
-  `git clone https://github.com/K-Dense-AI/k-dense-byok.git`. Anyone following
-  this fork's own front page installs upstream and never gets the MCP work.
-  If the fork is meant to be used, these must point here; if it is a private
-  copy, they are correct and should stay, and the fork notice should say so
-  plainly. A holding note is in the README now.
-- **The app's update check polls upstream's releases.**
-  `server/src/api/system.ts:14` sets
-  `GITHUB_REPO = "K-Dense-AI/k-dense-byok"` and `:33` fetches
-  `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`. On this fork
-  that compares the running version against *upstream's* latest release, so it
-  can tell a fork user they are out of date and point them at a release that
-  does not contain the fork's changes. Repointing it requires this fork to
-  actually publish releases, which is the same underlying decision.
+- **Install instructions clone this fork.** `README.md`, `docs/installation.md`.
+  Someone following this fork's front page now gets the MCP work.
+- **The update check points here.** `server/src/api/system.ts:14`, and the
+  "update available" link at `web/src/app/page.tsx:867` now opens this fork's
+  releases page. Safe because this fork publishes releases — `v0.9.12`, which
+  matches `server/package.json` — so no false prompt. Had there been none, the
+  `!resp.ok` branch already degrades to "no update".
+- **Launcher failures report here.** `start.mjs:246`, `:417`.
+- **Issue routing split by cause.** Fork and MCP problems here, anything that
+  reproduces on upstream without this fork's changes goes upstream, and "if you
+  cannot tell, open it here" resolves the classification problem. The inherited
+  "We read every one" is gone — that was a promise made on K-Dense's behalf.
 
-  This is one defect with two halves: the check above sets `updateAvailable`,
-  and `web/src/app/page.tsx:867` then renders an "A newer version is
-  available" link pointing at upstream's repository. Fix both together or
-  neither.
+Still open, deliberately:
 
-**Full survey, done 2026-09-12.** Everywhere outside the README that still
-names upstream, so the follow-up does not have to rediscover it:
+- The four social badges and the License shield still show K-Dense's channels.
+  Qualified by the fork notice rather than resolved.
+- `docs/` beyond `installation.md` and `limitations.md` has no fork notice.
+- The Skills 149 count remains unverifiable locally; see the badge note above.
 
-| Location | What it does | Verdict |
-| --- | --- | --- |
-| `server/src/api/system.ts:14`, `:33` | Polls upstream's latest release | Defect — decide with the rest |
-| `web/src/app/page.tsx:867` | "Update available" links to upstream | Defect — same chain as above |
-| `docs/installation.md:53` | `git clone` upstream | Defect — same as README `:111`/`:120` |
-| `start.mjs:246` | Install failure says report at upstream's tracker | Misroutes fork bugs |
-| `start.mjs:417` | Launcher failure, same | Misroutes fork bugs |
-| `docs/installation.md:138` | "we read every one", upstream tracker | Promise made on upstream's behalf |
-| `docs/limitations.md:122` | Same, for Windows defects | Same |
-| `SECURITY.md:48` | Routes *unchanged upstream* bugs upstream | **Correct — leave it** |
+### Issue routing — background to the decision above
 
-Checked and clean: all of `.github/` including every workflow, Dependabot and
-release config; `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `CONTRIBUTING.md`,
-`CHANGELOG.md`; every other file under `docs/`; all tracked source under
-`server/` and `web/` apart from the two rows above; `scripts/`, `env-file.mjs`
-and `package.json`. **No workflow or automation acts on the upstream repo** —
-that was the case worth ruling out, and it is ruled out.
-
-### Issue routing — decide soon
-
-`README.md`'s "Issues, bugs, or feature requests" section sends every reporter
-to upstream's tracker, which is wrong for anything this fork added and rude to
+Before the decision, `README.md`'s issues section sent every reporter
+to upstream's tracker, which was wrong for anything this fork added and rude to
 upstream, who would receive bug reports for code they never wrote.
 
 The likely answer is to split by cause: **report MCP and other fork-specific
@@ -234,8 +212,8 @@ bug:
   one", which this fork's README currently inherits verbatim and should not
   claim on their behalf.
 
-Treat this as the next fork-etiquette task after the README notice, not as
-someday work.
+Resolved by the decision above; kept because the reasoning still applies if the
+routing is revisited.
 
 To check, before calling this done:
 

@@ -120,8 +120,11 @@ model the owner actually runs.
 architectural maximum, and it is the loaded value the request is measured
 against. It was absent from the probe above only because every model read
 `"state": "not-loaded"`. It has since been **verified** by loading one — see
-the divergence evidence in the Ollama section below, where a loaded model
-reported `max_context_length: 128000` alongside `loaded_context_length: 64000`.
+the LM Studio divergence evidence below, under "Both divergences were then
+reproduced deliberately", where loading `allenai/olmocr-2-7b` reported
+`max_context_length: 128000` alongside `loaded_context_length: 64000`. That
+evidence sits inside the Ollama-titled section because the two divergences are
+presented as a pair; the figures above are LM Studio's.
 
 ### Ollama is symmetrical with LM Studio after all — verified 2026-09-11
 

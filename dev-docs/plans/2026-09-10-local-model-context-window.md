@@ -645,8 +645,9 @@ overflow text instead of an empty assistant bubble.
       `allenai/olmocr-2-7b` returned `max_context_length: 128000` with
       `loaded_context_length: 64000`, quoted in the findings file.
 - [x] Both providers are verified, including the loaded-versus-architectural
-      divergence on each — see the findings file. Nothing in Phase 1 is
-      blocked. Re-confirm against the reader's own Ollama version before relying
+      divergence on each — see the findings file. Nothing in the *probe shapes*
+      is blocked; the model-name round trip below is still open and does block
+      Phase 2. Re-confirm against the reader's own Ollama version before relying
       on it: this was checked on 0.33.2 and the field is absent in older
       releases.
 - [ ] Check the model-name round trip before writing any cache code. `/api/tags`
@@ -660,7 +661,18 @@ overflow text instead of an empty assistant bubble.
       verbatim in the findings file. The model-name round trip is the only item left open.
 
 **Exit criteria:** both field names are quoted from live output, not from
-documentation or from this plan's guesses.
+documentation or from this plan's guesses — **and** the model-name round trip
+is resolved. Phase 1 is not done while that box is unchecked, even though the
+other three are.
+
+**This is Phase 2's entry criterion, not a nicety.** The cache key is
+`(providerId, normalizedBaseUrl, bareModelId)`, so if `/api/tags` reports
+`llama3:latest` while `resolveModel` hands the builder `llama3`, every write
+and every lookup use different keys and the cache misses 100% of the time
+while appearing to work. That failure is silent: the probe succeeds, the entry
+is written, and the run still gets the fallback. Settle which form each side
+uses, and normalise in `cacheKey` if they differ, **before** writing
+`local-context.ts`.
 
 ### Phase 2 — Cache and probe
 

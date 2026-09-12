@@ -1,13 +1,17 @@
 # K-Dense BYOK
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Skills](https://img.shields.io/badge/Skills-149-brightgreen.svg)](#what-can-it-do)
-[![Workflows](https://img.shields.io/badge/Workflows-326-blueviolet.svg)](#what-can-it-do)
-[![Databases](https://img.shields.io/badge/Databases-229-orange.svg)](#what-can-it-do)
 [![X](https://img.shields.io/badge/Follow_on_X-%40k__dense__ai-000000?logo=x)](https://x.com/k_dense_ai)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-K--Dense_Inc.-0A66C2?logo=linkedin)](https://www.linkedin.com/company/k-dense-inc)
 [![YouTube](https://img.shields.io/badge/YouTube-K--Dense_Inc.-FF0000?logo=youtube)](https://www.youtube.com/@K-Dense-Inc)
 [![Reddit](https://img.shields.io/badge/Reddit-u%2F--k--dense---FF4500?logo=reddit)](https://www.reddit.com/user/-k-dense-/)
+
+> **This is a fork.** The upstream project is
+> **[K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok)**, and
+> essentially everything described below is their work. This fork adds MCP
+> server support and related changes. The badges, social links, videos and star
+> history on this page all refer to the upstream project and its authors, not to
+> this fork.
 
 > ### 🎥 Webinar recording: **Getting Started with K-Dense BYOK**
 >
@@ -194,7 +198,10 @@ If you run into a problem or have an idea for something new, please [open a GitH
 
 K-Dense BYOK is open source because [K-Dense](https://github.com/K-Dense-AI) believes in giving back to the community that makes this kind of work possible.
 
-## Star History
+## Star history — upstream project
+
+Stars for [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok),
+the upstream project. This fork is not counted here.
 
 <a href="https://star-history.dera.page/#K-Dense-AI/k-dense-byok">
  <picture>

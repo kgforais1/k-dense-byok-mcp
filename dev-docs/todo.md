@@ -135,15 +135,48 @@ CI result on this fork's front page, and a Version badge reading 0.7.3 against
 a `server/package.json` on 0.9.12. Repointing the Tests badge at this repo is
 still an option once the rest is decided.
 
-The eight that remain are a judgement call rather than a defect: one License
-shield, three count shields, and four links to K-Dense's own X, LinkedIn,
-YouTube and Reddit accounts. The social four present upstream's channels as
-this repo's.
+The three count shields — Skills 149, Workflows 326, Databases 229 — are now
+also gone. They were inherited numbers presented as this fork's, with no check
+that they were ever accurate here. **Consider adding them back, counting this
+fork's own content rather than upstream's.** That means finding what generates
+each number, confirming it reads from this repo, and deciding whether the
+counts are worth maintaining at all if they drift as easily as the Version
+badge did.
+
+Five remain, and they are a judgement call rather than a defect: one License
+shield and four links to K-Dense's own X, LinkedIn, YouTube and Reddit
+accounts. The social four present upstream's channels as this repo's, which the
+fork notice at the top of the README now qualifies rather than resolves.
+
+### Issue routing — decide soon
+
+`README.md`'s "Issues, bugs, or feature requests" section sends every reporter
+to upstream's tracker, which is wrong for anything this fork added and rude to
+upstream, who would receive bug reports for code they never wrote.
+
+The likely answer is to split by cause: **report MCP and other fork-specific
+problems here, everything else upstream.** Do not write that until the
+practical questions are settled, because a reporter cannot classify their own
+bug:
+
+- Can a non-technical reporter tell an MCP bug from an upstream one? If not,
+  the rule needs a fallback — probably "if unsure, open it here and we will
+  redirect it".
+- Are this fork's issues even enabled, and is anyone watching them? Routing
+  people to an unwatched tracker is worse than routing them upstream.
+- Does upstream want fork traffic at all? Their README says "We read every
+  one", which this fork's README currently inherits verbatim and should not
+  claim on their behalf.
+
+Treat this as the next fork-etiquette task after the README notice, not as
+someday work.
 
 To check, before calling this done:
 
 - Whether `README.md` and `docs/` state the fork relationship at all, and where
-  a short attribution line belongs.
+  a short attribution line belongs. **Partly done:** the README now opens with
+  a fork notice and the star-history heading names upstream. `docs/` is
+  untouched.
 - Whether the version, skills, workflows and database counts in the badges are
   this fork's numbers or inherited ones that have since drifted.
 - Whether `LICENSE`, `CONTRIBUTING.md` and `SECURITY.md` still route a reporter

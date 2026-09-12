@@ -250,4 +250,37 @@ describe("destroyDoc", () => {
     expect(() => destroyDoc(null)).not.toThrow();
     expect(() => destroyDoc(undefined)).not.toThrow();
   });
+
+  /**
+   * `destroy()` is async in pdfjs 6, so a rejection cannot be caught by a
+   * caller's `try`/`catch` and would surface as an unhandled rejection. The
+   * helper has to absorb it itself.
+   */
+  it("swallows a rejected teardown instead of leaking an unhandled rejection", async () => {
+    const doc = {
+      loadingTask: { destroy: () => Promise.reject(new Error("transport gone")) },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      expect(() => destroyDoc(doc)).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("swallows a teardown that throws synchronously", () => {
+    const doc = {
+      loadingTask: {
+        destroy: () => {
+          throw new Error("already gone");
+        },
+      },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    expect(() => destroyDoc(doc)).not.toThrow();
+  });
 });

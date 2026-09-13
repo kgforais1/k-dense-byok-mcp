@@ -14,6 +14,7 @@ import {
   installMapUpsertPolyfill,
   buildWorkerUrl,
   destroyDoc,
+  destroyLoadingTask,
   MAP_UPSERT_POLYFILL_SRC,
   PdfViewer,
 } from "./pdf-viewer";
@@ -309,6 +310,28 @@ describe("destroyDoc", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+
+  /**
+   * A `getDocument` that rejects before producing a document still owns a
+   * worker, and pdfjs does not terminate it on that path. Nothing wraps it, so
+   * the only handle is the loading task itself.
+   */
+  it("tears down a loading task that never produced a document", async () => {
+    const destroy = vi.fn(() => Promise.resolve());
+    const task = { destroy } as unknown as Parameters<
+      typeof destroyLoadingTask
+    >[0];
+
+    destroyLoadingTask(task);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when there is no loading task", () => {
+    expect(() => destroyLoadingTask(null)).not.toThrow();
+    expect(() => destroyLoadingTask(undefined)).not.toThrow();
   });
 
   it("swallows a teardown that throws synchronously", () => {

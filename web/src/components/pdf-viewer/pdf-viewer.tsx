@@ -52,6 +52,7 @@ import { NotePopover } from "./note-popover";
 type PdfjsModule = typeof import("pdfjs-dist");
 type PdfDoc = import("pdfjs-dist").PDFDocumentProxy;
 type PdfPage = import("pdfjs-dist").PDFPageProxy;
+type PdfLoadingTask = import("pdfjs-dist").PDFDocumentLoadingTask;
 
 let pdfjsPromise: Promise<PdfjsModule> | null = null;
 
@@ -174,21 +175,31 @@ const BASE_SCALE = 1.5;
  * terminate the worker ourselves and say so in the console rather than letting
  * the leak be silent.
  */
-export function destroyDoc(doc: PdfDoc | null | undefined): void {
-  if (!doc) return;
-  const task = doc.loadingTask;
+export function destroyLoadingTask(task: PdfLoadingTask | null | undefined): void {
+  if (!task) return;
 
   const recover = (err: unknown) => {
     // `_worker` is internal, so treat its absence as normal rather than an error.
+    //
+    // Terminating it is only safe because this component never shares a worker:
+    // it sets `GlobalWorkerOptions.workerSrc` and never `workerPort`, so each
+    // document owns its own. If that ever changes, this would terminate a worker
+    // another open document is still using.
     const worker = (task as unknown as { _worker?: { destroy?: () => void } })
       ._worker;
+    let terminated = false;
     try {
-      worker?.destroy?.();
+      if (worker?.destroy) {
+        worker.destroy();
+        terminated = true;
+      }
     } catch {
       /* nothing further to try */
     }
     console.warn(
-      "PDF teardown failed; terminated the worker directly. See destroyDoc.",
+      terminated
+        ? "PDF teardown failed; terminated the worker directly. See destroyLoadingTask."
+        : "PDF teardown failed, and no worker was available to terminate. See destroyLoadingTask.",
       err,
     );
   };
@@ -198,6 +209,14 @@ export function destroyDoc(doc: PdfDoc | null | undefined): void {
   } catch (err) {
     recover(err);
   }
+}
+
+/**
+ * Tears down a loaded document. Thin wrapper over {@link destroyLoadingTask},
+ * since pdfjs 6 hangs teardown off the task rather than the document.
+ */
+export function destroyDoc(doc: PdfDoc | null | undefined): void {
+  destroyLoadingTask(doc?.loadingTask);
 }
 
 export interface PdfSyncHighlight {
@@ -329,6 +348,10 @@ export function PdfViewer({
         }
       },
       (e) => {
+        // The failed load owns a worker that no document will ever wrap, so
+        // nothing else can reach it — pdfjs does not terminate it on this path.
+        // Tear the task down directly, whether or not this effect is cancelled.
+        destroyLoadingTask(task);
         if (!cancelled) {
           // Release a previously-successful doc's transport now rather
           // than leaving it dangling until unmount.
@@ -348,6 +371,8 @@ export function PdfViewer({
             destroyDoc(loaded);
           }
         },
+        // A rejected load is torn down by the handler above, which runs
+        // regardless of cancellation, so there is nothing left to do here.
         () => {},
       );
     };

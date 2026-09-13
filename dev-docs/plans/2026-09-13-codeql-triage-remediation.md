@@ -46,8 +46,8 @@ by alert number — the raw paginated output double-counts).
 `js/path-injection` by file: `api/sandbox.ts` 49,
 `pdf-annotations-store.ts` 21, `agent/skills.ts` 20,
 `agent/skills-install.ts` 17, `agent/agent-files.ts` 16,
-`agent/skills-sync.ts` 12, `modal/store.ts` 10, `projects.ts` 9,
-`sandbox-seed.ts` 7, `agent/skills-fetch.ts` 7, `latex/compile.ts` 6,
+`agent/skills-sync.ts` 12, `modal/store.ts` 9, `projects.ts` 8,
+`sandbox-seed.ts` 7, `agent/skills-fetch.ts` 6, `latex/compile.ts` 6,
 `cost/ledger.ts` 4, `provenance/store.ts` 2, `agent/notebook-store.ts` 2,
 plus singletons (`sandbox-fs.ts:60` self-hit, `api/sessions.ts` is the XSS
 one, `agent/session-registry.ts`, `agent/notebook-zip.ts`,
@@ -129,10 +129,10 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 
 ### Phase 1 — Cheap real fixes (one PR)
 
-- [ ] `insecure-randomness` ×7: replace `Math.random` tab/annotation ids
-  with `crypto.randomUUID()` (or `getRandomValues`) at `page.tsx:83` (and
-  `pdf-annotations.ts:222` if it feeds a flagged flow). Re-run CodeQL,
-  expect −7.
+- [ ] `insecure-randomness` ×7: replace the `Math.random` fallbacks with
+  `crypto.randomUUID()` (or `getRandomValues`) at `web/src/app/page.tsx:83`
+  (`makeTabId`) and unconditionally at `web/src/lib/pdf-annotations.ts:222`
+  (`newAnnotationId`, same pattern). Re-run CodeQL, expect −7.
 - [ ] `polynomial-redos` ×2: bound the input before the slug replace
   (`slice` first, then replace, then trim/slice to final length) in
   `mintProjectId` and `cacheKeyForSource`. Unit test with a long `-`-run.
@@ -146,9 +146,10 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 
 - [ ] Sample-verify ~10 alerts across the top files on current `main`
   (include at least one each from `sandbox.ts`, `skills.ts`,
-  `skills-install.ts`, `agent-files.ts`, `skills-sync.ts`,
-  `modal/store.ts`, `projects.ts`, `latex/compile.ts`, `cost/ledger.ts`,
-  `provenance/store.ts`). Record source→sink→barrier per alert. Any sink
+  `skills-install.ts` — explicitly `skills-install.ts:464`, the indirect
+  `findSkillDir → null → 404` idiom CodeQL cannot model — `agent-files.ts`,
+  `skills-sync.ts`, `modal/store.ts`, `projects.ts`, `latex/compile.ts`,
+  `cost/ledger.ts`, `provenance/store.ts`). Record source→sink→barrier per alert. Any sink
   with no barrier leaves this bucket immediately as a real finding.
 - [ ] Where the shape allows, move regex-guarded sinks onto `containedIn`
   / `safePath` (converts unmodellable indirect barriers into direct ones).

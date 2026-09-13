@@ -154,25 +154,47 @@ function loadPdfjs(): Promise<PdfjsModule> {
 const BASE_SCALE = 1.5;
 
 /**
- * Tears down a loaded document and its worker transport.
+ * Tears down a loaded document, its transport, and its worker thread.
  *
  * pdfjs 6 removed `PDFDocumentProxy.destroy()`, which in 5.x was a one-line
  * delegation to the owning loading task. Going through `loadingTask` directly
  * is the same teardown, and keeps every call site here on one spelling.
  *
- * Teardown is best-effort and swallows its own failures, in both directions:
- * `destroy()` is async, so a rejection (a transport already gone, say) would
- * otherwise escape a caller's `try`/`catch` as an unhandled rejection. There is
- * nothing useful to do about a document that failed to close, so callers can
- * treat this as fire-and-forget.
+ * A rejection here is *not* harmless, which is the trap. `PDFDocumentLoadingTask
+ * .destroy()` awaits the transport and then terminates the worker, and it
+ * rethrows on the way — so if the transport rejects, the `_worker.destroy()`
+ * that follows never runs, and that call is the only path to `Worker.terminate()`
+ * in the library. Swallowing the rejection would leave a live worker thread per
+ * failure, growing across a long session of opening PDFs, with nothing visible
+ * in the UI.
+ *
+ * So: absorb the failure, because a caller has nothing useful to do with it, but
+ * terminate the worker ourselves and say so in the console rather than letting
+ * the leak be silent.
  */
 export function destroyDoc(doc: PdfDoc | null | undefined): void {
+  if (!doc) return;
+  const task = doc.loadingTask;
+
+  const recover = (err: unknown) => {
+    // `_worker` is internal, so treat its absence as normal rather than an error.
+    const worker = (task as unknown as { _worker?: { destroy?: () => void } })
+      ._worker;
+    try {
+      worker?.destroy?.();
+    } catch {
+      /* nothing further to try */
+    }
+    console.warn(
+      "PDF teardown failed; terminated the worker directly. See destroyDoc.",
+      err,
+    );
+  };
+
   try {
-    doc?.loadingTask.destroy().catch(() => {
-      /* already gone */
-    });
-  } catch {
-    /* already gone */
+    task.destroy().catch(recover);
+  } catch (err) {
+    recover(err);
   }
 }
 

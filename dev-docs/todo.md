@@ -55,7 +55,10 @@ that upgrade taught us, both worth carrying into the rest of this triage:
   covered, so the next major bump fails a test and asks for the pass to be
   redone before the number moves. Re-run it for a major bump, or for any change
   to `buildWorkerUrl` or the text-layer construction, since those are the parts
-  only a browser exercises. And `pdfjs.renderTextLayer`, the
+  only a browser exercises. A major pin alone is not enough — a 6.x minor can
+  change worker loading or the `TextLayer` signature without moving it — so
+  `pdfjs-dist` is pinned exactly, and every bump arrives as a PR to review
+  rather than floating in on a lockfile refresh. And `pdfjs.renderTextLayer`, the
   fallback at `web/src/components/pdf-viewer/pdf-viewer.tsx`, no longer exists
   in v6 — it is dead code reached through an `as unknown as` cast, so its
   removal was silent. Worth deleting the fallback, and worth asking what else

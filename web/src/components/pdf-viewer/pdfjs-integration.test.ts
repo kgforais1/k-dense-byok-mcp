@@ -61,6 +61,11 @@ async function openFixture(pdfjs: Awaited<ReturnType<typeof loadPdfjs>>) {
  *
  * When a major bump makes this fail, do the browser pass again before raising
  * the number. `dev-docs/todo.md` §2 records what the pass covers.
+ *
+ * This alone is not a sufficient trigger: a 6.x minor could change worker
+ * loading or the `TextLayer` signature without moving the major. That is why
+ * `pdfjs-dist` is pinned exactly in `web/package.json` — every bump arrives as
+ * a reviewed PR rather than floating in on a lockfile refresh.
  */
 const BROWSER_VERIFIED_MAJOR = 6;
 

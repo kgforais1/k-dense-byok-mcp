@@ -272,6 +272,45 @@ describe("destroyDoc", () => {
     }
   });
 
+  /**
+   * The reason a rejection cannot simply be swallowed: pdfjs rethrows from
+   * `loadingTask.destroy()` before it reaches `_worker.destroy()`, and that call
+   * is the library's only route to `Worker.terminate()`. Without this, every
+   * failed teardown leaves a worker thread running.
+   */
+  it("terminates the worker itself when teardown rejects", async () => {
+    const workerDestroy = vi.fn();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const doc = {
+      loadingTask: {
+        destroy: () => Promise.reject(new Error("transport gone")),
+        _worker: { destroy: workerDestroy },
+      },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    destroyDoc(doc);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(workerDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("copes with a rejected teardown that has no worker to terminate", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const doc = {
+      loadingTask: { destroy: () => Promise.reject(new Error("gone")) },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      expect(() => destroyDoc(doc)).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("swallows a teardown that throws synchronously", () => {
     const doc = {
       loadingTask: {

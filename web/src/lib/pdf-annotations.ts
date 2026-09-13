@@ -215,6 +215,8 @@ export function subscribeAnnotations(
 // Helpers
 // ---------------------------------------------------------------------------
 
+let annotationFallbackCounter = 0;
+
 export function newAnnotationId(): string {
   const c = typeof crypto !== "undefined" ? crypto : undefined;
   if (c && typeof c.randomUUID === "function") {
@@ -227,7 +229,10 @@ export function newAnnotationId(): string {
       .slice(0, 10);
     return `ann-${Date.now().toString(36)}-${rand}`;
   }
-  return `ann-${Date.now().toString(36)}-${Date.now().toString(36).slice(-8)}`;
+  // No Web Crypto: timestamp alone collides within one millisecond, so mix
+  // in a monotonic counter (same shape as `makeTabId`'s fallback).
+  annotationFallbackCounter += 1;
+  return `ann-${Date.now().toString(36)}-${annotationFallbackCounter.toString(36)}`;
 }
 
 export const USER_AUTHOR: Author = {

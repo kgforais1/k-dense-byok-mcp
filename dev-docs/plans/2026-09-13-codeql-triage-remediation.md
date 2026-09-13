@@ -1,13 +1,13 @@
 ---
 title: "CodeQL triage and remediation — 195 open alerts on main"
-status: proposed
+status: accepted
 created: 2026-09-13
 branch: codeql-triage-plan
 ---
 
 # CodeQL Triage and Remediation Implementation Plan
 
-**Status:** Proposed
+**Status:** Accepted — Phase 1 implemented on this branch (PR #28).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -60,7 +60,7 @@ The 12 non-path-injection alerts, each read on current `main`:
 | `insecure-randomness` ×7 | sources `web/src/app/page.tsx:83` (`makeTabId`) + `web/src/lib/pdf-annotations.ts:222` (`newAnnotationId`); sinks `file-preview-panel.tsx` ×4, `chat-tabs-bar.tsx` ×2, `page.tsx` ×1 | **False positive class.** Client tab/draft ids, not tokens/nonces. Fix cheaply anyway (two source edits clear all 7) |
 | `polynomial-redos` ×2 | `agent/skills-fetch.ts:83` (slug), `projects.ts:103` (`mintProjectId`) — `.replace(/[^a-z0-9]+/g, "-")` runs on the full input, `.slice(0, 32)` after | **Real but low.** Unbounded input into a repeated-class regex. Cap input length before the replace |
 | `resource-exhaustion` ×1 | `modal/store.ts:289` `Buffer.alloc(available)` | **Likely dismiss.** `available ≤ safeLimit ≤ MAX_LOG_READ_BYTES` (1 MiB; constant at `store.ts:13`, `safeLimit` at `store.ts:280`), floored at 0. Verify no path bypasses `safeLimit`, then dismiss with clamp evidence |
-| `incomplete-sanitization` ×1 | `api/credentials.ts:133` — escapes `"` but not `\` | **Real (low).** A value ending in `\` breaks the quoting; the next line can inject a `.env` key. Escape backslashes first + test |
+| `incomplete-sanitization` ×1 | `api/credentials.ts:133` — escapes `"` but not `\` | **Dismiss (false positive for this sink).** Re-triaged 2026-09-13 after Sourcery/Greptile flagged the first fix: the sole reader of this file is `applyEnvFile` (`env-file.mjs`), which strips quotes via `/^"([^"]*)"/` and performs *no unescaping* — a `\` is literal, so a trailing backslash cannot swallow the closing quote. Escaping `\` in the writer (the first attempt) *broke* the round-trip by doubling backslashes on reload; reverted, with a true writer→loader round-trip test locking the contract. Nothing bash-sources `.env` anymore (only `start.mjs` + `server/src/env.ts` via `applyEnvFile`). Pre-existing limitation, out of scope: embedded `"` truncates in the parser before and after; credential values never contain quotes in practice |
 | `reflected-xss` ×1 | `api/sessions.ts:809` — export returns `body` built from session file + params (`:801-802`), served as `text/markdown` / `text/x-shellscript` with `Content-Disposition: attachment` | **Likely false positive / by-design export.** A file download, not inline HTML. Verify no inline-render path, consider `X-Content-Type-Options: nosniff`, then dismiss with reason or add the header |
 
 Path-injection barrier inventory (superset of the 09-10 plan — the `isWithin`
@@ -131,12 +131,16 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 
 Done 2026-09-13 on `codeql-triage-plan` (commit below): `makeTabId` moved to
 `web/src/lib/tab-ids.ts` (crypto-first, no `Math.random`), same shape for
-`newAnnotationId`; slug inputs capped before the replace (`projects.ts`,
-`skills-fetch.ts`); `persistEnv` escapes `\` before `"`. Tests:
-`tab-ids.test.ts`, `codeql-phase1.test.ts` (redos timing + cap equivalence,
-`.env` round-trip); existing `pdf-annotations.test.ts` uniqueness still
-green. `npm run verify -- all` green, Aikido clean, `Math.random` gone from
-first-party `web/src`/`server/src`.
+`newAnnotationId` (monotonic-counter final fallback — Sourcery caught a
+same-millisecond collision in the first cut); slug inputs capped before the
+replace (`projects.ts`, `skills-fetch.ts`); `persistEnv` left unescaped for
+`\` after bot review proved the paired parser (`applyEnvFile`) performs no
+unescaping, so escaping would corrupt on reload — re-triaged to dismiss with
+a writer→loader round-trip test locking the contract. Tests:
+`tab-ids.test.ts`, `codeql-phase1.test.ts` (deterministic cap-equivalence,
+`.env` round-trip via the real loader); existing `pdf-annotations.test.ts`
+uniqueness still green. `npm run verify -- all` green, Aikido clean,
+`Math.random` gone from first-party `web/src`/`server/src`.
 
 - [x] `insecure-randomness` ×7: replace the `Math.random` fallbacks with
   `crypto.randomUUID()` (or `getRandomValues`) at `web/src/app/page.tsx:83`
@@ -146,12 +150,16 @@ first-party `web/src`/`server/src`.
   expect −7.
 - [x] `polynomial-redos` ×2: bound the input before the slug replace
   (`slice` first, then replace, then trim/slice to final length) in
-  `mintProjectId` and `cacheKeyForSource`. Unit test with a long `-`-run.
-- [x] `incomplete-sanitization` ×1: escape `\` before `"` in `persistEnv`;
-  add a round-trip test (value ending in backslash + quote).
+  `mintProjectId` and `cacheKeyForSource`. Deterministic cap-equivalence test
+  (no wall-clock assertions — those flake on busy CI).
+- [x] `incomplete-sanitization` ×1: re-triaged to **dismiss** — false positive
+  for this sink (see table). Writer→loader round-trip test added instead, so
+  the contract cannot regress silently.
 - [x] `npm run verify -- all` green on both packages.
 
-**Exit criteria:** 10 alerts gone by code change; CodeQL shows 185.
+**Exit criteria:** 9 alerts gone by code change, 1 re-triaged to dismiss;
+CodeQL shows 185 once re-scanned (9 fixed; the sanitization dismissal lands
+with the per-alert dismissal pass in Phase 2).
 
 ### Phase 2 — Path-injection: verify, then model (one PR, possibly two)
 - [ ] Sample-verify these 10 alerts on current `main` (numbers are GitHub

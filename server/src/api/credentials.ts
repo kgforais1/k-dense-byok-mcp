@@ -131,11 +131,13 @@ export function persistEnv(name: string, value: string | null): void {
   lines = lines.filter((l) => !isAssignment(l, name));
   if (value !== null) {
     const needsQuote = /[\s#"']/.test(value);
-    // Escape backslashes first so a trailing `\` cannot swallow the
-    // closing quote (CodeQL `js/incomplete-sanitization`).
-    const rendered = needsQuote
-      ? `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
-      : value;
+    // NOTE: no backslash escaping here. The sole reader of this file is
+    // `applyEnvFile` (env-file.mjs), which strips the surrounding quotes
+    // with `/^"([^"]*)"/` and performs no unescaping — a `\` is a literal
+    // character, so a trailing backslash cannot swallow the closing quote.
+    // Doubling backslashes here would corrupt the value on reload (the
+    // parser would return them doubled). See the plan's re-triage note.
+    const rendered = needsQuote ? `"${value.replace(/"/g, '\\"')}"` : value;
     // Keep a trailing newline tidy: append before any trailing blank lines.
     while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
     lines.push(`${name}=${rendered}`);

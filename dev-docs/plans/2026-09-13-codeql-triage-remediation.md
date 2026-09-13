@@ -158,7 +158,7 @@ uniqueness still green. `npm run verify -- all` green, Aikido clean,
 - [x] `npm run verify -- all` green on both packages.
 
 **Exit criteria:** 9 alerts gone by code change, 1 re-triaged to dismiss;
-CodeQL shows 185 once re-scanned (9 fixed; the sanitization dismissal lands
+CodeQL shows 186 once re-scanned (9 fixed; the sanitization dismissal lands
 with the per-alert dismissal pass in Phase 2).
 
 ### Phase 2 — Path-injection: verify, then model (one PR, possibly two)

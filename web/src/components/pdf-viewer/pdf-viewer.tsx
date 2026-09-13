@@ -52,13 +52,16 @@ import { NotePopover } from "./note-popover";
 type PdfjsModule = typeof import("pdfjs-dist");
 type PdfDoc = import("pdfjs-dist").PDFDocumentProxy;
 type PdfPage = import("pdfjs-dist").PDFPageProxy;
+type PdfLoadingTask = import("pdfjs-dist").PDFDocumentLoadingTask;
 
 let pdfjsPromise: Promise<PdfjsModule> | null = null;
 
 /**
  * Installs the TC39 stage-2 Map upsert proposal polyfills (`getOrInsertComputed`
  * and `getOrInsert`) on `Map.prototype` if not natively supported.
- * Required before loading `pdfjs-dist` 5.6+ to avoid runtime errors at document open time.
+ * Required before loading `pdfjs-dist` to avoid runtime errors at document open
+ * time. Still needed on 6.x: the build calls `getOrInsertComputed` in both the
+ * main bundle and the worker.
  */
 export function installMapUpsertPolyfill(): void {
   type UpsertMap = Map<unknown, unknown> & {
@@ -152,6 +155,69 @@ function loadPdfjs(): Promise<PdfjsModule> {
 // Rendering scale — multiplied by zoom. 1.5 gives us a crisp canvas at
 // 100% zoom; we set devicePixelRatio separately on the canvas.
 const BASE_SCALE = 1.5;
+
+/**
+ * Tears down a loaded document, its transport, and its worker thread.
+ *
+ * pdfjs 6 removed `PDFDocumentProxy.destroy()`, which in 5.x was a one-line
+ * delegation to the owning loading task. Going through `loadingTask` directly
+ * is the same teardown, and keeps every call site here on one spelling.
+ *
+ * A rejection here is *not* harmless, which is the trap. `PDFDocumentLoadingTask
+ * .destroy()` awaits the transport and then terminates the worker, and it
+ * rethrows on the way — so if the transport rejects, the `_worker.destroy()`
+ * that follows never runs, and that call is the only path to `Worker.terminate()`
+ * in the library. Swallowing the rejection would leave a live worker thread per
+ * failure, growing across a long session of opening PDFs, with nothing visible
+ * in the UI.
+ *
+ * So: absorb the failure, because a caller has nothing useful to do with it, but
+ * terminate the worker ourselves and say so in the console rather than letting
+ * the leak be silent.
+ */
+export function destroyLoadingTask(task: PdfLoadingTask | null | undefined): void {
+  if (!task) return;
+
+  const recover = (err: unknown) => {
+    // `_worker` is internal, so treat its absence as normal rather than an error.
+    //
+    // Terminating it is only safe because this component never shares a worker:
+    // it sets `GlobalWorkerOptions.workerSrc` and never `workerPort`, so each
+    // document owns its own. If that ever changes, this would terminate a worker
+    // another open document is still using.
+    const worker = (task as unknown as { _worker?: { destroy?: () => void } })
+      ._worker;
+    let terminated = false;
+    try {
+      if (worker?.destroy) {
+        worker.destroy();
+        terminated = true;
+      }
+    } catch {
+      /* nothing further to try */
+    }
+    console.warn(
+      terminated
+        ? "PDF teardown failed; terminated the worker directly. See destroyLoadingTask."
+        : "PDF teardown failed, and no worker was available to terminate. See destroyLoadingTask.",
+      err,
+    );
+  };
+
+  try {
+    task.destroy().catch(recover);
+  } catch (err) {
+    recover(err);
+  }
+}
+
+/**
+ * Tears down a loaded document. Thin wrapper over {@link destroyLoadingTask},
+ * since pdfjs 6 hangs teardown off the task rather than the document.
+ */
+export function destroyDoc(doc: PdfDoc | null | undefined): void {
+  destroyLoadingTask(doc?.loadingTask);
+}
 
 export interface PdfSyncHighlight {
   page: number;
@@ -261,7 +327,7 @@ export function PdfViewer({
     task.promise.then(
       (loaded) => {
         if (cancelled) {
-          loaded.destroy();
+          destroyDoc(loaded);
           return;
         }
         const prev = docRef.current;
@@ -271,7 +337,7 @@ export function PdfViewer({
         setDoc(loaded);
         setNumPages(loaded.numPages);
         if (prev && prev !== loaded) {
-          try { prev.destroy(); } catch { /* already gone */ }
+          destroyDoc(prev);
         }
         if (savedScroll !== null) {
           requestAnimationFrame(() => {
@@ -282,10 +348,14 @@ export function PdfViewer({
         }
       },
       (e) => {
+        // The failed load owns a worker that no document will ever wrap, so
+        // nothing else can reach it — pdfjs does not terminate it on this path.
+        // Tear the task down directly, whether or not this effect is cancelled.
+        destroyLoadingTask(task);
         if (!cancelled) {
           // Release a previously-successful doc's transport now rather
           // than leaving it dangling until unmount.
-          try { docRef.current?.destroy(); } catch { /* ignore */ }
+          destroyDoc(docRef.current);
           docRef.current = null;
           setError(e?.message ?? "Failed to load PDF");
         }
@@ -298,9 +368,11 @@ export function PdfViewer({
       task.promise.then(
         (loaded) => {
           if (loaded !== docRef.current) {
-            try { loaded.destroy(); } catch { /* ignore */ }
+            destroyDoc(loaded);
           }
         },
+        // A rejected load is torn down by the handler above, which runs
+        // regardless of cancellation, so there is nothing left to do here.
         () => {},
       );
     };
@@ -308,7 +380,7 @@ export function PdfViewer({
 
   useEffect(
     () => () => {
-      try { docRef.current?.destroy(); } catch { /* ignore */ }
+      destroyDoc(docRef.current);
       docRef.current = null;
     },
     [],
@@ -997,8 +1069,11 @@ function PageView({
         return;
       }
 
-      // Build the text layer. pdfjs 5.x exposes `TextLayer` from the
-      // top-level module; fall back to the classic API when unavailable.
+      // Build the text layer. `TextLayer` comes from the top-level module. The
+      // classic `renderTextLayer` fallback that used to sit here was removed in
+      // pdfjs 6, so it was dead code that could never run; `pdfjs-integration
+      // .test.ts` asserts `TextLayer` is still exported, since this cast would
+      // otherwise hide its removal behind pages with no selectable text.
       textLayer.innerHTML = "";
       textLayer.style.width = `${viewport.width}px`;
       textLayer.style.height = `${viewport.height}px`;
@@ -1019,25 +1094,6 @@ function PageView({
             viewport,
           });
           await layer.render();
-        } else {
-          // Classic path on older builds
-          const render = (pdfjs as unknown as {
-            renderTextLayer?: (opts: {
-              textContent: unknown;
-              container: HTMLElement;
-              viewport: unknown;
-              textDivs: HTMLElement[];
-            }) => { promise: Promise<void> };
-          }).renderTextLayer;
-          if (render) {
-            const task = render({
-              textContent,
-              container: textLayer,
-              viewport,
-              textDivs: [],
-            });
-            await task.promise;
-          }
         }
       } catch {
         // text layer is best-effort

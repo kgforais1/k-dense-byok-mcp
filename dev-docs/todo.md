@@ -39,6 +39,37 @@ Triage snapshot (2026-09-06 — refresh from the GitHub security tabs when worki
 - Dependabot highs to prioritize: `pdfjs-dist` (arbitrary JS via malicious PDF — directly relevant to the PDF preview/annotation surface), `postcss` path-traversal/file-read (web build chain), `sharp`/libvips CVEs, `lodash-es` template injection, `adm-zip` 4GB allocation (notebook export zips via adm-zip), `find-my-way` HTTP2 DDoS (Fastify dep), `flatted` prototype pollution, `ip-address` leading-zero octet decoding (server + web; SSRF/trust-boundary angle given backend outbound fetches), `browserslist` stats crash. The bulk of the count is `mermaid` (9×) and `postcss` (4×) in `web/`.
 - CodeQL: 195 of 207 are `js/path-injection`, spread across server-side filesystem path handling — largest single file `server/src/api/sandbox.ts` (49); also annotation sidecars, skills install/sync, agent files, Modal store, and project/ledger paths — triage true vs false positives before bulk action (the sandbox API legitimately resolves user-supplied paths). Remaining: 7× `js/insecure-randomness`, 2× polynomial ReDoS, 1× resource-exhaustion, 1× incomplete-sanitization, 1× reflected-XSS.
 
+Done 2026-09-12: `pdfjs-dist` (PR #27), bumped 5.7.284 -> 6.3.289. Two things
+that upgrade taught us, both worth carrying into the rest of this triage:
+
+- **A major bump can pass a green suite and still be broken.** pdfjs 6 removed
+  `PDFDocumentProxy.destroy()`, and every viewer test mocked the library, so
+  nothing failed. `web/src/components/pdf-viewer/pdfjs-integration.test.ts` now
+  loads the real module against a 592-byte PDF fixture and asserts the API
+  facts the viewer depends on. Prefer that shape for any dependency whose
+  surface we consume directly.
+- **Two gaps remain on the PDF viewer specifically.** Node cannot rasterise a
+  canvas or build the DOM text layer, so those are still unverified by CI; they
+  were checked by hand in a browser for 6.x. That manual pass is not a one-off
+  tick: `BROWSER_VERIFIED_MAJOR` in the integration test pins the major it
+  covered, so the next major bump fails a test and asks for the pass to be
+  redone before the number moves. Re-run it for a major bump, or for any change
+  to `buildWorkerUrl` or the text-layer construction, since those are the parts
+  only a browser exercises. A major pin alone is not enough — a 6.x minor can
+  change worker loading or the `TextLayer` signature without moving it — so
+  `pdfjs-dist` is pinned exactly, and every bump arrives as a PR to review
+  rather than floating in on a lockfile refresh.
+- **Decide whether to enforce the Node floor.** The manifests now declare
+  `>=22.13.0`, but there is no `.npmrc` and `engine-strict` is off, so that is
+  advice rather than a gate: npm warns `EBADENGINE` and installs anyway. Adding
+  `engine-strict=true` would make it real, at the cost of hard-failing installs
+  that work today. Worth deciding deliberately rather than leaving the manifest
+  implying an enforcement that does not exist. And `pdfjs.renderTextLayer`, the
+  fallback at `web/src/components/pdf-viewer/pdf-viewer.tsx`, no longer exists
+  in v6 — it is dead code reached through an `as unknown as` cast, so its
+  removal was silent. Worth deleting the fallback, and worth asking what else
+  we reach for through a cast.
+
 Ideas:
 
 - Review Dependabot alerts: https://github.com/kgforais1/k-dense-byok-mcp/security/dependabot

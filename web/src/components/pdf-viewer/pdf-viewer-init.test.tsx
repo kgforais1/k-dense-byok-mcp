@@ -13,6 +13,8 @@ import React from "react";
 import {
   installMapUpsertPolyfill,
   buildWorkerUrl,
+  destroyDoc,
+  destroyLoadingTask,
   MAP_UPSERT_POLYFILL_SRC,
   PdfViewer,
 } from "./pdf-viewer";
@@ -225,5 +227,122 @@ describe("pdf-viewer initialization and helpers", () => {
 
     const observerDefault = new window.IntersectionObserver(() => {});
     expect(observerDefault.thresholds).toEqual([0]);
+  });
+});
+
+describe("destroyDoc", () => {
+  /**
+   * pdfjs 6 removed `PDFDocumentProxy.destroy()`. Every teardown path in the
+   * viewer now goes through the loading task, and that is a type-level change
+   * a mocked document would happily hide, so assert the delegation directly.
+   */
+  it("tears the document down through its loading task", () => {
+    const destroy = vi.fn();
+    const doc = { loadingTask: { destroy } } as unknown as Parameters<
+      typeof destroyDoc
+    >[0];
+
+    destroyDoc(doc);
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when there is no document", () => {
+    expect(() => destroyDoc(null)).not.toThrow();
+    expect(() => destroyDoc(undefined)).not.toThrow();
+  });
+
+  /**
+   * `destroy()` is async in pdfjs 6, so a rejection cannot be caught by a
+   * caller's `try`/`catch` and would surface as an unhandled rejection. The
+   * helper has to absorb it itself.
+   */
+  it("swallows a rejected teardown instead of leaking an unhandled rejection", async () => {
+    const doc = {
+      loadingTask: { destroy: () => Promise.reject(new Error("transport gone")) },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      expect(() => destroyDoc(doc)).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  /**
+   * The reason a rejection cannot simply be swallowed: pdfjs rethrows from
+   * `loadingTask.destroy()` before it reaches `_worker.destroy()`, and that call
+   * is the library's only route to `Worker.terminate()`. Without this, every
+   * failed teardown leaves a worker thread running.
+   */
+  it("terminates the worker itself when teardown rejects", async () => {
+    const workerDestroy = vi.fn();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const doc = {
+      loadingTask: {
+        destroy: () => Promise.reject(new Error("transport gone")),
+        _worker: { destroy: workerDestroy },
+      },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    destroyDoc(doc);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(workerDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("copes with a rejected teardown that has no worker to terminate", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const doc = {
+      loadingTask: { destroy: () => Promise.reject(new Error("gone")) },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      expect(() => destroyDoc(doc)).not.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  /**
+   * A `getDocument` that rejects before producing a document still owns a
+   * worker, and pdfjs does not terminate it on that path. Nothing wraps it, so
+   * the only handle is the loading task itself.
+   */
+  it("tears down a loading task that never produced a document", async () => {
+    const destroy = vi.fn(() => Promise.resolve());
+    const task = { destroy } as unknown as Parameters<
+      typeof destroyLoadingTask
+    >[0];
+
+    destroyLoadingTask(task);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when there is no loading task", () => {
+    expect(() => destroyLoadingTask(null)).not.toThrow();
+    expect(() => destroyLoadingTask(undefined)).not.toThrow();
+  });
+
+  it("swallows a teardown that throws synchronously", () => {
+    const doc = {
+      loadingTask: {
+        destroy: () => {
+          throw new Error("already gone");
+        },
+      },
+    } as unknown as Parameters<typeof destroyDoc>[0];
+
+    expect(() => destroyDoc(doc)).not.toThrow();
   });
 });

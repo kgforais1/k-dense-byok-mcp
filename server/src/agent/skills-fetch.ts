@@ -79,8 +79,11 @@ export function cacheKeyForSource(source: string, ref?: string): string {
     .digest("hex")
     .slice(0, 16);
   // A readable prefix makes the cache dir diagnosable by eye.
+  // Cap before the slug regex so an unbounded source cannot feed a
+  // repeated-class pattern (CodeQL `js/polynomial-redos`).
   const slug =
     source
+      .slice(0, 256)
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")

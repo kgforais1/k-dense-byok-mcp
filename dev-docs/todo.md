@@ -32,12 +32,14 @@ Still open:
 
 ## 2. Code scanning, security alerts, and Dependabot
 
-Triage and resolve the security findings GitHub reports on the fork — currently 41 open Dependabot alerts (11 high, 25 moderate, 5 low as of 2026-09-06; down from ~140 in the 2026-09-02 snapshot — see git history for this file) plus 207 open CodeQL code-scanning alerts (196 error, 11 warning — dominated by 195× `js/path-injection`). The branch ruleset (`Rules1`, active on `main`) gates merges on CodeQL `high_or_higher` / errors, so error-level findings can block PRs.
+Triage and resolve the security findings GitHub reports on the fork — currently 0 open Dependabot alerts (as of 2026-09-13; was 41 on 2026-09-06, ~140 on 2026-09-02 — see git history for this file) plus 195 open CodeQL code-scanning alerts (184 error, 11 warning — dominated by 183× `js/path-injection`). The branch ruleset (`Rules1`, active on `main`) gates merges on CodeQL `high_or_higher` / errors, so error-level findings can block PRs.
 
-Triage snapshot (2026-09-06 — refresh from the GitHub security tabs when working this item):
+Refreshed 2026-09-13 on `main` at `6ad96d1` (PR #27). Full triage and remediation plan: [CodeQL triage and remediation](plans/2026-09-13-codeql-triage-remediation.md).
+
+Triage snapshot (2026-09-06 — historical; counts refreshed above):
 
 - Dependabot highs to prioritize: `pdfjs-dist` (arbitrary JS via malicious PDF — directly relevant to the PDF preview/annotation surface), `postcss` path-traversal/file-read (web build chain), `sharp`/libvips CVEs, `lodash-es` template injection, `adm-zip` 4GB allocation (notebook export zips via adm-zip), `find-my-way` HTTP2 DDoS (Fastify dep), `flatted` prototype pollution, `ip-address` leading-zero octet decoding (server + web; SSRF/trust-boundary angle given backend outbound fetches), `browserslist` stats crash. The bulk of the count is `mermaid` (9×) and `postcss` (4×) in `web/`.
-- CodeQL: 195 of 207 are `js/path-injection`, spread across server-side filesystem path handling — largest single file `server/src/api/sandbox.ts` (49); also annotation sidecars, skills install/sync, agent files, Modal store, and project/ledger paths — triage true vs false positives before bulk action (the sandbox API legitimately resolves user-supplied paths). Remaining: 7× `js/insecure-randomness`, 2× polynomial ReDoS, 1× resource-exhaustion, 1× incomplete-sanitization, 1× reflected-XSS.
+- CodeQL: 183 of 195 are `js/path-injection`, spread across server-side filesystem path handling — largest single file `server/src/api/sandbox.ts` (49); also annotation sidecars (21), skills install/sync (20/12), agent files (16), Modal store (9), and project/ledger paths — triage true vs false positives before bulk action (the sandbox API legitimately resolves user-supplied paths). Remaining: 7× `js/insecure-randomness`, 2× polynomial ReDoS, 1× resource-exhaustion, 1× incomplete-sanitization, 1× reflected-XSS. Per-alert file/line table measured 2026-09-13 is in the [triage plan](plans/2026-09-13-codeql-triage-remediation.md#what-is-actually-there).
 
 Done 2026-09-12: `pdfjs-dist` (PR #27), bumped 5.7.284 -> 6.3.289. Two things
 that upgrade taught us, both worth carrying into the rest of this triage:

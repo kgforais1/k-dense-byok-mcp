@@ -215,11 +215,24 @@ export function subscribeAnnotations(
 // Helpers
 // ---------------------------------------------------------------------------
 
+let annotationFallbackCounter = 0;
+
 export function newAnnotationId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
+  const c = typeof crypto !== "undefined" ? crypto : undefined;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID();
   }
-  return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  if (c && typeof c.getRandomValues === "function") {
+    const bytes = c.getRandomValues(new Uint8Array(8));
+    const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, 10);
+    return `ann-${Date.now().toString(36)}-${rand}`;
+  }
+  // No Web Crypto: timestamp alone collides within one millisecond, so mix
+  // in a monotonic counter (same shape as `makeTabId`'s fallback).
+  annotationFallbackCounter += 1;
+  return `ann-${Date.now().toString(36)}-${annotationFallbackCounter.toString(36)}`;
 }
 
 export const USER_AUTHOR: Author = {

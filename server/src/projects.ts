@@ -99,8 +99,15 @@ function validateId(projectId: string): void {
   }
 }
 
-function mintProjectId(name: string): string {
+/** Exported for unit tests of the input cap (CodeQL `js/polynomial-redos`).
+ *  Minted ids are opaque and non-reproducible by design (random suffix):
+ *  stored at creation and looked up, never recomputed from the name, so a
+ *  slug-shape change across versions orphans no record. */
+export function mintProjectId(name: string): string {
+  // Cap before the slug regex so an unbounded name cannot feed a
+  // repeated-class pattern (CodeQL `js/polynomial-redos`).
   const base = name
+    .slice(0, 128)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")

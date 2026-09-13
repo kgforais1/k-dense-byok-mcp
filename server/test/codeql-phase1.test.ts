@@ -40,9 +40,7 @@ describe("Phase 1 CodeQL hardening", () => {
     expect(slugOf(cacheKeyForSource(hostile))).toBe(slugOf(cacheKeyForSource(capped)));
     expect(cacheKeyForSource(hostile).length).toBeLessThan(64);
     // A long run of separators collapses the same as a short one.
-    expect(cacheKeyForSource("a-----b").split("-")[0]).toBe(
-      cacheKeyForSource("a-b").split("-")[0],
-    );
+    expect(slugOf(cacheKeyForSource("a-----b"))).toBe(slugOf(cacheKeyForSource("a-b")));
   });
 
   it("mintProjectId bounds long names identically to their prefix", () => {

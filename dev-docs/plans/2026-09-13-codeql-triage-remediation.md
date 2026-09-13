@@ -123,7 +123,7 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 
 - [x] Refresh `dev-docs/todo.md` §2 (Dependabot 0, CodeQL 195 = 184/11).
 - [x] Write this plan with per-alert verdicts and file/line evidence.
-- [ ] Review of triage + plan (opencode/nvidia kimi-k3), then commit.
+- [x] Review of triage + plan (kimi-k3, kilo stepfun, DeepSeek; PR reviews by kilo stepfun + agy sonnet), then commit.
 
 **Exit criteria:** `npm run docs:check` green; reviewer verdict recorded.
 
@@ -227,7 +227,7 @@ sample trace recorded in the plan/PR.
 | Outcome | Evidence |
 |---|---|
 | Counts are real | `todo.md` §2 matches `gh api …/dependabot/alerts?state=open` (`[]`) and `…/code-scanning/alerts?state=open` (195, 183 path-injection) |
-| Cheap fixes land | −10 by code change (7 randomness, 2 redos, 1 sanitization), tests added |
+| Cheap fixes land | −9 by code change (7 randomness, 2 redos) + 1 re-triaged to dismiss (sanitization), tests added |
 | Path-injection resolved durably | Cleared by barrier model, not bulk dismissal; sample trace recorded |
 | Judgement calls written down | resource-exhaustion + reflected-xss each have a verdict with evidence |
 | No regression | `npm run verify -- all` green at each step |

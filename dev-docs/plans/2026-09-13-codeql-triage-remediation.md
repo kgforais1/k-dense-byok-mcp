@@ -107,7 +107,7 @@ fold it called for is **done**: `pdf-annotations-store.ts:12` imports
 dev-docs/todo.md                          # counts refreshed (this branch)
 dev-docs/plans/2026-09-13-codeql-triage-remediation.md  # this plan
 web/src/app/page.tsx                      # crypto id instead of Math.random (Phase 1)
-web/src/lib/pdf-annotations.ts            # same, if it feeds a flagged flow (Phase 1)
+web/src/lib/pdf-annotations.ts            # same crypto-id fix (Phase 1, unconditional)
 server/src/projects.ts                    # bound input before slug regex (Phase 1)
 server/src/agent/skills-fetch.ts          # same (Phase 1)
 server/src/api/credentials.ts + test      # backslash escaping (Phase 1)
@@ -132,7 +132,9 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 - [ ] `insecure-randomness` ×7: replace the `Math.random` fallbacks with
   `crypto.randomUUID()` (or `getRandomValues`) at `web/src/app/page.tsx:83`
   (`makeTabId`) and unconditionally at `web/src/lib/pdf-annotations.ts:222`
-  (`newAnnotationId`, same pattern). Re-run CodeQL, expect −7.
+  (`newAnnotationId`, same pattern). Test: `makeTabId()` and
+  `newAnnotationId()` return non-empty unique ids. Re-run CodeQL,
+  expect −7.
 - [ ] `polynomial-redos` ×2: bound the input before the slug replace
   (`slice` first, then replace, then trim/slice to final length) in
   `mintProjectId` and `cacheKeyForSource`. Unit test with a long `-`-run.
@@ -143,16 +145,24 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 **Exit criteria:** 10 alerts gone by code change; CodeQL shows 185.
 
 ### Phase 2 — Path-injection: verify, then model (one PR, possibly two)
-
-- [ ] Sample-verify ~10 alerts across the top files on current `main`
-  (include at least one each from `sandbox.ts`, `skills.ts`,
-  `skills-install.ts` — explicitly `skills-install.ts:464`, the indirect
-  `findSkillDir → null → 404` idiom CodeQL cannot model — `agent-files.ts`,
-  `skills-sync.ts`, `modal/store.ts`, `projects.ts`, `latex/compile.ts`,
-  `cost/ledger.ts`, `provenance/store.ts`). Record source→sink→barrier per alert. Any sink
-  with no barrier leaves this bucket immediately as a real finding.
+- [ ] Sample-verify these 10 alerts on current `main` (numbers are GitHub
+  code-scanning alert IDs; record source→sink→barrier per alert). Any sink
+  with no barrier leaves this bucket immediately as a real finding:
+  - 147 `api/sandbox.ts:820` (expect `safePath`)
+  - 188 `pdf-annotations-store.ts:295` (expect `resolvePdf`)
+  - 79 `agent/skills.ts:371` (expect name regex)
+  - 74 `agent/skills-install.ts:464` (the indirect `findSkillDir → null → 404`
+    idiom CodeQL cannot model — the case the migration strategy is designed for)
+  - 16 `agent/agent-files.ts:336` (expect name regex)
+  - 85 `agent/skills-sync.ts:355`
+  - 167 `modal/store.ts:286` (expect `assertJobId → JOB_ID_RE`)
+  - 195 `projects.ts:336` (expect `validateId → PROJECT_ID_RE`)
+  - 153 `latex/compile.ts:117`
+  - 148 `cost/ledger.ts:315`
 - [ ] Where the shape allows, move regex-guarded sinks onto `containedIn`
   / `safePath` (converts unmodellable indirect barriers into direct ones).
+  Each migrated sink keeps a regression test asserting the same
+  reject/accept behavior (valid names still pass, traversal still 403/404).
 - [ ] Add a CodeQL model pack (new `.github/codeql*` config) naming the
   surviving barriers — `safePath`, `containedIn`, `resolvePdf`, and whichever
   name-regexes survive the move. Re-run CodeQL and record how many of the

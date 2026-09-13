@@ -13,6 +13,9 @@
     "lint": "eslint .",
     "test:coverage": "vitest run --coverage"
   },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.84.3",
     "@earendil-works/pi-ai": "0.84.3",

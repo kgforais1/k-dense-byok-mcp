@@ -58,7 +58,9 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
 /**
  * Installs the TC39 stage-2 Map upsert proposal polyfills (`getOrInsertComputed`
  * and `getOrInsert`) on `Map.prototype` if not natively supported.
- * Required before loading `pdfjs-dist` 5.6+ to avoid runtime errors at document open time.
+ * Required before loading `pdfjs-dist` to avoid runtime errors at document open
+ * time. Still needed on 6.x: the build calls `getOrInsertComputed` in both the
+ * main bundle and the worker.
  */
 export function installMapUpsertPolyfill(): void {
   type UpsertMap = Map<unknown, unknown> & {
@@ -1042,8 +1044,11 @@ function PageView({
         return;
       }
 
-      // Build the text layer. pdfjs 5.x exposes `TextLayer` from the
-      // top-level module; fall back to the classic API when unavailable.
+      // Build the text layer. `TextLayer` comes from the top-level module. The
+      // classic `renderTextLayer` fallback that used to sit here was removed in
+      // pdfjs 6, so it was dead code that could never run; `pdfjs-integration
+      // .test.ts` asserts `TextLayer` is still exported, since this cast would
+      // otherwise hide its removal behind pages with no selectable text.
       textLayer.innerHTML = "";
       textLayer.style.width = `${viewport.width}px`;
       textLayer.style.height = `${viewport.height}px`;
@@ -1064,25 +1069,6 @@ function PageView({
             viewport,
           });
           await layer.render();
-        } else {
-          // Classic path on older builds
-          const render = (pdfjs as unknown as {
-            renderTextLayer?: (opts: {
-              textContent: unknown;
-              container: HTMLElement;
-              viewport: unknown;
-              textDivs: HTMLElement[];
-            }) => { promise: Promise<void> };
-          }).renderTextLayer;
-          if (render) {
-            const task = render({
-              textContent,
-              container: textLayer,
-              viewport,
-              textDivs: [],
-            });
-            await task.promise;
-          }
         }
       } catch {
         // text layer is best-effort

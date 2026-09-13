@@ -162,7 +162,24 @@ CodeQL shows 186 once re-scanned (9 fixed; the sanitization dismissal lands
 with the per-alert dismissal pass in Phase 2).
 
 ### Phase 2 — Path-injection: verify, then model (one PR, possibly two)
-- [ ] Sample-verify these 10 alerts on current `main` (numbers are GitHub
+
+Sample trace done 2026-09-13 on `main` at `594b37a` (all 10 guarded, **no real
+finding** — the 183 stay in the false-positive bucket):
+
+| Alert | Sink | Barrier |
+|---|---|---|
+| 147 | `api/sandbox.ts:820` `fs.existsSync(texAbs)` | `safePath(q.path)` at `:817` — direct |
+| 188 | `pdf-annotations-store.ts:295` `fs.statSync(sidecar)` | `pdfAnnotationSidecarPath` → `resolvePdf` (absolute-refusal + `isWithin` + realpath) — one frame up |
+| 79 | `agent/skills.ts:371` join in `findSkillDir` | `SKILL_NAME_RE`, returns `null` on fail — same function |
+| 74 | `agent/skills-install.ts:464` join in `stageForSkill` | callers gated by `findSkillDir`'s regex one frame up (`:488`, `:510` both `fail(404)` on null) — indirect; **hardened with a direct `SKILL_NAME_RE` gate (this branch)** |
+| 16 | `agent/agent-files.ts:336` join in `deleteProjectAgent` | `AGENT_NAME_RE`, returns `false` — same function |
+| 85 | `agent/skills-sync.ts:355` `readdirSync` in `hashDirectory` walk | recursion root comes from callers joining validated names (`skills-install.ts:137` joins `readdirSync` output, which cannot traverse); entry names from `readdir` stay within |
+| 167 | `modal/store.ts:286` via `modalJobFiles` | `assertJobId` → `JOB_ID_RE` (anchored, min length 6) — one frame up |
+| 195 | `projects.ts:336`→`~:343` `fs.existsSync(paths.root)` in `deleteProject` | `validateId` (`PROJECT_ID_RE` + reserved set) **and** `resolvePaths` `isWithin` — double-guarded |
+| 153 | `latex/compile.ts:117` `readFileSync(targetAbs)` | route `safePath(req.body.path)` (`api/sandbox.ts:778`) — one frame up |
+| 148 | `cost/ledger.ts:315` `readdirSync` reservations dir | `resolvePaths(projectId)` `isWithin` — one frame up |
+
+- [x] Sample-verify these 10 alerts on current `main` (numbers are GitHub
   code-scanning alert IDs; record source→sink→barrier per alert). Any sink
   with no barrier leaves this bucket immediately as a real finding:
   - 147 `api/sandbox.ts:820` (expect `safePath`)
@@ -176,10 +193,24 @@ with the per-alert dismissal pass in Phase 2).
   - 195 `projects.ts:336` (expect `validateId → PROJECT_ID_RE`)
   - 153 `latex/compile.ts:117`
   - 148 `cost/ledger.ts:315`
-- [ ] Where the shape allows, move regex-guarded sinks onto `containedIn`
+- [x] Where the shape allows, move regex-guarded sinks onto `containedIn`
   / `safePath` (converts unmodellable indirect barriers into direct ones).
+  Done for the flagged hard case: `stageForSkill` gained a direct
+  `SKILL_NAME_RE` gate (mirrors `removeSkill`'s idiom) with a regression
+  test (traversal → 404, valid-absent → 404 via provenance). Other sampled
+  sinks already carry same-function or one-frame-up guards; no further moves.
   Each migrated sink keeps a regression test asserting the same
   reject/accept behavior (valid names still pass, traversal still 403/404).
+- [ ] DECISION NEEDED — model pack vs per-alert dismissal (see below).
+  This repo runs CodeQL on GitHub's **default setup** (no CodeQL config in
+  `.github/workflows/`, no `codeql-config.yml`): a custom barrier model
+  requires migrating to **advanced setup** (new workflow + config + model
+  pack), which also moves the `Rules1` gate onto the new workflow. That is a
+  CI-infrastructure change, not a config edit — needs an explicit call.
+  Alternative within this plan's guardrails: dismiss per-alert with
+  barrier + call-site evidence (the sample trace above is the basis; no bulk
+  dismissal). Either way the signal is preserved: a genuinely unguarded new
+  sink still alerts.
 - [ ] Add a CodeQL model pack (new `.github/codeql*` config) naming the
   surviving barriers — `safePath`, `containedIn`, `resolvePdf`, and whichever
   name-regexes survive the move. Re-run CodeQL and record how many of the

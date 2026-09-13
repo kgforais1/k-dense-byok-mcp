@@ -443,6 +443,11 @@ async function stageForSkill(
   ref: SkillScopeRef,
   name: string,
 ): Promise<{ dir: string; lock: Record<string, SkillLockEntry> }> {
+  // Direct barrier at the sink (CodeQL `js/path-injection` #74): callers
+  // reach here through `findSkillDir`'s own regex check, but that guard is
+  // indirect (null return + caller 404s) and unmodellable. A validity check
+  // here holds even for a future caller that skips it.
+  if (!SKILL_NAME_RE.test(name)) fail(404, `No such skill: "${name}"`);
   const root = asSkillRoot(ref);
   const provenance = getSkillProvenance(root, name);
   if (!provenance) fail(404, `No such skill: "${name}"`);

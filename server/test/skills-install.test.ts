@@ -340,4 +340,19 @@ describe("update checks for user-installed skills", () => {
       status: 400,
     });
   });
+
+  it("rejects traversal names at the staging sink, not just via lookup", async () => {
+    // Direct barrier (CodeQL `js/path-injection` #74): the regex gate inside
+    // stageForSkill must hold even for a caller that skips findSkillDir.
+    await expect(checkSkillUpdate(paths, "../evil")).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(checkSkillUpdate(paths, "a/b")).rejects.toMatchObject({
+      status: 404,
+    });
+    // A valid but absent name still 404s through the provenance path.
+    await expect(checkSkillUpdate(paths, "no-such-skill")).rejects.toMatchObject({
+      status: 404,
+    });
+  });
 });

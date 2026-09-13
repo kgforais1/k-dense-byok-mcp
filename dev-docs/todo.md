@@ -58,7 +58,13 @@ that upgrade taught us, both worth carrying into the rest of this triage:
   only a browser exercises. A major pin alone is not enough — a 6.x minor can
   change worker loading or the `TextLayer` signature without moving it — so
   `pdfjs-dist` is pinned exactly, and every bump arrives as a PR to review
-  rather than floating in on a lockfile refresh. And `pdfjs.renderTextLayer`, the
+  rather than floating in on a lockfile refresh.
+- **Decide whether to enforce the Node floor.** The manifests now declare
+  `>=22.13.0`, but there is no `.npmrc` and `engine-strict` is off, so that is
+  advice rather than a gate: npm warns `EBADENGINE` and installs anyway. Adding
+  `engine-strict=true` would make it real, at the cost of hard-failing installs
+  that work today. Worth deciding deliberately rather than leaving the manifest
+  implying an enforcement that does not exist. And `pdfjs.renderTextLayer`, the
   fallback at `web/src/components/pdf-viewer/pdf-viewer.tsx`, no longer exists
   in v6 — it is dead code reached through an `as unknown as` cast, so its
   removal was silent. Worth deleting the fallback, and worth asking what else

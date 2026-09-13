@@ -8,9 +8,8 @@
  * confirm our own assumptions back to us.
  *
  * This file loads the library for real, opens a real PDF, and asserts the
- * handful of API facts `pdf-viewer.tsx` depends on. `pdfjs-dist` is pinned by
- * caret (`^6.2.108`), so a future 6.x that moves any of them would otherwise
- * reach a user before it reached CI.
+ * handful of API facts `pdf-viewer.tsx` depends on. A future pdfjs that moved
+ * any of them would otherwise reach a user before it reached CI.
  *
  * Scope: Node can exercise module loading, document parsing, the API surface,
  * text extraction and teardown. It cannot exercise canvas rasterisation or the

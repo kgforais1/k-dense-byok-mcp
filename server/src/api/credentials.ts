@@ -116,8 +116,9 @@ function mask(key: string): string {
 }
 
 /** Upsert (or remove) a KEY=value line in `.env`, preserving other lines and
- *  comments. Creates the file if missing. Values are quoted only when needed. */
-function persistEnv(name: string, value: string | null): void {
+ *  comments. Creates the file if missing. Values are quoted only when needed.
+ *  Exported for unit tests of the quoting/escaping round-trip. */
+export function persistEnv(name: string, value: string | null): void {
   let lines: string[] = [];
   try {
     lines = fs.readFileSync(credentialEnvPath, "utf-8").split("\n");
@@ -130,7 +131,11 @@ function persistEnv(name: string, value: string | null): void {
   lines = lines.filter((l) => !isAssignment(l, name));
   if (value !== null) {
     const needsQuote = /[\s#"']/.test(value);
-    const rendered = needsQuote ? `"${value.replace(/"/g, '\\"')}"` : value;
+    // Escape backslashes first so a trailing `\` cannot swallow the
+    // closing quote (CodeQL `js/incomplete-sanitization`).
+    const rendered = needsQuote
+      ? `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+      : value;
     // Keep a trailing newline tidy: append before any trailing blank lines.
     while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
     lines.push(`${name}=${rendered}`);

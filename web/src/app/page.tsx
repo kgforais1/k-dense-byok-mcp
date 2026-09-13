@@ -27,6 +27,7 @@ import {
   type ProjectActivitySummary,
 } from "@/lib/project-activity";
 import { onChatPrefill } from "@/lib/chat-prefill";
+import { makeTabId } from "@/lib/tab-ids";
 import {
   OPEN_MODAL_JOB_EVENT,
   type ModalComputeScope,
@@ -75,13 +76,6 @@ interface ChatTabEntry {
 
 /** Stable id for the first tab so SSR and hydration match. */
 const INITIAL_TAB_ID = "tab-initial";
-
-function makeTabId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
 
 function defaultTabTitle(index: number): string {
   return `Chat ${index + 1}`;

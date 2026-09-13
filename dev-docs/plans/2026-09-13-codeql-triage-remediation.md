@@ -129,18 +129,27 @@ dev-docs/maintenance-log.md               # outcome entry (Phase 4)
 
 ### Phase 1 — Cheap real fixes (one PR)
 
-- [ ] `insecure-randomness` ×7: replace the `Math.random` fallbacks with
+Done 2026-09-13 on `codeql-triage-plan` (commit below): `makeTabId` moved to
+`web/src/lib/tab-ids.ts` (crypto-first, no `Math.random`), same shape for
+`newAnnotationId`; slug inputs capped before the replace (`projects.ts`,
+`skills-fetch.ts`); `persistEnv` escapes `\` before `"`. Tests:
+`tab-ids.test.ts`, `codeql-phase1.test.ts` (redos timing + cap equivalence,
+`.env` round-trip); existing `pdf-annotations.test.ts` uniqueness still
+green. `npm run verify -- all` green, Aikido clean, `Math.random` gone from
+first-party `web/src`/`server/src`.
+
+- [x] `insecure-randomness` ×7: replace the `Math.random` fallbacks with
   `crypto.randomUUID()` (or `getRandomValues`) at `web/src/app/page.tsx:83`
   (`makeTabId`) and unconditionally at `web/src/lib/pdf-annotations.ts:222`
   (`newAnnotationId`, same pattern). Test: `makeTabId()` and
   `newAnnotationId()` return non-empty unique ids. Re-run CodeQL,
   expect −7.
-- [ ] `polynomial-redos` ×2: bound the input before the slug replace
+- [x] `polynomial-redos` ×2: bound the input before the slug replace
   (`slice` first, then replace, then trim/slice to final length) in
   `mintProjectId` and `cacheKeyForSource`. Unit test with a long `-`-run.
-- [ ] `incomplete-sanitization` ×1: escape `\` before `"` in `persistEnv`;
+- [x] `incomplete-sanitization` ×1: escape `\` before `"` in `persistEnv`;
   add a round-trip test (value ending in backslash + quote).
-- [ ] `npm run verify -- all` green on both packages.
+- [x] `npm run verify -- all` green on both packages.
 
 **Exit criteria:** 10 alerts gone by code change; CodeQL shows 185.
 

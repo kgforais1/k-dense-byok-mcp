@@ -99,8 +99,12 @@ function validateId(projectId: string): void {
   }
 }
 
-function mintProjectId(name: string): string {
+/** Exported for unit tests of the input cap (CodeQL `js/polynomial-redos`). */
+export function mintProjectId(name: string): string {
+  // Cap before the slug regex so an unbounded name cannot feed a
+  // repeated-class pattern (CodeQL `js/polynomial-redos`).
   const base = name
+    .slice(0, 128)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")

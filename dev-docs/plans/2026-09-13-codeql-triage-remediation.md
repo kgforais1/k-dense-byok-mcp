@@ -57,9 +57,9 @@ The 12 non-path-injection alerts, each read on current `main`:
 
 | Rule | Location | Verdict |
 |---|---|---|
-| `insecure-randomness` ×7 | source `web/src/app/page.tsx:83` (`Math.random` tab id); sinks `file-preview-panel.tsx` ×4, `chat-tabs-bar.tsx` ×2, `page.tsx` ×1 | **False positive class.** Client tab/draft ids, not tokens/nonces. Fix cheaply anyway (kill 7 with one change) |
+| `insecure-randomness` ×7 | sources `web/src/app/page.tsx:83` (`makeTabId`) + `web/src/lib/pdf-annotations.ts:222` (`newAnnotationId`); sinks `file-preview-panel.tsx` ×4, `chat-tabs-bar.tsx` ×2, `page.tsx` ×1 | **False positive class.** Client tab/draft ids, not tokens/nonces. Fix cheaply anyway (two source edits clear all 7) |
 | `polynomial-redos` ×2 | `agent/skills-fetch.ts:83` (slug), `projects.ts:103` (`mintProjectId`) — `.replace(/[^a-z0-9]+/g, "-")` runs on the full input, `.slice(0, 32)` after | **Real but low.** Unbounded input into a repeated-class regex. Cap input length before the replace |
-| `resource-exhaustion` ×1 | `modal/store.ts:289` `Buffer.alloc(available)` | **Likely dismiss.** `available ≤ safeLimit ≤ MAX_LOG_READ_BYTES` (1 MiB, `store.ts:13,280`), floored at 0. Verify no path bypasses `safeLimit`, then dismiss with clamp evidence |
+| `resource-exhaustion` ×1 | `modal/store.ts:289` `Buffer.alloc(available)` | **Likely dismiss.** `available ≤ safeLimit ≤ MAX_LOG_READ_BYTES` (1 MiB; constant at `store.ts:13`, `safeLimit` at `store.ts:280`), floored at 0. Verify no path bypasses `safeLimit`, then dismiss with clamp evidence |
 | `incomplete-sanitization` ×1 | `api/credentials.ts:133` — escapes `"` but not `\` | **Real (low).** A value ending in `\` breaks the quoting; the next line can inject a `.env` key. Escape backslashes first + test |
 | `reflected-xss` ×1 | `api/sessions.ts:809` — export returns `body` built from session file + params (`:801-802`), served as `text/markdown` / `text/x-shellscript` with `Content-Disposition: attachment` | **Likely false positive / by-design export.** A file download, not inline HTML. Verify no inline-render path, consider `X-Content-Type-Options: nosniff`, then dismiss with reason or add the header |
 

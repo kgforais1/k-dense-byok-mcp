@@ -80,6 +80,9 @@ export function proposalGenerationContext(context: NextExperimentContext, constr
   ].join("\n"), messages: [{ role: "user", timestamp: Date.now(), content: JSON.stringify({ constraints, contextDigest: context.digest, target: context.source, warnings: context.warnings, coverageComplete: context.coverage.complete, sourcesOmitted: omitted, sources, TEMPLATE: template }) }] };
 }
 
+// FORK (upstream merge): complexity 65 over the 62 ceiling. Upstream-owned
+// approval-gated flow; splitting it can wait for an upstream refactor.
+// eslint-disable-next-line complexity
 export async function generateNextExperiments(projectId: string, source: { sessionId: string; entryId: string }, input: unknown, complete: Complete = defaultComplete) {
   const raw = input as { model?: unknown; constraints?: unknown; expectedContextDigest?: unknown; requestId?: unknown; approveModelCall?: unknown } | null;
   if (raw?.approveModelCall !== true) throw new NextExperimentError(400, "APPROVAL_REQUIRED", "Explicit approval of one planning model call is required");

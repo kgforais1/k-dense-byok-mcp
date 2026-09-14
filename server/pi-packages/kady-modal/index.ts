@@ -425,6 +425,11 @@ function failed(error: unknown, extra?: Record<string, unknown>) {
  */
 export function makeModalChildTools(
   getIdentity: () => SubagentChildIdentity = () => ({}),
+  // `ToolDefinition` is generic over each tool's own parameter schema, so an
+  // array holding tools with different schemas has no common instantiation.
+  // It is the Pi SDK's own idiom for a tool list, and narrowing it needs a
+  // union rebuilt on every add.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ToolDefinition<any>[] {
   return [
     {
@@ -570,6 +575,8 @@ export function makeModalChildTools(
 }
 
 /** Identity-less tool set, for schema parity checks and tool-name listings. */
+// Same `ToolDefinition<any>` idiom as makeModalChildTools above.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const modalChildTools: ToolDefinition<any>[] = makeModalChildTools();
 
 export default function (pi: ExtensionAPI): void {

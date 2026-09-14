@@ -3,7 +3,7 @@ import { withNotebookArtifactHealth } from "./notebook-artifacts.ts";
 import { loadMemoryCorpus, type MemoryCorpus, type MemoryDocument } from "./notebook-memory-loader.ts";
 import { deriveEvidenceThreads, evidenceLinks, notebookEntryKey, notebookTargetKey } from "../../../web/src/lib/notebook-evidence-core.ts";
 import { normalizeMemoryQuery, normalizeMemorySource, memorySourceKey, memorySearchFields, memoryExcerpt, rankMemory, MEMORY_RULES,
-  type MemoryCoverage, type MemoryHit, type MemoryRecordResponse, type MemorySearchResponse, type MemorySource } from "../../../web/src/lib/notebook-memory.ts";
+  type MemoryHit, type MemoryRecordResponse, type MemorySearchResponse, type MemorySource } from "../../../web/src/lib/notebook-memory.ts";
 import type { NotebookEntry } from "./notebook-store.ts";
 
 export class NotebookMemoryError extends Error {

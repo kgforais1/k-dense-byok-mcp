@@ -48,7 +48,7 @@ export function RobustnessResults({ workflow, onOpenFile }: { workflow: Robustne
         <td className="p-2">{a.estimatedCostUsd !== undefined ? `$${a.estimatedCostUsd.toFixed(6)}` : "Pending"}{!a.reconciled && <p>Unreconciled</p>}</td>
       </tr>)}
     </tbody></table></div>
-    <p className="text-[10px] text-muted-foreground">Values above come from retained, checksummed Modal output staging. “Open current JSON” opens today's sandbox file, which may have changed. Job ids link this record to logs and provenance in the Compute tab. Unconfirmed launches/cleanup can conservatively consume the full approved estimate; this is not Modal invoice reconciliation.</p>
+    <p className="text-[10px] text-muted-foreground">Values above come from retained, checksummed Modal output staging. “Open current JSON” opens today&apos;s sandbox file, which may have changed. Job ids link this record to logs and provenance in the Compute tab. Unconfirmed launches/cleanup can conservatively consume the full approved estimate; this is not Modal invoice reconciliation.</p>
   </section>;
 }
 
@@ -119,7 +119,7 @@ export function NotebookRobustnessDialog({ entry, sessionId, projectId, onOpenFi
       {loadErrors.map((e, i) => <p key={i} role="alert" className="text-xs text-destructive">Some history is unavailable: {e}</p>)}
       <div className="flex flex-wrap items-center gap-2 text-xs"><Button size="xs" variant="outline" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>Refresh context/history</Button>{busy && <span role="status">Working…</span>}{!configured && <span>Configure Modal credentials in Settings before approval.</span>}</div>
       {mode === "history" && <div className="space-y-4">
-        {!frozen && <p>Freeze an analysis plan first using the hypothesis's Analysis plan control, then refresh here.</p>}
+        {!frozen && <p>Freeze an analysis plan first using the hypothesis&apos;s Analysis plan control, then refresh here.</p>}
         {frozen && <p className="text-xs">Latest local frozen plan: revision {frozen.revision}. New work must be reviewed against this revision; existing workflows retain their original plan.</p>}
         <Button size="sm" disabled={busy || !frozen} onClick={() => edit()}>Prepare robustness workflow</Button>
         {!history.length && <p className="text-sm text-muted-foreground">No approved robustness workflows yet.</p>}

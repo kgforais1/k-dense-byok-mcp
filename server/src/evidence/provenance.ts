@@ -1,7 +1,6 @@
 /** Bounded observation-only provenance reads for packages. No environment probes. */
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePaths } from "../projects.ts";
 import { managedPath } from "../modal/approved.ts";
 import { readEvidenceBytes, SHA256, type ReadBudget } from "./storage.ts";
 import { environmentId, type EnvironmentSnapshot } from "../provenance/environment.ts";

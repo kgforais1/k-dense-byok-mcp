@@ -14,9 +14,9 @@ import { normalizeRobustnessDraft, parseRobustnessResult, type RobustnessPreview
 import { modalJobManager, DurableModalJobManager } from "../modal/manager.ts";
 import { worstCaseReservationUsd, resolveInstance } from "../modal/catalog.ts";
 import { modalJobFiles } from "../modal/store.ts";
-import { approvedBatchDir, approvedInputRoot, batchCancelled, batchCommitted, approvedInputPlan, assertApprovedJob } from "../modal/approved.ts";
+import { approvedInputRoot, batchCancelled, batchCommitted, approvedInputPlan, assertApprovedJob } from "../modal/approved.ts";
 import { isTerminalModalState, ModalJobError, type ModalJob, type ModalJobRequest } from "../modal/types.ts";
-import { robustnessDir, robustnessRoot, listRobustnessIds, readRobustnessPreview, sourcePath, snapshotInputs, checkSnapshotQuota, publishExclusiveJson, readManagedJson, ROBUSTNESS_TTL_MS, ROBUSTNESS_CONFIG_ROOT, ROBUSTNESS_OUTPUT_ROOT } from "./robustness-store.ts";
+import { robustnessDir, listRobustnessIds, readRobustnessPreview, sourcePath, snapshotInputs, checkSnapshotQuota, publishExclusiveJson, readManagedJson, ROBUSTNESS_TTL_MS, ROBUSTNESS_CONFIG_ROOT, ROBUSTNESS_OUTPUT_ROOT } from "./robustness-store.ts";
 
 const preparing = new Map<string, Promise<unknown>>();
 async function serialized<T>(key: string, work: () => Promise<T>): Promise<T> {

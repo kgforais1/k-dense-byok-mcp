@@ -234,6 +234,9 @@ function unwrap(tokens: string[]): string[] {
  * Classify one shell command. Returns the first protected-path mutation, else
  * the first destructive command, else allow.
  */
+// FORK (upstream merge): complexity 73 over the 62 ceiling. The classifier
+// table grew upstream; keep the byte-parity copy in sync (see test).
+// eslint-disable-next-line complexity
 export function classifyBashCommand(command: string, opts: ClassifyOptions): BashVerdict {
   const globs = opts.protectedGlobs;
   let cwd = "";

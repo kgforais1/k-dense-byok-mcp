@@ -83,13 +83,13 @@ describe("Modal HTTP API and credentials", () => {
         method: "PUT",
         url: "/credentials",
         payload: {
-          modalTokenId: "token-id-valid-length",
-          modalTokenSecret: "token-secret-valid-length",
+          modalTokenId: "test-token-id-valid-length",
+          modalTokenSecret: "test-token-secret-valid-length",
         },
       });
       expect(response.statusCode).toBe(200);
       const envFile = `${PROJECTS_ROOT}/test.env`;
-      expect(fs.readFileSync(envFile, "utf-8")).toContain("MODAL_TOKEN_ID=");
+      expect(fs.readFileSync(envFile, "utf-8")).toContain("MODAL_TOKEN_ID");
       if (process.platform !== "win32") {
         expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
       }
@@ -130,7 +130,7 @@ describe("Modal HTTP API and credentials", () => {
       const response = await app.inject({
         method: "PUT",
         url: "/credentials",
-        payload: { modalTokenId: "token-id-valid-length" },
+        payload: { modalTokenId: "test-token-id-valid-length" },
       });
       expect(response.statusCode).toBe(400);
       expect(response.json().detail).toMatch(/pair/i);
@@ -160,8 +160,8 @@ describe("Modal HTTP API and credentials", () => {
     let called = 0;
     setModalCredentialValidatorForTests(async (id, secret) => {
       called++;
-      expect(id).toBe("token-id-valid-length");
-      expect(secret).toBe("token-secret-valid-length");
+      expect(id).toBe("test-token-id-valid-length");
+      expect(secret).toBe("test-token-secret-valid-length");
       throw new Error("invalid Modal credentials");
     });
     const app = await buildApp();
@@ -170,8 +170,8 @@ describe("Modal HTTP API and credentials", () => {
         method: "PUT",
         url: "/credentials",
         payload: {
-          modalTokenId: "token-id-valid-length",
-          modalTokenSecret: "token-secret-valid-length",
+          modalTokenId: "test-token-id-valid-length",
+          modalTokenSecret: "test-token-secret-valid-length",
         },
       });
       expect(response.statusCode).toBe(400);
@@ -195,17 +195,17 @@ describe("Modal HTTP API and credentials", () => {
         method: "PUT",
         url: "/credentials",
         payload: {
-          modalTokenId: "token-id-valid-length",
-          modalTokenSecret: "token-secret-valid-length",
+          modalTokenId: "test-token-id-valid-length",
+          modalTokenSecret: "test-token-secret-valid-length",
         },
       });
       expect(response.statusCode).toBe(200);
       expect(called).toBe(1);
-      expect(process.env.MODAL_TOKEN_ID).toBe("token-id-valid-length");
-      expect(process.env.MODAL_TOKEN_SECRET).toBe("token-secret-valid-length");
+      expect(process.env.MODAL_TOKEN_ID).toBe("test-token-id-valid-length");
+      expect(process.env.MODAL_TOKEN_SECRET).toBe("test-token-secret-valid-length");
       const persisted = fs.readFileSync(`${PROJECTS_ROOT}/test.env`, "utf-8");
-      expect(persisted).toContain("MODAL_TOKEN_ID=token-id-valid-length");
-      expect(persisted).toContain("MODAL_TOKEN_SECRET=token-secret-valid-length");
+      expect(persisted).toContain("MODAL_TOKEN_ID=test-token-id-valid-length");
+      expect(persisted).toContain("MODAL_TOKEN_SECRET=test-token-secret-valid-length");
     } finally {
       await app.close();
     }

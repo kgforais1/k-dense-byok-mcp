@@ -48,6 +48,9 @@ function annotationTime(timestamp: number): string {
   return Number.isNaN(date.getTime()) ? String(timestamp) : date.toISOString();
 }
 
+// FORK (upstream merge): complexity 92 over the 62 ceiling. Upstream-owned
+// renderer; splitting it can wait for an upstream refactor.
+// eslint-disable-next-line complexity
 export function notebookToMarkdown(
   entries: NotebookEntry[],
   opts: NotebookMarkdownOpts,

@@ -66,6 +66,17 @@ description = "A credential this backend reads, assigned a literal value"
 regex = '''(?:ANTHROPIC|OPENAI|GEMINI|GOOGLE|NVIDIA|OPENROUTER|OR|PERPLEXITY|EXA)_API_KEY\s*[:=]\s*["'][^"']{12,}["']|MODAL_TOKEN_(?:ID|SECRET)\s*[:=]\s*["'][^"']{12,}["']|(?:GITHUB|PACKAGE)_TOKEN\s*[:=]\s*["'][^"']{12,}["']'''
 tags = ["key", "provider"]
 
+# Rule-level (bound to kady-credential-assignment only): the upstream v0.10.0
+# merge brought a test-fixture commit whose `toContain("MODAL_TOKEN_ID=")`
+# assertion matches across the line break
+# (fingerprint 8b970196…:modal-api-credentials.test.ts:89). The values were
+# never credentials (literal `"token-*-valid-length"` placeholders), and the
+# tree was fixed to a non-matching assertion plus `test-`-prefixed fixture
+# values. Scoped to that one commit so the rule still applies everywhere else.
+[[rules.allowlists]]
+description = "Upstream test fixture merged in v0.10.0, not a credential"
+commits = ["8b970196b2e06a30384808ab62d200c64d55f780"]
+
 [[rules]]
 id = "registry-auth-token"
 description = "npm registry auth token in a lockfile or rc file"

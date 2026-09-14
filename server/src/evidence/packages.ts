@@ -17,7 +17,7 @@ import { packageRecordGraph, type PackageRecord } from "./source-graph.ts";
 import { packageProvenance, storedEnvironment, MAX_PACKAGE_STEPS, stepKey } from "./provenance.ts";
 import { EvidenceBuilder } from "./builder.ts";
 import { methodsScaffold, packageReadme, missingInformation, roCrate, VERIFY_SOURCE } from "./report.ts";
-import { ARTIFACT_BYTES, PACKAGE_BYTES, PACKAGE_COUNT, PACKAGE_QUOTA, ZIP_BYTES, SHA256, EvidencePackageError, artifactPath, blobPath, captureBlob, evidenceExclusive, evidenceStorage, hashEvidenceFile, packageDirectory, packageIds, publishExclusiveJson, readEvidenceBytes, readPackage, verifiedEvidenceStream, type CapturedBlob, type ReadBudget } from "./storage.ts";
+import { ARTIFACT_BYTES, PACKAGE_COUNT, PACKAGE_QUOTA, ZIP_BYTES, SHA256, EvidencePackageError, artifactPath, blobPath, captureBlob, evidenceExclusive, evidenceStorage, hashEvidenceFile, packageDirectory, packageIds, publishExclusiveJson, readEvidenceBytes, readPackage, verifiedEvidenceStream, type CapturedBlob, type ReadBudget } from "./storage.ts";
 import { normalizeEvidencePackageRequest, type EvidenceArtifact, type EvidenceIdentityBasis, type EvidenceIssue, type EvidencePackageManifest, type EvidencePackagePreview } from "../../../web/src/lib/evidence-packages.ts";
 import type { ProvenanceStep } from "../provenance/store.ts";
 
@@ -26,7 +26,11 @@ interface RetainedSource { absolute: string; origin: "modal-output" | "robustnes
 export async function prepareEvidencePackage(projectId: string, raw: unknown): Promise<EvidencePackagePreview> {
   let options;
   try { options = normalizeEvidencePackageRequest(raw); } catch (e) { throw new EvidencePackageError("INVALID_REQUEST", (e as Error).message); }
-  return evidenceExclusive(projectId, async () => {
+  return evidenceExclusive(projectId,
+    // FORK (upstream merge): this preparation closure is complexity 188 over
+    // the 62 ceiling. Upstream-owned; the ceiling stays, the function is exempt.
+    // eslint-disable-next-line complexity
+    async () => {
     const storage = evidenceStorage(projectId);
     if (storage.packageCount >= PACKAGE_COUNT || storage.packagesBytes >= PACKAGE_QUOTA) throw new EvidencePackageError("PACKAGE_QUOTA", "Package storage limit reached; remove an old package before preparing another", 413);
     const id = `ep_${crypto.randomUUID().replaceAll("-", "")}`; const createdAt = Date.now();
@@ -56,6 +60,9 @@ export async function prepareEvidencePackage(projectId: string, raw: unknown): P
         if (!SHA256.test(sha)) return;
         const key = retainedKey(p, sha); const list = retained.get(key) ?? []; if (list.length < 8) list.push(source); retained.set(key, list);
       };
+      // FORK (upstream merge): 7 params over the 6 ceiling. Upstream-owned
+      // asset helper; the ceiling stays.
+      // eslint-disable-next-line max-params
       const addAsset = (rawPath: string, expected: string | undefined, basis: EvidenceIdentityBasis, at: number, reference: string, depth = 0, lockfile = false): AssetRequest | undefined => {
         if (assets.length >= 128) { issue("artifact-graph-limit", "Artifact/input traversal stopped at 128 versioned references; additional files are not verified absent"); return; }
         let canonical: string;
@@ -163,6 +170,9 @@ export async function prepareEvidencePackage(projectId: string, raw: unknown): P
             try { assertApprovedJob(job, true); } catch { issue("compute-record-unverified", "Job definition does not match its admission record", attempt.jobId); continue; }
             for (const f of job.outputFiles) {
               const request = addAsset(f.path, f.sha256, "output", job.finishedAt ?? job.updatedAt, name);
+              // FORK (upstream merge): nesting depth 7 over the 6 ceiling.
+              // Upstream-owned traversal; the ceiling stays.
+              // eslint-disable-next-line max-depth
               if (request && f.sha256) addRetained(request.row.path, f.sha256, { absolute: path.join(modalJobFiles(projectId, job.id).staging, "outputs", f.path), origin: "modal-output" });
             }
           }

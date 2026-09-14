@@ -104,6 +104,9 @@ export function memoryEntry(value: unknown): NotebookEntry | undefined {
   };
 }
 
+// FORK (upstream merge): complexity 104 over the 62 ceiling. Upstream-owned
+// corpus loader; splitting it can wait for an upstream refactor.
+// eslint-disable-next-line complexity
 export async function loadMemoryCorpus(projectId: string, target?: MemorySource, options: { retainOriginal?: boolean } = {}): Promise<MemoryCorpus> {
   const coverage: MemoryCoverage = { complete: true, scannedFiles: 0, scannedBytes: 0, indexedRecords: 0, skippedRecords: 0, warnings: [] };
   const documents: MemoryDocument[] = [];

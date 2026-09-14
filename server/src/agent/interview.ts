@@ -16,7 +16,7 @@
  *      structured responses (plus any uploaded images) to the model and the
  *      run continues on the same SSE stream.
  *
- * Sub-agent child `pi` processes never get this tool — they are headless and
+ * Sub-agent child sessions never get this tool — they are headless and
  * must not block on user input.
  */
 import { Type, type Static } from "typebox";
@@ -277,6 +277,7 @@ export function makeInterviewTool(
       "Ask clarifying questions as much as possible: whenever a request is ambiguous, underspecified, or has competing approaches, call the `interview` tool BEFORE doing the work — do not silently assume.",
       "For any non-trivial task, open with a short interview that confirms scope, inputs, and the user's preferred approach (include your recommendations so confirming is one click).",
       "Mid-task, when you hit a fork in the road (parameter choices, trade-offs, which dataset/file to use), pause and interview the user instead of picking arbitrarily.",
+      "When a background specialist asks for a decision (a `subagent_supervisor_request` message), relay its question to the user with `interview` (include the child's options), then answer the child with `subagent_supervisor` (action reply, the given replyTo) — promptly, the child is blocked while it waits.",
     ],
     parameters: InterviewParams,
     // Blocks on user input — never run it concurrently with other tools.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,8 @@ import {
   LoaderCircleIcon,
   ExternalLinkIcon,
   CloudIcon,
+  ChevronRightIcon,
+  SlashIcon,
 } from "lucide-react";
 import { apiFetch } from "@/lib/projects";
 import { notifyModalCredentialsChanged } from "@/lib/modal-jobs";
@@ -42,21 +44,43 @@ import {
   loadFusionConfigs,
   type StoredFusionConfig,
 } from "@/lib/fusion-presets";
-import { SkillsPanel } from "@/components/skills-panel";
-import { SubagentsPanel } from "@/components/subagents-panel";
-import { ConnectorsPanel } from "@/components/connectors-panel";
-import { ProviderAuthPanel } from "@/components/provider-auth-panel";
-import { notifyProviderAuthChanged } from "@/lib/use-provider-auth";
+import dynamic from "next/dynamic";
+
+import { notifyCapabilitiesChanged } from "@/lib/capability-events";
+import {
+  DEFAULT_SETTINGS_DIALOG_SIZE,
+  SETTINGS_DIALOG_SIZE_KEY,
+  clampDialogSize,
+  readStoredDialogSize,
+  resizeFromCorner,
+  writeStoredDialogSize,
+  type DialogSize,
+} from "@/lib/dialog-size";
+const panelLoading = () => <div className="p-4 text-xs text-muted-foreground" role="status">Loading settings…</div>;
+const SkillsPanel = dynamic(() => import("./skills-panel").then((m) => m.SkillsPanel), { loading: panelLoading });
+const PromptsPanel = dynamic(() => import("./prompts-panel").then((m) => m.PromptsPanel), { loading: panelLoading });
+const SubagentsPanel = dynamic(() => import("./subagents-panel").then((m) => m.SubagentsPanel), { loading: panelLoading });
+const ConnectorsPanel = dynamic(() => import("./connectors-panel").then((m) => m.ConnectorsPanel), { loading: panelLoading });
+const ProviderAuthPanel = dynamic(() => import("./provider-auth-panel").then((m) => m.ProviderAuthPanel), { loading: panelLoading });
+import {
+  PROVIDER_AUTH_CHANGED_EVENT,
+  notifyProviderAuthChanged,
+} from "@/lib/use-provider-auth";
 
 type CredentialStatus = Record<string, { set: boolean; masked: string | null }>;
 
 interface KeyDef {
+  /** Key into the `/credentials` status map. */
   id: string;
   bodyField: string;
   label: string;
   placeholder: string;
-  keysUrl: string;
+  keysUrl?: string;
   hint: string;
+  /** Password input + masked echo (default). Configuration values are shown in full. */
+  secret?: boolean;
+  /** Saving changes which model-picker sections exist, so re-probe providers. */
+  notifyProviders?: boolean;
 }
 
 const KEY_DEFS: KeyDef[] = [
@@ -66,15 +90,8 @@ const KEY_DEFS: KeyDef[] = [
     label: "OpenRouter API key",
     placeholder: "sk-or-v1-…",
     keysUrl: "https://openrouter.ai/keys",
-    hint: "Used for every model call. Required unless you run everything locally through Ollama.",
-  },
-  {
-    id: "nvidia",
-    bodyField: "nvidiaApiKey",
-    label: "NVIDIA API key (optional)",
-    placeholder: "nvapi-…",
-    keysUrl: "https://build.nvidia.com/settings/api-keys",
-    hint: "Direct access to NVIDIA NIM models (Nemotron, Llama, GPT-OSS, …). Usage draws on your NVIDIA API credits, which Kady cannot meter.",
+    hint: "One pay-as-you-go account for hundreds of hosted models, plus OpenRouter Fusion and server-side speech. Optional if you use a direct provider key, a subscription, or local models — you can also sign in to OpenRouter under Model providers instead.",
+    notifyProviders: true,
   },
   {
     id: "exa",
@@ -98,7 +115,8 @@ const KEY_DEFS: KeyDef[] = [
     label: "Gemini API key (optional)",
     placeholder: "AIza…",
     keysUrl: "https://aistudio.google.com/apikey",
-    hint: "Search fallback plus YouTube and video understanding for fetched links.",
+    hint: "Search fallback plus YouTube and video understanding for fetched links. The same key also unlocks Google Gemini models in the picker (it is GEMINI_API_KEY, which Pi's Google provider reads).",
+    notifyProviders: true,
   },
 ];
 
@@ -132,8 +150,8 @@ function KeyRow({
           | null;
         if (!res.ok) throw new Error(data?.detail || `Save failed (${res.status})`);
         if (data) onStatus(data as CredentialStatus);
-        // NVIDIA keys also gate a model-picker section, so both re-probe it.
-        if (def.id === "openrouter" || def.id === "nvidia") notifyProviderAuthChanged();
+        // Provider keys gate model-picker sections, so re-probe them.
+        if (def.notifyProviders) notifyProviderAuthChanged();
         setKeyInput("");
         setSaved(true);
       } catch (exc) {
@@ -142,20 +160,26 @@ function KeyRow({
         setSaving(false);
       }
     },
-    [def.bodyField, onStatus],
+    [def.bodyField, def.notifyProviders, onStatus],
   );
+
+  const secret = def.secret !== false;
 
   return (
     <div className="flex flex-col gap-2">
       <label className="text-xs font-medium">
-        <a
-          href={def.keysUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hover:underline"
-        >
-          {def.label}
-        </a>
+        {def.keysUrl ? (
+          <a
+            href={def.keysUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:underline"
+          >
+            {def.label}
+          </a>
+        ) : (
+          def.label
+        )}
       </label>
       {error && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -165,7 +189,8 @@ function KeyRow({
       {current?.set && (
         <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
           <span>
-            Key set — <code className="font-mono">{current.masked}</code>
+            {secret ? "Key set" : "Set"} —{" "}
+            <code className="font-mono break-all">{current.masked}</code>
           </span>
           <Button
             variant="ghost"
@@ -180,10 +205,14 @@ function KeyRow({
       )}
       <div className="flex items-center gap-2">
         <Input
-          type="password"
+          type={secret ? "password" : "text"}
           value={keyInput}
           autoComplete="off"
-          placeholder={current?.set ? `Replace key (${def.placeholder})` : def.placeholder}
+          placeholder={
+            current?.set
+              ? `Replace ${secret ? "key" : "value"}${def.placeholder ? ` (${def.placeholder})` : ""}`
+              : def.placeholder
+          }
           className="h-8 text-xs font-mono"
           onChange={(e) => {
             setKeyInput(e.target.value);
@@ -209,6 +238,232 @@ function KeyRow({
       )}
       <p className="text-[11px] text-muted-foreground leading-relaxed">{def.hint}</p>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Direct model providers — every Pi API-key / cloud-credential provider, from
+// GET /providers. Field definitions (env vars, labels, secrecy) come from the
+// backend catalogue so adding a provider there needs no UI change.
+// ---------------------------------------------------------------------------
+
+interface DirectProviderField {
+  envVar: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  placeholder?: string;
+  hint?: string;
+  isKey: boolean;
+  credentialId: string;
+  bodyField: string;
+}
+
+interface DirectProviderStatus {
+  id: string;
+  name: string;
+  sectionLabel: string;
+  hint: string;
+  keysUrl?: string;
+  billingMode: "payg" | "subscription";
+  billingNote: string;
+  oauth: boolean;
+  fields: DirectProviderField[];
+  configured: boolean;
+  authType: "api_key" | "oauth" | null;
+  source: string | null;
+  modelCount: number;
+}
+
+function fieldKeyDef(provider: DirectProviderStatus, field: DirectProviderField): KeyDef {
+  return {
+    id: field.credentialId,
+    bodyField: field.bodyField,
+    label: field.label,
+    placeholder: field.placeholder ?? (field.secret ? "…" : ""),
+    keysUrl: field.isKey ? provider.keysUrl : undefined,
+    hint: field.hint
+      ? `${field.hint} Stored as ${field.envVar} in .env.`
+      : `Stored as ${field.envVar} in .env.`,
+    secret: field.secret,
+    notifyProviders: true,
+  };
+}
+
+function DirectProvidersSection({
+  status,
+  onStatus,
+}: {
+  status: CredentialStatus | null;
+  onStatus: (status: CredentialStatus) => void;
+}) {
+  const [providers, setProviders] = useState<DirectProviderStatus[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showAll, setShowAll] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiFetch("/providers");
+      if (!res.ok) throw new Error(`Failed to load providers (${res.status})`);
+      const data = (await res.json()) as { providers?: DirectProviderStatus[] };
+      setProviders(Array.isArray(data.providers) ? data.providers : []);
+      setError(null);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to load providers");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const onChanged = () => void load();
+    window.addEventListener(PROVIDER_AUTH_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(PROVIDER_AUTH_CHANGED_EVENT, onChanged);
+  }, [load]);
+
+  const configuredCount = providers?.filter((p) => p.configured).length ?? 0;
+  const q = filter.trim().toLowerCase();
+  const visible = (providers ?? []).filter((p) => {
+    if (q) {
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        p.fields.some((f) => f.envVar.toLowerCase().includes(q))
+      );
+    }
+    return showAll || p.configured;
+  });
+
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  return (
+    <fieldset className="rounded-xl border p-3.5">
+      <legend className="px-1 text-xs font-medium">Direct model providers</legend>
+      <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+        Every provider Pi supports natively — Anthropic, OpenAI, Google, Azure,
+        Bedrock, Vertex, Cloudflare, NVIDIA NIM, Groq, Mistral, DeepSeek,
+        Hugging Face, Fireworks, Together, and more. A configured provider gets
+        its own section in the model picker. Keys are stored in{" "}
+        <code className="rounded bg-muted px-1 py-0.5 text-[10px]">.env</code>{" "}
+        and picked up by new runs immediately.
+      </p>
+
+      {error && (
+        <div className="mb-3 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
+
+      <div className="mb-3 flex items-center gap-2">
+        <Input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search providers (name or env var)…"
+          className="h-8 text-xs"
+          aria-label="Search direct model providers"
+        />
+        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">
+          {providers ? `${configuredCount} configured` : "Loading…"}
+        </span>
+      </div>
+
+      {providers && visible.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">
+          {q
+            ? "No provider matches."
+            : "No direct provider configured yet. Show all to add one."}
+        </p>
+      ) : null}
+
+      <div className="flex flex-col gap-2">
+        {visible.map((provider) => {
+          const open = expanded.has(provider.id);
+          const keyField = provider.fields.find((f) => f.isKey);
+          const keySet = keyField ? Boolean(status?.[keyField.credentialId]?.set) : false;
+          return (
+            <div key={provider.id} className="rounded-lg border">
+              <button
+                type="button"
+                onClick={() => toggle(provider.id)}
+                aria-expanded={open}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted/40"
+              >
+                <ChevronRightIcon
+                  className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
+                  aria-hidden
+                />
+                <span className="font-medium">{provider.name}</span>
+                {provider.configured ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-px text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2Icon className="size-3" aria-hidden />
+                    {provider.authType === "oauth"
+                      ? "Connected (OAuth)"
+                      : provider.source && !keySet
+                        ? `Configured via ${provider.source}`
+                        : "Configured"}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
+                    Not configured
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                  {provider.configured && provider.modelCount > 0
+                    ? `${provider.modelCount} model${provider.modelCount === 1 ? "" : "s"}`
+                    : provider.billingMode === "subscription"
+                      ? "plan / credits"
+                      : "pay-as-you-go"}
+                </span>
+              </button>
+              {open ? (
+                <div className="flex flex-col gap-4 border-t px-3 py-3">
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    {provider.hint}
+                    {provider.oauth ? (
+                      <> You can also connect this provider by signing in under <span className="font-medium">Model providers</span>.</>
+                    ) : null}
+                  </p>
+                  {provider.fields.map((field) => (
+                    <KeyRow
+                      key={field.envVar}
+                      def={fieldKeyDef(provider, field)}
+                      current={status?.[field.credentialId]}
+                      onStatus={onStatus}
+                    />
+                  ))}
+                  <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+                    {provider.billingNote}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {providers && !q ? (
+        <div className="mt-3 flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-xs"
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll
+              ? "Show configured only"
+              : `Show all ${providers.length} providers`}
+          </Button>
+        </div>
+      ) : null}
+    </fieldset>
   );
 }
 
@@ -505,8 +760,10 @@ function ApiKeysPanel() {
         <p className="text-xs text-muted-foreground mt-1">
           K-Dense BYOK is bring-your-own-key. Keys stay on this machine (saved
           to <code className="rounded bg-muted px-1 py-0.5 text-[11px]">.env</code>)
-          — nothing is sent to K-Dense. The search keys are optional: web
-          search, page fetching, and GitHub reading work without any of them.
+          — nothing is sent to K-Dense. Bring an OpenRouter key, a key for any
+          Pi provider below, a subscription (Model providers tab), or run local
+          models. The search keys are optional: web search, page fetching, and
+          GitHub reading work without any of them.
         </p>
       </div>
 
@@ -528,6 +785,7 @@ function ApiKeysPanel() {
               onStatus={setStatusState}
             />
           ))}
+          <DirectProvidersSection status={statusState} onStatus={setStatusState} />
           <ModalCredentialPair status={statusState} onStatus={setStatusState} />
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             Other keys (e.g.{" "}
@@ -589,6 +847,100 @@ function AppearancePanel() {
   );
 }
 
+/**
+ * Persisted size for the Settings dialog plus a drag handle for its corner.
+ * The dialog is centered by Radix, so the handle grows the box on both sides.
+ */
+function useResizableDialog(open: boolean): {
+  size: DialogSize | null;
+  handleProps: {
+    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+    onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+    onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+    onDoubleClick: () => void;
+    onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+  };
+} {
+  const [size, setSize] = useState<DialogSize | null>(null);
+  // Latest committed size for event handlers: persisting from inside a state
+  // updater runs at flush time and can overwrite a reset that happened later.
+  const sizeRef = useRef<DialogSize | null>(null);
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
+  const drag = useRef<{ pointerId: number; startX: number; startY: number; start: DialogSize } | null>(null);
+  const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    let stored: DialogSize | null = null;
+    try {
+      stored = readStoredDialogSize(window.localStorage, SETTINGS_DIALOG_SIZE_KEY);
+    } catch {
+      stored = null;
+    }
+    setSize(clampDialogSize(stored ?? DEFAULT_SETTINGS_DIALOG_SIZE, viewport()));
+    const onResize = () => setSize((current) => (current ? clampDialogSize(current, viewport()) : current));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open]);
+
+  const persist = (next: DialogSize) => {
+    try {
+      writeStoredDialogSize(window.localStorage, SETTINGS_DIALOG_SIZE_KEY, next);
+    } catch {
+      /* not remembered */
+    }
+  };
+
+  return {
+    size,
+    handleProps: {
+      onPointerDown: (event) => {
+        if (!size) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, start: size };
+      },
+      onPointerMove: (event) => {
+        const state = drag.current;
+        if (!state || state.pointerId !== event.pointerId) return;
+        setSize(resizeFromCorner(state.start, event.clientX - state.startX, event.clientY - state.startY, viewport()));
+      },
+      onPointerUp: (event) => {
+        const state = drag.current;
+        if (!state || state.pointerId !== event.pointerId) return;
+        drag.current = null;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        if (sizeRef.current) persist(sizeRef.current);
+      },
+      onDoubleClick: () => {
+        drag.current = null;
+        const next = clampDialogSize(DEFAULT_SETTINGS_DIALOG_SIZE, viewport());
+        sizeRef.current = next;
+        setSize(next);
+        persist(next);
+      },
+      onKeyDown: (event) => {
+        if (!size) return;
+        const step = event.shiftKey ? 64 : 16;
+        const delta: Record<string, [number, number]> = {
+          ArrowRight: [step, 0],
+          ArrowLeft: [-step, 0],
+          ArrowDown: [0, step],
+          ArrowUp: [0, -step],
+        };
+        const move = delta[event.key];
+        if (!move) return;
+        event.preventDefault();
+        const next = clampDialogSize({ width: size.width + move[0], height: size.height + move[1] }, viewport());
+        setSize(next);
+        persist(next);
+      },
+    },
+  };
+}
+
 export function SettingsDialog({
   open,
   onOpenChange,
@@ -596,12 +948,24 @@ export function SettingsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  // Skills / prompt templates edited here feed the composer's pickers, which
+  // fetch once per project — announce a change when the dialog closes.
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) notifyCapabilitiesChanged();
+      onOpenChange(next);
+    },
+    [onOpenChange],
+  );
+  const { size, handleProps } = useResizableDialog(open);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className={cn(
-          "sm:max-w-2xl h-[min(560px,80dvh)] flex flex-col gap-0 p-0 overflow-hidden"
+          "flex flex-col gap-0 p-0 overflow-hidden sm:max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)]"
         )}
+        style={size ? { width: size.width, height: size.height } : undefined}
+        data-testid="settings-dialog"
       >
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <DialogTitle>Settings</DialogTitle>
@@ -641,6 +1005,13 @@ export function SettingsDialog({
               Skills
             </TabsTrigger>
             <TabsTrigger
+              value="prompts"
+              className="justify-start gap-2 px-3 text-xs w-full"
+            >
+              <SlashIcon className="size-3.5" />
+              Prompt templates
+            </TabsTrigger>
+            <TabsTrigger
               value="specialists"
               className="justify-start gap-2 px-3 text-xs w-full"
             >
@@ -670,28 +1041,45 @@ export function SettingsDialog({
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="model-providers" className="flex-1 min-h-0 p-5">
+          <TabsContent value="model-providers" className="min-w-0 flex-1 min-h-0 p-5">
             <ProviderAuthPanel />
           </TabsContent>
-          <TabsContent value="api-keys" className="flex-1 min-h-0 p-5">
+          <TabsContent value="api-keys" className="min-w-0 flex-1 min-h-0 p-5">
             <ApiKeysPanel />
           </TabsContent>
-          <TabsContent value="skills" className="flex-1 min-h-0 p-5 overflow-y-auto">
+          <TabsContent value="skills" className="min-w-0 flex-1 min-h-0 p-5 overflow-y-auto">
             <SkillsPanel />
           </TabsContent>
-          <TabsContent value="specialists" className="flex-1 min-h-0 p-5 overflow-y-auto">
+          <TabsContent value="prompts" className="min-w-0 flex-1 min-h-0 p-5 overflow-y-auto">
+            <PromptsPanel />
+          </TabsContent>
+          <TabsContent value="specialists" className="min-w-0 flex-1 min-h-0 p-5 overflow-y-auto">
             <SubagentsPanel />
           </TabsContent>
-          <TabsContent value="connectors" className="flex-1 min-h-0 p-5 overflow-y-auto">
+          <TabsContent value="connectors" className="min-w-0 flex-1 min-h-0 p-5 overflow-y-auto">
             <ConnectorsPanel />
           </TabsContent>
-          <TabsContent value="appearance" className="flex-1 min-h-0 p-5">
+          <TabsContent value="appearance" className="min-w-0 flex-1 min-h-0 p-5">
             <AppearancePanel />
           </TabsContent>
-          <TabsContent value="fusion" className="flex-1 min-h-0 p-5 overflow-y-auto">
+          <TabsContent value="fusion" className="min-w-0 flex-1 min-h-0 p-5 overflow-y-auto">
             <FusionPanel />
           </TabsContent>
         </Tabs>
+              <div
+          {...handleProps}
+          role="separator"
+          aria-label="Resize settings"
+          aria-orientation="horizontal"
+          tabIndex={0}
+          title="Drag to resize · double-click to reset"
+          className="absolute bottom-0 right-0 size-5 cursor-nwse-resize touch-none select-none rounded-br-lg text-muted-foreground/60 outline-none hover:text-foreground focus-visible:text-foreground"
+          data-testid="settings-resize-handle"
+        >
+          <svg viewBox="0 0 16 16" className="size-full p-1" aria-hidden="true">
+            <path d="M14 2 2 14M14 8l-6 6M14 13l-1 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+          </svg>
+        </div>
       </DialogContent>
     </Dialog>
   );

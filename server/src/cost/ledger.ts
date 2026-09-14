@@ -12,6 +12,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { atomicJson } from "../atomic-json.ts";
 import { activePaths, getProject, PROJECT_ID_RE, resolvePaths } from "../projects.ts";
 import {
   billingForProvider,
@@ -106,6 +107,13 @@ export interface CostEntry {
   /** Modal costs are estimates (elapsed wall time × catalogue rate). */
   estimated?: boolean;
   terminalState?: string;
+  /** Why this work ran when no user prompt started it (pi-subagents schedules). */
+  origin?: CostOrigin;
+}
+
+export interface CostOrigin {
+  schedule: string;
+  name?: string;
 }
 
 function inferredBilling(model: string, role?: CostEntry["role"]): BillingContext {
@@ -160,6 +168,7 @@ export function recordRun(args: {
   estimated?: boolean;
   terminalState?: string;
   billing?: BillingContext;
+  origin?: CostOrigin;
 }): CostEntry | null {
   const delta = snapshotDelta(args.before, args.after);
   const billing = args.billing ?? inferredBilling(args.model, args.role);
@@ -190,6 +199,7 @@ export function recordRun(args: {
     ...(args.jobId ? { jobId: args.jobId } : {}),
     ...(args.estimated !== undefined ? { estimated: args.estimated } : {}),
     ...(args.terminalState ? { terminalState: args.terminalState } : {}),
+    ...(args.origin ? { origin: args.origin } : {}),
   };
   const file = costsPath(args.sessionId, args.projectId);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -208,6 +218,7 @@ export function recordSubagentRun(
   model: string,
   stats: { cost: number; tokens: { input: number; output: number; cacheRead: number; total: number } },
   billing?: BillingContext,
+  origin?: CostOrigin,
 ): CostEntry | null {
   if (!sessionId) return null;
   return recordRun({
@@ -215,6 +226,7 @@ export function recordSubagentRun(
     projectId,
     model,
     role: "subagent",
+    origin,
     before: { costUsd: 0, input: 0, output: 0, cacheRead: 0, total: 0 },
     after: {
       costUsd: stats.cost,
@@ -302,10 +314,9 @@ function reservationPath(projectId: string, reservationId: string): string {
 }
 
 function writeAtomicJson(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
-  fs.renameSync(tmp, file);
+  // A reservation that surfaces empty after a power loss would silently drop a
+  // budget hold, so the data is fsynced before the rename.
+  atomicJson(file, value);
 }
 
 export function listComputeReservations(projectId: string): ComputeReservation[] {
@@ -441,6 +452,17 @@ export function reattributeModalJobCost(
   ) {
     return false;
   }
+  // Insert first, then remove: a crash between the two writes leaves the row
+  // duplicated across both ledgers (repaired by the target dedupe check on the
+  // next call) rather than lost, which would undercount project spend.
+  const targetFile = costsPath(toSessionId, projectId);
+  fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+  fs.appendFileSync(
+    targetFile,
+    JSON.stringify({ ...entry, sessionId: toSessionId }) + "\n",
+    "utf-8",
+  );
+
   const sourceFile = costsPath(fromSessionId, projectId);
   const kept = source.filter((row) => row.entryId !== entry.entryId);
   fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
@@ -451,14 +473,6 @@ export function reattributeModalJobCost(
     { encoding: "utf-8", mode: 0o600 },
   );
   fs.renameSync(tmp, sourceFile);
-
-  const targetFile = costsPath(toSessionId, projectId);
-  fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-  fs.appendFileSync(
-    targetFile,
-    JSON.stringify({ ...entry, sessionId: toSessionId }) + "\n",
-    "utf-8",
-  );
   return true;
 }
 
@@ -635,6 +649,25 @@ export function projectCostSummary(projectId: string): ProjectCostSummary {
       state,
     },
   };
+}
+
+/** Ledgered USD per pi-subagents schedule id across every session of a project. */
+export function scheduleSpend(projectId: string): Record<string, number> {
+  const paths = resolvePaths(projectId);
+  const out: Record<string, number> = {};
+  try {
+    for (const dirent of fs.readdirSync(paths.runsDir, { withFileTypes: true })) {
+      if (!dirent.isDirectory()) continue;
+      for (const entry of sessionCostSummary(dirent.name, projectId).entries) {
+        const id = entry.origin?.schedule;
+        if (!id) continue;
+        out[id] = (out[id] ?? 0) + finite(entry.costUsd);
+      }
+    }
+  } catch {
+    /* no runs yet */
+  }
+  return out;
 }
 
 /** True when the project has a cap and cumulative spend has reached it. */

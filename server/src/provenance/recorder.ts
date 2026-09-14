@@ -16,6 +16,17 @@
  *   read            the tool names its path -> `observed` input edge
  *   everything else recorded as a step with no file edges
  *
+ * Opaque calls also get `inferred` INPUT edges for files their command line
+ * names that existed beforehand and were not written (see mentions.ts) — the
+ * script and the data a `python` invocation read, which the scan cannot see.
+ *
+ * ENVIRONMENT: the recorder captures the sandbox environment (interpreter
+ * versions, packages, lockfile hashes — see environment.ts) once at
+ * construction, stamps every step with its id, and re-captures after a step
+ * that plausibly changed it (`uv add`, a lockfile in the diff). The capture
+ * runs alongside the baseline walk, so it costs the run nothing in the normal
+ * case.
+ *
  * LAG: the drain is async so a stat walk never blocks the event handler — a
  * blocked handler stalls SSE for every tab in the project. The queue is FIFO and
  * serialized, so scans stay ordered, but if two tool calls finish before the
@@ -28,6 +39,15 @@ import path from "node:path";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { relativizeSandboxPaths } from "../agent/events.ts";
 import { isUserVisible, isWithin } from "../sandbox-fs.ts";
+import {
+  captureAndStoreEnvironment,
+  captureEnvironment as defaultCaptureEnvironment,
+  commandFromArgs,
+  environmentFingerprint,
+  environmentMayHaveChanged,
+  type EnvironmentCapture,
+} from "./environment.ts";
+import { mentionedPaths } from "./mentions.ts";
 import {
   diffSnapshots,
   scanSandbox,
@@ -48,7 +68,7 @@ import {
 /** Tools that cannot change the sandbox. Everything absent from this set is
  *  treated as potentially mutating and gets a scan — an unknown MCP tool is far
  *  likelier to write a file than to be worth skipping. */
-const READ_ONLY_TOOLS = new Set([
+export const READ_ONLY_TOOLS = new Set([
   "read",
   "grep",
   "find",
@@ -56,9 +76,14 @@ const READ_ONLY_TOOLS = new Set([
   "web_search",
   "fetch_content",
   "get_search_content",
+  "source_check",
+  // pi-subagents supervisor channel: replying to a child touches no files.
+  "subagent_supervisor",
+  "contact_supervisor",
   "interview",
   "notebook",
   "scientific_result",
+  "notebook_search",
   "list_pdf_annotations",
   "modal_status",
   "modal_instances",
@@ -91,6 +116,9 @@ export interface ProvenanceRecorderOptions {
   getModel: () => string | undefined;
   /** Non-fatal recorder failures. Provenance must never break a run. */
   onError?: (err: unknown) => void;
+  /** Environment probe; injectable so tests need not spawn interpreters.
+   *  `false` disables capture entirely. */
+  captureEnvironment?: EnvironmentCapture | false;
 }
 
 export class ProvenanceRecorder {
@@ -102,6 +130,10 @@ export class ProvenanceRecorder {
   private snapshot: Snapshot = new Map();
   private snapshotDegraded?: DegradeReason;
   private readonly baselineReady: Promise<void>;
+  private environmentReady: Promise<void>;
+  private environmentId?: string;
+  /** Stat-level identity of the venv + lockfiles at the last capture. */
+  private environmentFingerprint = "";
 
   constructor(opts: ProvenanceRecorderOptions) {
     this.opts = opts;
@@ -111,12 +143,34 @@ export class ProvenanceRecorder {
     // completes before this resolves can have its writes folded into the
     // baseline and go unreported — documented in docs/provenance.md.
     this.baselineReady = this.refreshSnapshot();
+    // Same overlap for the environment probe.
+    this.environmentReady = this.captureEnvironment();
   }
 
   private async refreshSnapshot(): Promise<void> {
     const result = await scanSandbox(this.opts.sandboxRoot);
     this.snapshot = result.snapshot;
     this.snapshotDegraded = result.degraded;
+  }
+
+  /** (Re)capture the environment. A failed probe keeps the previous id — an
+   *  environment we last saw is a better answer than none. */
+  private async captureEnvironment(): Promise<void> {
+    const capture = this.opts.captureEnvironment;
+    if (capture === false) return;
+    try {
+      // Fingerprint BEFORE the capture so a change landing mid-capture is
+      // noticed by the next comparison rather than missed.
+      this.environmentFingerprint = environmentFingerprint(this.opts.sandboxRoot);
+      const id = await captureAndStoreEnvironment(
+        this.opts.sandboxRoot,
+        this.opts.projectId,
+        capture ?? defaultCaptureEnvironment,
+      );
+      if (id) this.environmentId = id;
+    } catch (err) {
+      this.opts.onError?.(err);
+    }
   }
 
   /** Sync, cheap, and never throws: safe to call straight from Pi's event handler. */
@@ -174,6 +228,7 @@ export class ProvenanceRecorder {
    *  finished so the JSONL is complete before the terminal frames go out. */
   async flush(): Promise<void> {
     await this.baselineReady;
+    await this.environmentReady;
     while (this.drainPromise) {
       await this.drainPromise;
       // A job scheduled while we awaited starts a fresh drain; keep going.
@@ -251,10 +306,15 @@ export class ProvenanceRecorder {
     timestamp: number;
   }): Promise<void> {
     await this.baselineReady;
+    await this.environmentReady;
 
     const inputs: ArtifactRef[] = [];
     const outputs: ArtifactRef[] = [];
     let degraded = this.snapshotDegraded;
+    // The environment the step ran IN — captured before it, not after: a step
+    // that installs a package belongs to the environment it started from.
+    const environmentId = this.environmentId;
+    let recaptureEnvironment = false;
 
     if (step.toolName === "read") {
       const declared = declaredPath(step.args);
@@ -290,6 +350,27 @@ export class ProvenanceRecorder {
         const diff = diffSnapshots(before, scan.snapshot);
         this.snapshot = scan.snapshot;
         const confidence: EdgeConfidence = lagged ? "inferred" : "observed";
+        // Inputs: files the command line names that existed before the call
+        // and which the call did not touch. Evidence rather than observation,
+        // so always `inferred` regardless of lag.
+        const command = commandFromArgs(step.args);
+        if (command) {
+          const written = new Set([...diff.created, ...diff.modified, ...diff.deleted]);
+          for (const rel of mentionedPaths(command, (p) => before.has(p) && !written.has(p))) {
+            const ref = this.refFor(rel, "read", "inferred");
+            if (ref) inputs.push(ref);
+          }
+        }
+        // The venv and uv.lock are hidden from the scan, so `uv run` syncing a
+        // fresh venv leaves no trace in `diff`; the fingerprint sees it.
+        recaptureEnvironment =
+          environmentMayHaveChanged(step.args, [
+            ...diff.created,
+            ...diff.modified,
+            ...diff.deleted,
+          ]) ||
+          (this.opts.captureEnvironment !== false &&
+            environmentFingerprint(this.opts.sandboxRoot) !== this.environmentFingerprint);
         for (const rel of diff.created) {
           const ref = this.refFor(rel, "created", confidence);
           if (ref) outputs.push(ref);
@@ -329,7 +410,16 @@ export class ProvenanceRecorder {
       inputs,
       outputs,
       ...(degraded ? { degraded } : {}),
+      ...(environmentId ? { environmentId } : {}),
     };
     appendStep(row, this.opts.projectId);
+
+    if (recaptureEnvironment) {
+      // Inline in the drain, so the next step sees the new id. Serialized
+      // behind this step on purpose: the capture reads the venv the step just
+      // changed.
+      this.environmentReady = this.captureEnvironment();
+      await this.environmentReady;
+    }
   }
 }

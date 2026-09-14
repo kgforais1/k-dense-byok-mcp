@@ -53,13 +53,21 @@ export interface ModalJobOwner {
   sessionId: string;
   runId?: string;
   subagentRunId?: string;
+  /**
+   * Absolute path of the submitting child's Pi session file. pi-subagents ≥0.65
+   * children are native sessions without a per-child environment, so this —
+   * which the parent receives as `results[].sessionFile` — replaces the run id
+   * as the key that re-attributes a child's jobs to its parent chat.
+   */
+  subagentSessionFile?: string;
   submittedBy: "lead" | "subagent" | "api";
 }
 
 export interface ModalTransferFile {
   path: string;
   size: number;
-  sha256: string;
+  /** Absent until the bytes were actually hashed (inputs at execute time). */
+  sha256?: string;
 }
 
 export interface ModalJobErrorInfo {
@@ -75,6 +83,13 @@ export interface ModalJobEvent {
   state?: ModalJobState;
   message?: string;
   data?: Record<string, unknown>;
+}
+
+export interface ModalJobApproval {
+  /** Server-only association; ordinary modal tool/API inputs cannot set it. */
+  batchId: string;
+  inputs: ModalTransferFile[];
+  maxReservationUsd: number;
 }
 
 export interface ModalJob {
@@ -103,6 +118,8 @@ export interface ModalJob {
   sandboxTags: Record<string, string>;
   sandboxCreatedAt?: number;
   sandboxTerminatedAt?: number;
+  /** Sandboxes created for this job whose termination was not confirmed; recovery retries. */
+  orphanedSandboxIds?: string[];
   exitCode?: number;
   error?: ModalJobErrorInfo;
   inputFiles: ModalTransferFile[];
@@ -114,6 +131,9 @@ export interface ModalJob {
   stderrBaseCursor: number;
   eventSeq: number;
   retryOf?: string;
+  approval?: ModalJobApproval;
+  /** Managed workflow cleanup was not confirmed; reconcile conservatively. */
+  approvalCleanupUncertain?: boolean;
   accounting: {
     reconciled: boolean;
     estimatedCostUsd?: number;

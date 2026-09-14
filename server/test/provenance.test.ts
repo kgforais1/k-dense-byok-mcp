@@ -91,6 +91,8 @@ function recorder(over: { runId?: string; model?: string } = {}) {
     sandboxRoot: sandbox(),
     runId: over.runId ?? "run_abc",
     getModel: () => over.model ?? "openrouter/anthropic/claude-opus-4",
+    // Environment capture has its own tests; here it would only spawn probes.
+    captureEnvironment: false,
   });
 }
 
@@ -347,6 +349,15 @@ describe("provenance recorder", () => {
     const [row] = readSteps("sess-a", PROJECT);
     expect(row.outputs).toEqual([]);
     expect(row.inputs).toEqual([]);
+  });
+
+  it("treats research recall as read-only rather than attributing concurrent file changes to it", async () => {
+    const rec = recorder(); await rec.flush();
+    rec.observe(startEvent("memory", "notebook_search", { query: "Harmony" }));
+    write("other-result.txt", "concurrent work");
+    rec.observe(endEvent("memory", "notebook_search")); await rec.flush();
+    const [step] = readSteps("sess-a", PROJECT);
+    expect(step.inputs).toEqual([]); expect(step.outputs).toEqual([]);
   });
 
   it("ignores a failed declared write", async () => {

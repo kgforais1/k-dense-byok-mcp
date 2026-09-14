@@ -17,7 +17,7 @@ Kady works like a researcher at a computer: it reads and writes files, runs code
 
 - **It asks before it assumes.** When a task is ambiguous, Kady pauses and shows an interactive question form right in the chat — multiple choice with recommended answers, free text, even image upload. Confirm its suggestions in one click or skip the form entirely.
 - **It runs real code.** Analyses happen in your project's sandbox using Python (managed automatically with [uv](https://docs.astral.sh/uv/)). You can ask to see the code, modify it, or re-run it.
-- **It activates the right skills.** 140+ pre-installed scientific skills cover genomics, proteomics, drug discovery, materials science, and more. Kady picks the relevant ones automatically — you don't need to choose.
+- **It activates the right skills.** 149 pre-installed scientific skills cover genomics, proteomics, drug discovery, materials science, and more. Kady picks the relevant ones automatically — you don't need to choose.
 - **It can delegate to specialists.** Kady has a built-in team of 21 scientific sub-agents — a `citation-checker` that verifies every reference, a `statistical-reviewer` that audits your analysis, a `peer-reviewer` that writes a journal-style report, and 18 more. Kady delegates on its own for heavy or parallel work, or you can name one yourself: *"have the citation-checker go through manuscript.md"*. See [Sub-agents](./sub-agents.md).
 - **It can search the web and read sources.** Kady (and every sub-agent) can search the web, fetch and read pages, PDFs, and entire GitHub repositories, and even understand YouTube videos — out of the box, no extra key required. Optional Exa, Perplexity, and Gemini keys unlock the direct providers (see [Installation → Optional API keys](./installation.md#6-optional-api-keys)).
 - **It presents structured scientific results.** Meaningful tables, statistical tests, plots, quality-control checks, dataset schemas, citations, molecules, and artifact bundles can appear as typed cards in the chat. Plot and file cards link to the underlying sandbox artifacts, so you can open the complete result in the center preview. These cards structure values reported by the agent; they are not an independent verification pass.
@@ -32,7 +32,7 @@ Click `+` in the chat tab strip to open a new chat in the same project. Each tab
 
 ### Choosing a model
 
-Use the model dropdown in the input bar. Any message can use a tool-capable model from OpenRouter (OpenAI, Anthropic, Google, xAI, Qwen, and more), a connected Pi OAuth provider, [NVIDIA NIM](./model-selection.md#nvidia-nim-models) (Nemotron, Llama, GPT-OSS, and more with a build.nvidia.com API key), or a free local model through [Ollama](./local-models-ollama.md). To add direct subscription models, open **Settings → Model providers** and connect ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, or xAI through the browser, device-code, or manual flow shown. The lead agent and its specialists share that Kady login. Different tabs can use different models. See [Model selection](./model-selection.md) for model refs and billing behavior.
+Use the model dropdown in the input bar. Any message can use a tool-capable model from OpenRouter (OpenAI, Anthropic, Google, xAI, Qwen, and more), a connected Pi OAuth provider, [any direct Pi provider](./model-selection.md#direct-api-key-providers) you hold a key for (Anthropic, OpenAI, Google Gemini, Groq, Mistral, DeepSeek, Azure, Bedrock, Vertex, Cloudflare, [NVIDIA NIM](./model-selection.md#nvidia-nim-models), and more), or a free local model through [Ollama](./local-models-ollama.md). To add direct subscription models, open **Settings → Model providers** and connect ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, xAI, or Kimi Code through the browser, device-code, or manual flow shown. The lead agent and its specialists share that Kady login. Different tabs can use different models. A **thinking-level** chip next to the model picker sets how much the model reasons on each run (default *High*); it is unavailable for Ollama and Fusion. See [Model selection](./model-selection.md) for model refs and billing behavior.
 
 ### Files
 
@@ -55,6 +55,10 @@ survive a backend restart, and be inspected or cancelled from the center-panel
 atomically into the local sandbox, and estimated spend is reserved against the
 project cap before resources start. See [Durable Modal compute](./modal-compute.md).
 
+### Lab Notebook, Compute, and Provenance
+
+The center panel has two pinned tabs next to file previews: **Lab Notebook**, where Kady and its specialists log hypotheses, methods, observations, and decisions as they work (see [Living Lab Notebook](./lab-notebook.md)), and **Compute**, which lists the project's Modal jobs. Every file preview also has a **Provenance** button showing which tool call produced the file, what it read, and whether the bytes have changed since a notebook entry cited them (see [Provenance](./provenance.md)).
+
 ### Scientific databases
 
 Kady can query **229 scientific and financial databases** across 18 categories — Biomedical & Health, Chemistry & Materials, Scholarly Publications, Stock Market, Earth & Climate, Astronomy & Space, and more. Just ask (*"look up this compound in PubChem"*); Kady knows how to reach them. A few databases need their own free API key, listed in `.env.example`.
@@ -66,14 +70,15 @@ Open any `.tex` file and click **Edit** for a split-pane editor with live PDF co
 ### Other input options
 
 - **Voice input** — dictate your message instead of typing. Browser-native speech needs no model credential; the server-side fallback remains OpenRouter-only.
-- **Message queue** — keep typing while Kady works; up to 5 messages queue and run in order.
+- **Steer or follow up while Kady works** — press Enter to steer the live run (delivered before the next model call, text only) or ⌥↵ to queue a follow-up that Kady handles inside the same run once it has finished its current work (images allowed). Both show up above the composer until delivered; Stop hands undelivered text back to you.
+- **Message queue** — messages that miss a run (it ended as you typed) wait in an editable client-side queue, up to 5, and run in order as new turns.
 
 ## Costs and budgets
 
 The cost pill in the header shows the active tab's session spend (`sess`) and the project total across every tab (`proj`), with token details in its popover. You can set an optional hard spend cap per project in Settings.
 
 - OpenRouter pay-as-you-go and Anthropic OAuth's Pi-documented metered extra per-token usage count toward the cap.
-- OpenAI Codex, GitHub Copilot, and xAI subscription runs track tokens and a list-price reference, but do not treat that reference as project spend. Their quotas and overages are managed by the provider, so this does not mean the usage is free or unlimited. NVIDIA NIM gets the same treatment: it bills NVIDIA-managed API credits rather than per-token dollars, so Kady records tokens without counting USD spend.
+- OpenAI Codex, GitHub Copilot, and xAI subscription runs track tokens and a list-price reference, but do not treat that reference as project spend. Their quotas and overages are managed by the provider, so this does not mean the usage is free or unlimited. NVIDIA NIM and the prepaid Qwen/Xiaomi token plans get the same treatment: they bill provider-managed credits or a plan quota rather than per-token dollars, so Kady records tokens without counting USD spend. Every other direct provider key (Anthropic, OpenAI, Groq, Azure, Bedrock, …) is pay-as-you-go at Pi's list price and counts toward the cap.
 - Local Ollama usage does not add model spend. Modal compute remains separately estimated and counted.
 
 ## Host resource monitor
@@ -98,10 +103,14 @@ This monitor is **display-only**. Nothing in Kady routes work based on it: local
 Click the gear icon in the top-right to:
 
 - connect supported subscriptions under **Model providers**,
-- manage your **API keys**,
-- connect external tools via **[MCP servers](./mcp-servers.md)** — GitHub, reference managers, databases, and hundreds more, with a built-in connection tester,
-- view, edit, and create **[sub-agents](./sub-agents.md)**,
-- change the appearance.
+- manage your **API keys** (OpenRouter, every direct Pi model provider, Modal, and optional search keys),
+- browse, enable, install, write, and edit **[Skills](./skill-management.md)**,
+- view, edit, enable, and create **[Specialists](./sub-agents.md)** (sub-agents),
+- connect external tools under **Connectors** — **[MCP servers](./mcp-servers.md)** for GitHub, reference managers, databases, and hundreds more, with a built-in connection tester,
+- manage **[Fusion](./openrouter-fusion.md)** presets,
+- change the **Appearance**.
+
+Disabling a skill, specialist, or connector is non-destructive; it takes effect in new chat tabs.
 
 ## Tips for good results
 
@@ -109,3 +118,10 @@ Click the gear icon in the top-right to:
 - **Work iteratively.** Ask for a first pass, look at the output, then refine — just like working with a colleague.
 - **Use projects to stay organized.** One project per paper or study keeps files and chat history together.
 - **Check the rough edges.** This is a beta — see [Known limitations](./limitations.md) for what to watch out for.
+
+### Settings dialog size
+
+The Settings dialog opens at about 1040×720 (smaller on small screens) and
+can be resized by dragging its bottom-right corner; arrow keys on the handle
+nudge it, double-click resets the default. The size is remembered per
+browser.

@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from "react";
 
+import { useCapabilitiesRevision } from "@/lib/capability-events";
 import { apiFetch, useProjectScopeId } from "@/lib/projects";
 
 export interface Skill {
   id: string;
   name: string;
   description: string;
+  /** User-invoked only: absent from the model's skills index, runs via `/skill:<name>`. */
+  disableModelInvocation?: boolean;
   // Optional: the backend's /skills response only includes id/name/description.
   author?: string;
   license?: string;
@@ -17,6 +20,7 @@ export interface Skill {
 export function useSkills(projectId?: string): { skills: Skill[]; loading: boolean } {
   const contextProjectId = useProjectScopeId();
   const scopedProjectId = projectId ?? contextProjectId;
+  const revision = useCapabilitiesRevision();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -37,7 +41,7 @@ export function useSkills(projectId?: string): { skills: Skill[]; loading: boole
     return () => {
       cancelled = true;
     };
-  }, [scopedProjectId]);
+  }, [scopedProjectId, revision]);
 
   return { skills, loading };
 }

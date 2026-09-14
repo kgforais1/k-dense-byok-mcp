@@ -1,12 +1,10 @@
 "use client";
 
 import { FileTreePanel } from "@/components/sandbox-panel";
-import { FilePreviewPanel } from "@/components/file-preview-panel";
+import { FilePreviewPanel, SettingsDialog, WorkflowsPanel } from "@/components/lazy-surfaces";
 import type { Model } from "@/components/model-selector";
 import { ChatTab, type ChatTabHandle, type ChatTabMeta } from "@/components/chat-tab";
 import { ChatTabsBar, type ChatTabDescriptor } from "@/components/chat-tabs-bar";
-import { SettingsDialog } from "@/components/settings-dialog";
-import { WorkflowsPanel } from "@/components/workflows-panel";
 import { ProjectSwitcher } from "@/components/project-switcher";
 import { ProjectView } from "@/components/project-view";
 import { SessionCostPill } from "@/components/session-cost-pill";
@@ -57,6 +55,7 @@ import {
   type SandboxWorkspaceState,
   type WorkspaceScreen,
 } from "@/lib/workspace-persistence";
+import { seedChatStateFromTab } from "@/lib/new-tab-state";
 import {
   useCallback,
   useEffect,
@@ -66,6 +65,16 @@ import {
 } from "react";
 
 const MAX_CHAT_TABS = 10;
+
+/**
+ * Sent by the sandbox "Auto-organize files" wand. Moving a data file silently
+ * breaks every script that read it by relative path, so the prompt makes the
+ * agent plan first, never delete, and fix references it moved out from under.
+ */
+const ORGANIZE_FILES_PROMPT =
+  "Organize the files in the sandbox into a clear folder structure (for example raw data, scripts, figures, results, notebooks). " +
+  "First list the moves you intend to make, then carry them out. Do not delete anything, and leave dotfiles, config, lock files, and virtual environments in place. " +
+  "After moving, update relative paths in any scripts, notebooks, or documents that referenced the moved files, and finish with a short summary of what moved where.";
 
 interface ChatTabEntry {
   id: string;
@@ -104,7 +113,12 @@ export default function HomePage() {
   const [projectActivities, setProjectActivities] = useState<
     Record<string, ProjectActivitySummary>
   >({});
-  const { activeProjectId, projects, loading: projectsLoading } = useProjects();
+  const {
+    activeProjectId,
+    projects,
+    loading: projectsLoading,
+    error: projectsError,
+  } = useProjects();
   const serverProjectActivities = useProjectActivities(
     workspaceHydrated && screen === "projects",
   );
@@ -175,6 +189,11 @@ export default function HomePage() {
   // this unmount only disconnects browser-side event observers.
   useEffect(() => {
     if (projectsLoading || !workspaceHydrated) return;
+    // A failed or empty list is not "every project was deleted". On a fetch
+    // error `projects` keeps its initial [] with loading=false, and the server
+    // always has at least the default project, so pruning against an empty
+    // set would wipe every project's persisted workspace on a backend blip.
+    if (projectsError || projects.length === 0) return;
     const existing = new Set(projects.map((project) => project.id));
     setOpenedProjectIds((prev) => {
       const next = prev.filter((id) => existing.has(id));
@@ -193,7 +212,7 @@ export default function HomePage() {
       return Object.keys(next).length === Object.keys(prev).length ? prev : next;
     });
     void pruneDeletedProjectState(existing);
-  }, [projects, projectsLoading, workspaceHydrated]);
+  }, [projects, projectsError, projectsLoading, workspaceHydrated]);
 
   useEffect(() => {
     if (!workspaceHydrated) return;
@@ -297,6 +316,9 @@ function WorkspacePage({
   const [showNotebook, setShowNotebook] = useState(
     () => initialState?.showNotebook ?? false,
   );
+  const [showAutomation, setShowAutomation] = useState(
+    () => initialState?.showAutomation ?? false,
+  );
   const [showCompute, setShowCompute] = useState(
     () => initialState?.showCompute ?? false,
   );
@@ -333,9 +355,19 @@ function WorkspacePage({
   // putting impure logic inside a setState updater (which strict mode runs
   // twice for purity testing).
   const tabsRef = useRef(tabs);
+  // Same ref trick for what newTab seeds a fresh tab from; both change often
+  // and neither should re-create the callback.
+  const tabWorkspaceStatesRef = useRef(tabWorkspaceStates);
+  const activeTabIdRef = useRef(activeTabId);
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+  useEffect(() => {
+    tabWorkspaceStatesRef.current = tabWorkspaceStates;
+  }, [tabWorkspaceStates]);
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
 
   // Per-tab agent meta, populated by each <ChatTab> via onMetaChange. We
   // read from this to drive the cost pill and tab
@@ -382,10 +414,8 @@ function WorkspacePage({
       }
       setTabsMeta((prev) => {
         const existing = prev[tabId];
-        // Avoid noisy state updates that would loop back into ChatTab's
-        // onMetaChange dependency array. We compare the small primitive
-        // fields plus identity-equality on the messages array (useAgent
-        // returns a fresh array only when it actually mutates).
+        // Token deltas stay local to ChatTab. Only workspace-visible state
+        // crosses this boundary; notebook-only updates must still propagate.
         if (
           existing &&
           existing.sessionId === meta.sessionId &&
@@ -393,7 +423,9 @@ function WorkspacePage({
           existing.runState === meta.runState &&
           existing.isStreaming === meta.isStreaming &&
           existing.userMessageCount === meta.userMessageCount &&
-          existing.messages === meta.messages
+          existing.needsInput === meta.needsInput &&
+          existing.notebookEntries === meta.notebookEntries &&
+          existing.subagentCompletions === meta.subagentCompletions
         ) {
           return prev;
         }
@@ -447,11 +479,15 @@ function WorkspacePage({
   // projects keep their SSE streams mounted but catch up when reopened.
   useEffect(() => {
     if (!isActive || !anyStreaming) return;
-    const id = setInterval(() => {
-      sandboxFetchTree();
-      sandboxRefreshOpenTabs();
-    }, 1500);
-    return () => clearInterval(id);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (cancelled) return;
+      if (!document.hidden) await Promise.all([sandboxFetchTree(), sandboxRefreshOpenTabs()]);
+      if (!cancelled) timer = setTimeout(tick, 1500);
+    };
+    timer = setTimeout(tick, 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [anyStreaming, isActive, sandboxFetchTree, sandboxRefreshOpenTabs]);
 
   const [treeWidth, setTreeWidth] = useState(
@@ -507,6 +543,7 @@ function WorkspacePage({
       view,
       showNotebook,
       showCompute,
+      showAutomation,
       computeScope,
       sandboxOpen,
       chatOpen,
@@ -521,6 +558,7 @@ function WorkspacePage({
       computeScope,
       sandboxOpen,
       sandboxWorkspace,
+      showAutomation,
       showCompute,
       showNotebook,
       tabWorkspaceStates,
@@ -575,6 +613,16 @@ function WorkspacePage({
     // isActive=false and display:none.
     if (tabsRef.current.length >= MAX_CHAT_TABS) return;
     const id = makeTabId();
+    // A new chat continues the same piece of work far more often than it
+    // switches models, so carry the active tab's model, thinking level, and
+    // compute target over instead of resetting to the app defaults. Drafts,
+    // attachments, and queued prompts stay with the tab they belong to.
+    const seeded = seedChatStateFromTab(
+      tabWorkspaceStatesRef.current[activeTabIdRef.current],
+    );
+    if (seeded) {
+      setTabWorkspaceStates((prev) => ({ ...prev, [id]: seeded }));
+    }
     setTabs((prev) =>
       prev.length >= MAX_CHAT_TABS
         ? prev
@@ -688,12 +736,13 @@ function WorkspacePage({
     sandboxSelectFile(path);
     setShowNotebook(false);
     setShowCompute(false);
+    setShowAutomation(false);
   }, [sandboxSelectFile]);
   const handleOrganizeFiles = useCallback(() => {
     const handle = tabHandles.current.get(activeTabId);
     if (!handle) return;
     setView("chat");
-    void handle.sendQuick("Organize all the files in the sandbox directory");
+    void handle.sendQuick(ORGANIZE_FILES_PROMPT);
   }, [activeTabId]);
 
   // ------------------------------------------------------------------
@@ -702,12 +751,14 @@ function WorkspacePage({
   const [notebookFocus, setNotebookFocus] = useState<{ id: string; token: number } | null>(null);
   const handleViewInNotebook = useCallback((entryId: string) => {
     setShowCompute(false);
+    setShowAutomation(false);
     setShowNotebook(true);
     setNotebookFocus({ id: entryId, token: Date.now() });
   }, []);
   const [computeFocus, setComputeFocus] = useState<{ id: string; token: number } | null>(null);
   const handleViewCompute = useCallback((jobId?: string) => {
     setShowNotebook(false);
+    setShowAutomation(false);
     setShowCompute(true);
     if (jobId) setComputeFocus({ id: jobId, token: Date.now() });
   }, []);
@@ -787,15 +838,7 @@ function WorkspacePage({
         Object.values(tabsMeta).map((meta) => ({
           isStreaming: meta.isStreaming,
           runState: meta.runState,
-          needsInput:
-            meta.isStreaming &&
-            meta.messages.some((message) =>
-              message.activities?.some(
-                (activity) =>
-                  activity.toolName === "interview" &&
-                  activity.status === "running",
-              ),
-            ),
+          needsInput: meta.needsInput,
         })),
         budgetBlocked,
       ),
@@ -1041,12 +1084,20 @@ function WorkspacePage({
               showNotebook={showNotebook}
               onSelectNotebook={() => {
                 setShowCompute(false);
+                setShowAutomation(false);
                 setShowNotebook(true);
               }}
               showCompute={showCompute}
               onSelectCompute={() => {
                 setShowNotebook(false);
+                setShowAutomation(false);
                 setShowCompute(true);
+              }}
+              showAutomation={showAutomation}
+              onSelectAutomation={() => {
+                setShowNotebook(false);
+                setShowCompute(false);
+                setShowAutomation(true);
               }}
               computeSessionId={activeSessionId}
               computeScope={computeScope}

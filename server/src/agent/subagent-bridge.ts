@@ -11,11 +11,11 @@
  *     DefaultResourceLoader can load it per session.
  *  2. `makeSubagentLedgerExtension()` — our own extension that (a) blocks
  *     `subagent` calls once the project's spend cap is hit, and (b) ledgers
- *     each child run's usage (child processes have their own sessions, so
- *     their spend would otherwise be invisible to the project budget).
+ *     each child run's usage (children have their own sessions, so their
+ *     spend would otherwise be invisible to the project budget).
  *  3. `makeSubagentRefusalExtension()` — annotates a child's tool result when
  *     the model provider refused it, since that failure happens in another
- *     process and reaches us only as opaque runner text.
+ *     session (pi-subagents' runner process) and reaches us only as runner text.
  * Agent definition files themselves (seeding, parsing, CRUD) live in
  * agent-files.ts; the seeding call happens in session-registry before each
  * session build.
@@ -35,7 +35,7 @@ import {
 import { resolvePaths } from "../projects.ts";
 import { listAgents, settingsPinnedModels, subagentsPackageDir } from "./agent-files.ts";
 import { isProviderRefusal, providerRefusalGuidance } from "./model-refusal.ts";
-import { modelReference } from "./models.ts";
+import { isOAuthOnlyProvider, modelReference } from "./models.ts";
 import { isSubscriptionProvider } from "./provider-auth.ts";
 
 const require_ = createRequire(import.meta.url);
@@ -86,6 +86,8 @@ const ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 /** Subset of the async completion payload (the runner's result-file JSON). */
 interface AsyncCompletePayload {
   id?: string | null;
+  /** Present when pi-subagents fired the run from a durable schedule. */
+  scheduleOrigin?: { id?: string; name?: string } | null;
   results?: Array<{
     agent?: string;
     model?: string;
@@ -381,8 +383,10 @@ function unsupportedDirectProviders(
     ...new Set(
       [...refs].flatMap((ref) => {
         const provider = ref.split("/", 1)[0] ?? "";
-        return isSubscriptionProvider(provider) &&
-          !isProviderUsingOAuth(provider)
+        // Only OAuth-only providers (openai-codex, github-copilot, radius)
+        // need the login; anthropic/xai/kimi-coding also take an API key,
+        // and the run-time auth check rejects a missing one with a clear error.
+        return isOAuthOnlyProvider(provider) && !isProviderUsingOAuth(provider)
           ? [provider]
           : [];
       }),
@@ -503,6 +507,18 @@ function recordModelAttempts(args: {
   return recorded;
 }
 
+/**
+ * Notified when the lead creates/resumes/runs a schedule through the tool, so
+ * the scheduler (agent/scheduler.ts, registered from index.ts to avoid an
+ * import cycle through session-registry) can keep a resident session alive.
+ */
+let scheduleActivityListener: ((projectId: string, action: string) => void) | null = null;
+export function setScheduleActivityListener(
+  listener: ((projectId: string, action: string) => void) | null,
+): void {
+  scheduleActivityListener = listener;
+}
+
 // Async completions already ledgered, keyed by run id + child session file.
 // Module-level because every live session registers its own listener and
 // pi-subagents may deliver the same completion to more than one of them.
@@ -526,6 +542,47 @@ export function makeSubagentLedgerExtension(
       if (event.toolName !== "subagent") return;
       const action =
         typeof event.input.action === "string" ? event.input.action : undefined;
+      // Schedules defer model work past this hook (a fire produces no tool
+      // call), so gate their creation and manual firing like a launch now.
+      if (action === "schedule.create") {
+        const budget = isBudgetExceeded(projectId);
+        const parentModel = getParentModel();
+        pinInheritedChildModels(projectId, event.input, parentModel);
+        const unsupported = unsupportedDirectProviders(projectId, event.input, isProviderUsingOAuth);
+        if (unsupported.length > 0) {
+          return {
+            block: true,
+            reason:
+              `Schedule blocked: ${unsupported.join(", ")} direct models require a connected ` +
+              `subscription login in Settings; ambient API keys are not supported for this route.`,
+          };
+        }
+        if (budget.exceeded && requestedBillings(projectId, event.input, parentModel, isProviderUsingOAuth).some(billingCountsTowardBudget)) {
+          return {
+            block: true,
+            reason:
+              `Schedule blocked: the project has reached its spend limit ` +
+              `($${budget.totalUsd.toFixed(2)} / $${(budget.limitUsd ?? 0).toFixed(2)}). ` +
+              `Raise the limit before scheduling recurring work.`,
+          };
+        }
+        scheduleActivityListener?.(projectId, action);
+        return;
+      }
+      if (action === "schedule.run" || action === "schedule.run-due" || action === "schedule.resume") {
+        // The schedule's model is not in the payload: fail closed at the cap.
+        const budget = isBudgetExceeded(projectId);
+        if (budget.exceeded && action !== "schedule.resume") {
+          return {
+            block: true,
+            reason:
+              `Scheduled run blocked: the project has reached its spend limit ` +
+              `($${budget.totalUsd.toFixed(2)} / $${(budget.limitUsd ?? 0).toFixed(2)}).`,
+          };
+        }
+        scheduleActivityListener?.(projectId, action);
+        return;
+      }
       if (action && action !== "resume") return;
       const budget = isBudgetExceeded(projectId);
       if (action === "resume") {
@@ -663,12 +720,22 @@ export function makeSubagentLedgerExtension(
             parentModel,
             isProviderUsingOAuth,
           );
+          const scheduleId =
+            payload.scheduleOrigin && typeof payload.scheduleOrigin.id === "string"
+              ? payload.scheduleOrigin.id
+              : undefined;
           recordSubagentRun(
             projectId,
             getSessionId(),
             result.model ?? usage.model ?? "unknown",
             usage,
             billing,
+            scheduleId
+              ? {
+                  schedule: scheduleId,
+                  ...(typeof payload.scheduleOrigin?.name === "string" ? { name: payload.scheduleOrigin.name } : {}),
+                }
+              : undefined,
           );
         }
       }
@@ -676,17 +743,19 @@ export function makeSubagentLedgerExtension(
   };
 }
 
-/** Tools whose text output can carry a child process's provider error. */
-const CHILD_RESULT_TOOLS = new Set(["subagent", "subagent_wait"]);
+/** Tools whose text output can carry a child's provider error. The wait tool
+ *  was `subagent_wait` until pi-subagents 0.61 and is `bg_wait` since. */
+const CHILD_RESULT_TOOLS = new Set(["subagent", "bg_wait", "subagent_wait"]);
 
 /**
  * Explain a provider refusal that killed a child agent.
  *
- * A refused child fails inside its own `pi` process, so the only trace that
- * reaches the parent is the runner's text — "Provider finish_reason:
- * content_filter" — inside the tool result. Neither the SSE error frame nor
- * the run route ever sees it, and the lead agent, having no idea what happened,
- * tends to relay it verbatim or retry the same delegation.
+ * A refused child fails inside its own session — hosted by pi-subagents'
+ * detached runner, not by this process — so the only trace that reaches the
+ * parent is the runner's text — "Provider finish_reason: content_filter" —
+ * inside the tool result. Neither the SSE error frame nor the run route ever
+ * sees it, and the lead agent, having no idea what happened, tends to relay it
+ * verbatim or retry the same delegation.
  *
  * Appending the guidance to the tool result puts it in front of the lead (so
  * its summary to the user is right) and in the tool output the UI already

@@ -1,13 +1,13 @@
 ---
 title: "CodeQL triage and remediation — 195 open alerts on main"
-status: accepted
+status: completed
 created: 2026-09-13
-branch: codeql-triage-plan
+branch: codeql-phase2-path-injection
 ---
 
 # CodeQL Triage and Remediation Implementation Plan
 
-**Status:** Accepted — Phase 1 implemented on this branch (PR #28).
+**Status:** Completed and merged in PR #29 (Phase 2 hardening + dismissals, Phase 3, closeout; Phase 1 shipped in PR #28).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the

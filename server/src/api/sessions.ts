@@ -802,6 +802,10 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
             : toShellScript(file, req.params.id, paths.sandbox);
         const ext = format === "md" ? "md" : "sh";
         reply.type(format === "md" ? "text/markdown" : "text/x-shellscript");
+        // Defense-in-depth for the export download (CodeQL `js/reflected-xss`
+        // #3, false positive): attachment + non-HTML type already prevent
+        // inline rendering; nosniff pins that down against MIME sniffing.
+        reply.header("X-Content-Type-Options", "nosniff");
         reply.header(
           "Content-Disposition",
           `attachment; filename="session-${req.params.id}.${ext}"`,

@@ -1,13 +1,13 @@
 ---
 title: "CodeQL triage and remediation — 195 open alerts on main"
-status: accepted
+status: completed
 created: 2026-09-13
-branch: codeql-triage-plan
+branch: codeql-phase2-path-injection
 ---
 
 # CodeQL Triage and Remediation Implementation Plan
 
-**Status:** Accepted — Phase 1 implemented on this branch (PR #28).
+**Status:** Completed and merged in PR #29 (Phase 2 hardening + dismissals, Phase 3, closeout; Phase 1 shipped in PR #28).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -24,7 +24,7 @@ re-triage it.
 
 The `dev-docs/todo.md` security section quoted a 2026-09-06 snapshot (41
 Dependabot, 207 CodeQL) that is now wrong on both surfaces, and the earlier
-[triage plan](2026-09-10-dependency-and-scanning-triage.md) predates PR #27
+[triage plan](../2026-09-10-dependency-and-scanning-triage.md) predates PR #27
 (pdfjs 6) plus a wave of Dependabot fixes. The `Rules1` branch ruleset gates
 merges on newly-introduced CodeQL highs/errors, so the 184 standing errors
 are pure noise that would bury a real new finding in the same file. The
@@ -162,7 +162,24 @@ CodeQL shows 186 once re-scanned (9 fixed; the sanitization dismissal lands
 with the per-alert dismissal pass in Phase 2).
 
 ### Phase 2 — Path-injection: verify, then model (one PR, possibly two)
-- [ ] Sample-verify these 10 alerts on current `main` (numbers are GitHub
+
+Sample trace done 2026-09-13 on `main` at `594b37a` (all 10 guarded, **no real
+finding** — the 183 stay in the false-positive bucket):
+
+| Alert | Sink | Barrier |
+|---|---|---|
+| 147 | `api/sandbox.ts:820` `fs.existsSync(texAbs)` | `safePath(q.path)` at `:817` — direct |
+| 188 | `pdf-annotations-store.ts:295` `fs.statSync(sidecar)` | `pdfAnnotationSidecarPath` → `resolvePdf` (absolute-refusal + `isWithin` + realpath) — one frame up |
+| 79 | `agent/skills.ts:371` join in `findSkillDir` | `SKILL_NAME_RE`, returns `null` on fail — same function |
+| 74 | `agent/skills-install.ts:464` join in `stageForSkill` | callers gated by `findSkillDir`'s regex one frame up (`:488`, `:510` both `fail(404)` on null) — indirect; **hardened with a direct `SKILL_NAME_RE` gate (this branch)** |
+| 16 | `agent/agent-files.ts:336` join in `deleteProjectAgent` | `AGENT_NAME_RE`, returns `false` — same function |
+| 85 | `agent/skills-sync.ts:355` `readdirSync` in `hashDirectory` walk | recursion root comes from callers joining validated names (`skills-install.ts:137` joins `readdirSync` output, which cannot traverse); entry names from `readdir` stay within |
+| 167 | `modal/store.ts:286` via `modalJobFiles` | `assertJobId` → `JOB_ID_RE` (anchored, min length 6) — one frame up |
+| 195 | `projects.ts:336`→`~:343` `fs.existsSync(paths.root)` in `deleteProject` | `validateId` (`PROJECT_ID_RE` + reserved set) **and** `resolvePaths` `isWithin` — double-guarded |
+| 153 | `latex/compile.ts:117` `readFileSync(targetAbs)` | route `safePath(req.body.path)` (`api/sandbox.ts:778`) — one frame up |
+| 148 | `cost/ledger.ts:315` `readdirSync` reservations dir | `resolvePaths(projectId)` `isWithin` — one frame up |
+
+- [x] Sample-verify these 10 alerts on current `main` (numbers are GitHub
   code-scanning alert IDs; record source→sink→barrier per alert). Any sink
   with no barrier leaves this bucket immediately as a real finding:
   - 147 `api/sandbox.ts:820` (expect `safePath`)
@@ -176,38 +193,58 @@ with the per-alert dismissal pass in Phase 2).
   - 195 `projects.ts:336` (expect `validateId → PROJECT_ID_RE`)
   - 153 `latex/compile.ts:117`
   - 148 `cost/ledger.ts:315`
-- [ ] Where the shape allows, move regex-guarded sinks onto `containedIn`
+- [x] Where the shape allows, move regex-guarded sinks onto `containedIn`
   / `safePath` (converts unmodellable indirect barriers into direct ones).
+  Done for the flagged hard case: `stageForSkill` gained a direct
+  `SKILL_NAME_RE` gate (mirrors `removeSkill`'s idiom) with a regression
+  test (traversal → 404, valid-absent → 404 via provenance). Other sampled
+  sinks already carry same-function or one-frame-up guards; no further moves.
   Each migrated sink keeps a regression test asserting the same
   reject/accept behavior (valid names still pass, traversal still 403/404).
-- [ ] Add a CodeQL model pack (new `.github/codeql*` config) naming the
-  surviving barriers — `safePath`, `containedIn`, `resolvePdf`, and whichever
-  name-regexes survive the move. Re-run CodeQL and record how many of the
-  183 clear. Expect the regex-guarded `skills*.ts` / `agent-files.ts` sinks
-  to need their own answer.
-- [ ] Dismiss whatever remains per-alert with barrier + call-site evidence.
+- [x] DECISION — model pack vs per-alert dismissal: **dismissal chosen**
+  2026-09-14. A barrier model needs advanced setup (new workflow + config +
+  pack, moving the `Rules1` gate); the regex-validator barriers at issue are
+  exactly the class CodeQL models worst, so the pack would not have cleared
+  the bulk anyway. Per-alert dismissal with evidence preserves the signal
+   (new unguarded sinks still alert) with no infra risk.
+- [ ] ~~Add a CodeQL model pack~~ — decided against with the call above; kept
+  visible so a future reader knows it was considered, not overlooked.
+- [x] Dismiss whatever remains per-alert with barrier + call-site evidence.
+  Done 2026-09-14: all 183 dismissed via `/tmp/dismiss-codeql.sh --fire`
+  (per-alert PATCH, reason `false positive`, ≤170-char group comments;
+  script re-verifies open+rule+path before each write and exits nonzero on
+  any skip). Two runs: first hit GitHub's 280-char `dismissed_comment` cap
+  (53 short-comment groups landed, 130 rejected with 422 — the cap, not rate
+  limits), comments shortened, second run cleared the rest. 0 open
+  `js/path-injection` after. Dismissal log: `/tmp/dismiss_fire2.log`.
 
 **Exit criteria:** 183 cleared by model or dismissed per-alert with reason;
 sample trace recorded in the plan/PR.
 
 ### Phase 3 — The two judgement calls (same or separate PR)
 
-- [ ] `resource-exhaustion`: confirm every `Buffer.alloc` size in
+Done 2026-09-14 on `codeql-phase2-path-injection`:
+
+- [x] `resource-exhaustion`: confirm every `Buffer.alloc` size in
   `modal/store.ts` flows through `safeLimit`; dismiss with clamp evidence,
-  or harden further if a path bypasses it.
-- [ ] `reflected-xss`: confirm the export is always `attachment` +
+  or harden further if a path bypasses it. **Dismissed #235** — the sole
+  user-sized alloc is clamped ≤1 MiB (`MAX_LOG_READ_BYTES`), no bypass path.
+- [x] `reflected-xss`: confirm the export is always `attachment` +
   non-HTML type with no inline-render path; add
   `X-Content-Type-Options: nosniff` if missing; dismiss with reason or fix.
+  **Header added** (`api/sessions.ts`) **+ route test** (attachment/nosniff/
+  payload assertions) **+ dismissed #3** with reason.
 
-**Exit criteria:** 2 resolved with written reasoning.
+**Exit criteria:** 2 resolved with written reasoning — plus #4
+(`incomplete-sanitization`) dismissed with parser evidence. 0 open CodeQL.
 
 ### Phase 4 — Close out
 
-- [ ] CodeQL open count re-measured; every remaining alert (ideally zero)
-  has a reason.
-- [ ] Append outcome to `dev-docs/maintenance-log.md` (the security log
+- [x] CodeQL open count re-measured; every remaining alert (ideally zero)
+  has a reason. **0 open Dependabot, 0 open CodeQL (2026-09-14).**
+- [x] Append outcome to `dev-docs/maintenance-log.md` (the security log
   that file exists for).
-- [ ] Move this plan to `dev-docs/plans/completed/` in the closing PR.
+- [x] Move this plan to `dev-docs/plans/completed/` in the closing PR.
 
 ## Guardrails
 

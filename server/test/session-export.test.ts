@@ -364,3 +364,43 @@ describe("ownsSessionFile", () => {
     expect(ownsSessionFile(path.join(dir, "absent.jsonl"), "g")).toBe(false);
   });
 });
+
+describe("GET /sessions/:id/export download hardening", () => {
+  it("serves transcript content as an attachment with nosniff", async () => {
+    const { buildApp } = await import("../src/index.ts");
+    const { PROJECTS_ROOT } = await import("../src/config.ts");
+    const { resolvePaths } = await import("../src/projects.ts");
+    fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+    fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
+    const app = await buildApp();
+    try {
+      const paths = resolvePaths("default");
+      fs.mkdirSync(paths.sessionsDir, { recursive: true });
+      const rows = [
+        { type: "session", id: "hdr-sess" },
+        msg({
+          role: "user",
+          content: [{ type: "text", text: "<script>alert(1)</script>" }],
+          timestamp: 1000,
+        }),
+      ];
+      fs.writeFileSync(
+        path.join(paths.sessionsDir, "20260914-120000_hdr-sess.jsonl"),
+        rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+      );
+      const res = await app.inject({
+        method: "GET",
+        url: "/sessions/hdr-sess/export?format=md",
+        headers: { "x-project-id": "default" },
+      });
+      expect(res.statusCode).toBe(200);
+      // Payload is served, but pinned as a download: not inline HTML.
+      expect(res.headers["content-disposition"]).toMatch(/^attachment;/);
+      expect(res.headers["x-content-type-options"]).toBe("nosniff");
+      expect(res.body).toContain("<script>alert(1)</script>");
+    } finally {
+      await app.close();
+      fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+    }
+  });
+});

@@ -433,6 +433,18 @@ export function removeSkill(ref: SkillScopeRef, name: string): RemoveResult {
 // --- update checks for user-installed skills -------------------------------
 
 /**
+ * Direct sink-side name gate (CodeQL `js/path-injection` #74), unit-tested
+ * in isolation: callers reach stageForSkill through findSkillDir's own
+ * check, but that guard is indirect (null return + caller 404s) and
+ * unmodellable. A validity check here holds even for a future caller that
+ * skips it. Exported so the test proves exactly this gate, not a check
+ * further up the call chain.
+ */
+export function assertStagingName(name: string): void {
+  if (!SKILL_NAME_RE.test(name)) fail(404, `No such skill: "${name}"`);
+}
+
+/**
  * Re-fetch a skill's own source into staging and return the staged tree.
  *
  * Deliberately a fresh download compared by hash rather than `skills update`:
@@ -443,6 +455,7 @@ async function stageForSkill(
   ref: SkillScopeRef,
   name: string,
 ): Promise<{ dir: string; lock: Record<string, SkillLockEntry> }> {
+  assertStagingName(name);
   const root = asSkillRoot(ref);
   const provenance = getSkillProvenance(root, name);
   if (!provenance) fail(404, `No such skill: "${name}"`);

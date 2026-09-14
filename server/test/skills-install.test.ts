@@ -23,6 +23,7 @@ import {
   syncProjectSkillsFromCatalogue,
 } from "../src/agent/skills-sync.ts";
 import {
+  assertStagingName,
   checkSkillUpdate,
   createSkill,
   installStagedSkills,
@@ -338,6 +339,31 @@ describe("update checks for user-installed skills", () => {
     createSkill(paths, { name: "home-grown" });
     await expect(checkSkillUpdate(paths, "home-grown")).rejects.toMatchObject({
       status: 400,
+    });
+  });
+
+  it("rejects traversal names at the staging sink itself", async () => {
+    // Unit proof of the direct gate (CodeQL `js/path-injection` #74):
+    // assertStagingName is the exact check stageForSkill runs first, so
+    // these assertions isolate the gate — no manifest, no fetch, no
+    // upstream check in the path. Invalid names throw 404; a valid name
+    // passes through (its absence is a later layer's 404, not this one's).
+    expect(() => assertStagingName("../evil")).toThrowError(
+      expect.objectContaining({ status: 404 }),
+    );
+    expect(() => assertStagingName("a/b")).toThrowError(
+      expect.objectContaining({ status: 404 }),
+    );
+    expect(() => assertStagingName("")).toThrowError(
+      expect.objectContaining({ status: 404 }),
+    );
+    expect(() => assertStagingName("alpha-skill")).not.toThrow();
+    // End-to-end behavior is unchanged: public entries still 404.
+    await expect(checkSkillUpdate(paths, "../evil")).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(checkSkillUpdate(paths, "no-such-skill")).rejects.toMatchObject({
+      status: 404,
     });
   });
 });

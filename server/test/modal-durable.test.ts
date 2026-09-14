@@ -681,11 +681,20 @@ describe("Durable Modal transfer hardening", () => {
   it("verifies uploaded inputs remotely for ordinary jobs, not only approved ones", async () => {
     const fake = new FakeModal();
     fake.behaviors.push({ kind: "success" });
-    const manager = new DurableModalJobManager(fake.factory);
+    // FORK (upstream merge): set the tamper flag synchronously at sandbox
+    // creation. Polling for the sandbox on a timer races worker staging —
+    // on a fast host the worker verifies before the first poll fires and the
+    // job wrongly succeeds. The wrapper's continuation runs before the
+    // worker's (the worker awaits this promise), so the flag is deterministic.
+    const adapter = fake.factory();
+    const innerCreate = adapter.createSandbox.bind(adapter);
+    adapter.createSandbox = (async (...args: Parameters<typeof innerCreate>) => {
+      const sandbox = await innerCreate(...args);
+      sandbox.filesystem.tamperUploads = true;
+      return sandbox;
+    }) as typeof innerCreate;
+    const manager = new DurableModalJobManager(() => adapter);
     const job = manager.submit("default", { command: "work", filesIn: ["input.txt"] }, { sessionId: "s-upload", submittedBy: "api" });
-    const deadline = Date.now() + 3000;
-    while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    [...fake.sandboxes.values()][0]!.filesystem.tamperUploads = true;
     const terminal = await manager.wait("default", job.id, 3000);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("INPUT_CHANGED");
@@ -695,21 +704,30 @@ describe("Durable Modal transfer hardening", () => {
   it("degrades to size checks with a visible event when the image has no python3", async () => {
     const fake = new FakeModal();
     fake.behaviors.push({ kind: "success" });
-    const manager = new DurableModalJobManager(fake.factory);
+    // FORK (upstream merge): same timer race as above — arm pythonMissing
+    // synchronously at creation so the preparing-phase skip is deterministic.
+    const adapter = fake.factory();
+    const innerCreate = adapter.createSandbox.bind(adapter);
+    adapter.createSandbox = (async (...args: Parameters<typeof innerCreate>) => {
+      const sandbox = await innerCreate(...args);
+      sandbox.pythonMissing = true;
+      // The wrapper itself is python; let it through so the job can finish.
+      const originalExec = sandbox.exec.bind(sandbox);
+      sandbox.exec = (async (command: string[], params?: Record<string, unknown>) => {
+        if (command[0] === "python3" && String(command[1]).endsWith("wrapper.py")) {
+          sandbox.pythonMissing = false;
+          try {
+            return await originalExec(command, params);
+          } finally {
+            sandbox.pythonMissing = true;
+          }
+        }
+        return originalExec(command, params);
+      }) as typeof originalExec;
+      return sandbox;
+    }) as typeof innerCreate;
+    const manager = new DurableModalJobManager(() => adapter);
     const job = manager.submit("default", { command: "work", filesIn: ["input.txt"], filesOut: ["result.txt"] }, { sessionId: "s-nopython", submittedBy: "api" });
-    const deadline = Date.now() + 3000;
-    while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    const sandbox = [...fake.sandboxes.values()][0]!;
-    sandbox.pythonMissing = true;
-    // The wrapper itself is python; let it through so the job can finish.
-    const originalExec = sandbox.exec.bind(sandbox);
-    sandbox.exec = async (command, params) => {
-      if (command[0] === "python3" && String(command[1]).endsWith("wrapper.py")) {
-        sandbox.pythonMissing = false;
-        try { return await originalExec(command, params); } finally { sandbox.pythonMissing = true; }
-      }
-      return originalExec(command, params);
-    };
     const terminal = await manager.wait("default", job.id, 3000);
     expect(terminal.state).toBe("succeeded");
     const skipped = manager.store.events("default", job.id).filter((event) => event.type === "verify_skipped");

@@ -29,6 +29,7 @@ import {
   previewSkillSource,
   removeSkill,
   SkillOperationFailure,
+  stageForSkill,
   updateSkillFromSource,
   writeSkillSource,
 } from "../src/agent/skills-install.ts";
@@ -341,16 +342,30 @@ describe("update checks for user-installed skills", () => {
     });
   });
 
-  it("rejects traversal names at the staging sink, not just via lookup", async () => {
-    // Direct barrier (CodeQL `js/path-injection` #74): the regex gate inside
-    // stageForSkill must hold even for a caller that skips findSkillDir.
+  it("rejects traversal names at the staging sink itself", async () => {
+    // Contract at the stageForSkill boundary (CodeQL `js/path-injection`
+    // #74): traversal names are rejected here with 404, without any fetch
+    // being attempted. Calling directly matters — going through
+    // checkSkillUpdate would short-circuit in findSkillDir's older check
+    // and never reach this function at all.
+    //
+    // Honest limit, verified by negative control (gate removed → still
+    // green): for unseeded names the 404 is overdetermined — the gate fires
+    // first, but the provenance miss behind it 404s identically, and
+    // readManifest additionally filters non-matching keys. No observable
+    // test through public behavior isolates the gate line itself; the
+    // gate's distinct value is for future callers and future data shapes,
+    // and this test locks the sink's reject behavior in place for them.
+    await expect(stageForSkill(paths, "../evil")).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(stageForSkill(paths, "a/b")).rejects.toMatchObject({
+      status: 404,
+    });
+    // End-to-end behavior is unchanged: public entries still 404 first.
     await expect(checkSkillUpdate(paths, "../evil")).rejects.toMatchObject({
       status: 404,
     });
-    await expect(checkSkillUpdate(paths, "a/b")).rejects.toMatchObject({
-      status: 404,
-    });
-    // A valid but absent name still 404s through the provenance path.
     await expect(checkSkillUpdate(paths, "no-such-skill")).rejects.toMatchObject({
       status: 404,
     });

@@ -438,8 +438,12 @@ export function removeSkill(ref: SkillScopeRef, name: string): RemoveResult {
  * Deliberately a fresh download compared by hash rather than `skills update`:
  * staging is disposable, so this needs no trust in the CLI's lock mutation and
  * works the same for every source type.
+ *
+ * Exported for unit tests of the direct name gate (CodeQL
+ * `js/path-injection` #74); all current callers reach here through
+ * `findSkillDir`'s own check, so only a direct call exercises this barrier.
  */
-async function stageForSkill(
+export async function stageForSkill(
   ref: SkillScopeRef,
   name: string,
 ): Promise<{ dir: string; lock: Record<string, SkillLockEntry> }> {

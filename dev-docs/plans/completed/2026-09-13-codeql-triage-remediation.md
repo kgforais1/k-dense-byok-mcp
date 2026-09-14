@@ -244,7 +244,7 @@ Done 2026-09-14 on `codeql-phase2-path-injection`:
   has a reason. **0 open Dependabot, 0 open CodeQL (2026-09-14).**
 - [x] Append outcome to `dev-docs/maintenance-log.md` (the security log
   that file exists for).
-- [ ] Move this plan to `dev-docs/plans/completed/` in the closing PR.
+- [x] Move this plan to `dev-docs/plans/completed/` in the closing PR.
 
 ## Guardrails
 

@@ -31,7 +31,7 @@ Still open:
 
 ## 2. Code scanning, security alerts, and Dependabot
 
-Triage and resolve the security findings GitHub reports on the fork — currently 0 open Dependabot alerts (as of 2026-09-13; was 41 on 2026-09-06, ~140 on 2026-09-02 — see git history for this file) plus 195 open CodeQL code-scanning alerts (184 error, 11 warning — dominated by 183× `js/path-injection`). The branch ruleset (`Rules1`, active on `main`) gates merges on CodeQL `high_or_higher` / errors, so error-level findings can block PRs.
+Triage and resolve the security findings GitHub reports on the fork — cleared 2026-09-14: 0 open Dependabot alerts and 0 open CodeQL alerts (was 0 / 195 on 2026-09-13, 41 / 207 on 2026-09-06, ~140 Dependabot on 2026-09-02 — see git history for this file). The branch ruleset (`Rules1`, active on `main`) gates merges on CodeQL `high_or_higher` / errors, so error-level findings can block PRs.
 
 Refreshed 2026-09-13 on `main` at `6ad96d1` (PR #27). Full triage and remediation plan: [CodeQL triage and remediation](plans/completed/2026-09-13-codeql-triage-remediation.md).
 

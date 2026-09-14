@@ -209,8 +209,14 @@ finding** — the 183 stay in the false-positive bucket):
    (new unguarded sinks still alert) with no infra risk.
 - [ ] ~~Add a CodeQL model pack~~ — decided against with the call above; kept
   visible so a future reader knows it was considered, not overlooked.
-- [ ] Dismiss whatever remains per-alert with barrier + call-site evidence
-  (`/tmp/dismiss-codeql.sh` — dry-run green 183/183; fires only on explicit go).
+- [x] Dismiss whatever remains per-alert with barrier + call-site evidence.
+  Done 2026-09-14: all 183 dismissed via `/tmp/dismiss-codeql.sh --fire`
+  (per-alert PATCH, reason `false positive`, ≤170-char group comments;
+  script re-verifies open+rule+path before each write and exits nonzero on
+  any skip). Two runs: first hit GitHub's 280-char `dismissed_comment` cap
+  (53 short-comment groups landed, 130 rejected with 422 — the cap, not rate
+  limits), comments shortened, second run cleared the rest. 0 open
+  `js/path-injection` after. Dismissal log: `/tmp/dismiss_fire2.log`.
 
 **Exit criteria:** 183 cleared by model or dismissed per-alert with reason;
 sample trace recorded in the plan/PR.

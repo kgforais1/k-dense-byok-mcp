@@ -6,6 +6,32 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
 
 ## Log Entries
 
+### 2026-09-14: CodeQL Backlog Clearance (195 → 0 open)
+- **Branch:** `codeql-phase2-path-injection` (follows PR #28, which shipped
+  the refreshed triage + Phase 1 code fixes)
+- **Category:** security / code scanning
+- **Summary:**
+  - Phase 1 (PR #28): 9 alerts fixed in code (7× `insecure-randomness` →
+    crypto ids, 2× `polynomial-redos` → capped slug inputs); 1×
+    `incomplete-sanitization` re-triaged to dismiss after bot review proved
+    the paired `.env` parser performs no unescaping (escaping would have
+    corrupted reloads — reverted).
+  - Phase 2: 10-alert path-injection sample trace, all guarded, zero real
+    findings; hardened `stageForSkill` with a direct `SKILL_NAME_RE` gate
+    (the unmodellable indirect-barrier case) + regression test; dismissed
+    all 183 per-alert with barrier evidence (script re-verifies open+rule+
+    path per alert; first run caught GitHub's 280-char comment cap).
+  - Phase 3: `nosniff` on the session-export download + route test;
+    dismissed `reflected-xss` (attachment, non-HTML), `resource-exhaustion`
+    (1 MiB clamp, no bypass), `incomplete-sanitization` (parser evidence).
+  - End state: **0 open Dependabot, 0 open CodeQL.** New alerts mean
+    something again. Reviewed throughout: kimi-k3, kilo stepfun (×4),
+    DeepSeek v4 Pro, agy sonnet, Cursor Composer, muse-spark, plus
+    Sourcery/Greptile/CodeRabbit bot findings (one real regression caught).
+- **Verification:**
+  - `npm run verify -- all` green at each step; Aikido scans clean.
+  - Live API confirms zero open on both surfaces.
+
 ### 2026-09-10: Dependency Alert Clearance and CodeQL Sample Trace
 - **PR:** [#24](https://github.com/kgforais1/k-dense-byok-mcp/pull/24) (triage plan: [#23](https://github.com/kgforais1/k-dense-byok-mcp/pull/23))
 - **Category:** security / dependency

@@ -24,7 +24,7 @@ re-triage it.
 
 The `dev-docs/todo.md` security section quoted a 2026-09-06 snapshot (41
 Dependabot, 207 CodeQL) that is now wrong on both surfaces, and the earlier
-[triage plan](2026-09-10-dependency-and-scanning-triage.md) predates PR #27
+[triage plan](../2026-09-10-dependency-and-scanning-triage.md) predates PR #27
 (pdfjs 6) plus a wave of Dependabot fixes. The `Rules1` branch ruleset gates
 merges on newly-introduced CodeQL highs/errors, so the 184 standing errors
 are pure noise that would bury a real new finding in the same file. The
@@ -223,20 +223,26 @@ sample trace recorded in the plan/PR.
 
 ### Phase 3 — The two judgement calls (same or separate PR)
 
-- [ ] `resource-exhaustion`: confirm every `Buffer.alloc` size in
+Done 2026-09-14 on `codeql-phase2-path-injection`:
+
+- [x] `resource-exhaustion`: confirm every `Buffer.alloc` size in
   `modal/store.ts` flows through `safeLimit`; dismiss with clamp evidence,
-  or harden further if a path bypasses it.
-- [ ] `reflected-xss`: confirm the export is always `attachment` +
+  or harden further if a path bypasses it. **Dismissed #235** — the sole
+  user-sized alloc is clamped ≤1 MiB (`MAX_LOG_READ_BYTES`), no bypass path.
+- [x] `reflected-xss`: confirm the export is always `attachment` +
   non-HTML type with no inline-render path; add
   `X-Content-Type-Options: nosniff` if missing; dismiss with reason or fix.
+  **Header added** (`api/sessions.ts`) **+ route test** (attachment/nosniff/
+  payload assertions) **+ dismissed #3** with reason.
 
-**Exit criteria:** 2 resolved with written reasoning.
+**Exit criteria:** 2 resolved with written reasoning — plus #4
+(`incomplete-sanitization`) dismissed with parser evidence. 0 open CodeQL.
 
 ### Phase 4 — Close out
 
-- [ ] CodeQL open count re-measured; every remaining alert (ideally zero)
-  has a reason.
-- [ ] Append outcome to `dev-docs/maintenance-log.md` (the security log
+- [x] CodeQL open count re-measured; every remaining alert (ideally zero)
+  has a reason. **0 open Dependabot, 0 open CodeQL (2026-09-14).**
+- [x] Append outcome to `dev-docs/maintenance-log.md` (the security log
   that file exists for).
 - [ ] Move this plan to `dev-docs/plans/completed/` in the closing PR.
 

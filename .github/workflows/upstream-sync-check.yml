@@ -1,0 +1,93 @@
+name: Upstream sync check
+
+# Upstream (K-Dense-AI/k-dense-byok) keeps shipping while this fork merges on
+# a best-effort basis. This workflow compares upstream's main against the
+# fork's main weekly and reports via a labeled issue (watchers get GitHub
+# notifications) — it never merges anything itself. Mirrors the
+# harness-update-check pattern (signature-gated updates, no notify spam).
+
+on:
+  schedule:
+    - cron: "0 13 * * 3" # Wednesdays 13:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Write scope lives on the job, never the workflow: a future second job
+    # must not inherit issue-write silently (.github/AGENTS.md).
+    permissions:
+      contents: read
+      issues: write
+    # Serialize overlapping scheduled/manual runs so two jobs cannot race on
+    # `gh issue list` → duplicate notification issues.
+    concurrency:
+      group: upstream-sync-check
+      cancel-in-progress: false
+    steps:
+      - name: Compare upstream main against fork main
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # ahead_by = upstream-only commits this fork has not merged.
+          AHEAD=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...K-Dense-AI:main" \
+            --jq '.ahead_by // 0')
+          UPSTREAM_SHA=$(gh api repos/K-Dense-AI/k-dense-byok/commits/main \
+            --jq '.sha[0:12]')
+          echo "ahead_by=$AHEAD" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo "Upstream-only commits: $AHEAD (upstream \`$UPSTREAM_SHA\`)."
+            echo
+            echo "Check the runbook: CONTRIBUTING.md#keeping-up-with-upstream."
+          } > upstream-check-result.md
+
+      - name: Ensure notification label exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh label create upstream-sync --force --color 1d76db --description "Upstream has commits this fork has not merged" --repo "$GITHUB_REPOSITORY"
+
+      - name: Report via issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AHEAD: ${{ steps.check.outputs.ahead_by }}
+          UPSTREAM_SHA: ${{ steps.check.outputs.upstream_sha }}
+        run: |
+          set -euo pipefail
+          NUMBER=$(gh issue list --label upstream-sync --state open --json number --repo "$GITHUB_REPOSITORY" --jq '.[0].number // ""')
+          TODAY=$(date -u +%Y-%m-%d)
+          # Signature binds HEAD and outstanding count so neither dimension
+          # can change without re-notifying.
+          SIGNATURE="upstream-sync signature: $UPSTREAM_SHA / ahead ${AHEAD:-0}"
+          if [ "${AHEAD:-0}" -gt 0 ]; then
+            if [ -n "$NUMBER" ]; then
+              # Re-comment (which notifies) only when the report actually
+              # changed since the last one.
+              if ! gh issue view "$NUMBER" --json body --repo "$GITHUB_REPOSITORY" --jq .body | grep -qF "<!-- $SIGNATURE -->"; then
+                {
+                  cat upstream-check-result.md
+                  echo
+                  echo "<!-- $SIGNATURE -->"
+                } > upstream-check-body.md
+                gh issue edit "$NUMBER" --body-file upstream-check-body.md --repo "$GITHUB_REPOSITORY"
+                gh issue comment "$NUMBER" --body "Upstream status changed (HEAD \`$UPSTREAM_SHA\`, ${AHEAD:-0} commit(s) outstanding) — re-checked $TODAY." --repo "$GITHUB_REPOSITORY"
+              fi
+            else
+              {
+                cat upstream-check-result.md
+                echo
+                echo "<!-- $SIGNATURE -->"
+              } > upstream-check-body.md
+              gh issue create \
+                --title "Upstream changes to merge" \
+                --label upstream-sync \
+                --body-file upstream-check-body.md \
+                --repo "$GITHUB_REPOSITORY"
+            fi
+          elif [ -n "$NUMBER" ]; then
+            gh issue close "$NUMBER" --comment "Fork is current with upstream as of $TODAY." --repo "$GITHUB_REPOSITORY"
+          else
+            echo "Fork is current with upstream; no issue needed."
+          fi

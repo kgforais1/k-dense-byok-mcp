@@ -142,6 +142,50 @@ gh pr create --repo kgforais1/k-dense-byok-mcp --title "..." --body "..."
 owners, so a `CODEOWNERS` file would auto-request reviewers who have not agreed
 to that role. Reviews are assigned manually per PR.
 
+## Keeping up with upstream
+
+This fork merges upstream (`K-Dense-AI/k-dense-byok`) on a best-effort basis:
+no schedule is promised, and the fork may lag. The `upstream-sync` label on
+the issue tracker reflects the latest *successful* weekly comparison — an
+open issue there means upstream's `main` had commits this fork had not merged
+at the last check. It is not proof of current status in either direction: a
+failed or skipped check leaves stale state behind, and no open issue may mean
+"current" or "the check hasn't run". Before treating the fork as current,
+run the manual check below.
+
+To check status by hand:
+
+```bash
+# Point `upstream` at the real upstream (add it, or repair it if the name
+# already exists pointing elsewhere — otherwise the fetch below silently
+# reads the wrong repository).
+if git remote get-url upstream >/dev/null 2>&1; then
+  git remote set-url upstream https://github.com/K-Dense-AI/k-dense-byok.git
+else
+  git remote add upstream https://github.com/K-Dense-AI/k-dense-byok.git
+fi
+git fetch upstream main
+git log --oneline upstream/main --not main | wc -l   # upstream-only commits
+git log --oneline main --not upstream/main | wc -l   # fork-only commits
+```
+
+To perform a sync (never push to `upstream`, never rebase `main` — merge, so
+fork history stays readable):
+
+```bash
+git fetch upstream main
+git checkout -b sync/upstream-YYYY-MM-DD main
+git merge upstream/main   # resolve conflicts; upstream wins on product code,
+                          # fork wins on fork-owned files (MCP server, fork docs)
+npm run verify -- all     # must be green before review
+gh pr create --repo kgforais1/k-dense-byok-mcp --base main --head sync/upstream-YYYY-MM-DD
+```
+
+Record the outcome in [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md)
+in the same PR (counts merged, conflicts resolved, verification evidence).
+The pre-push hook already blocks pushes to any remote that is not the fork,
+so a mistaken `git push upstream` fails locally before it can do harm.
+
 ## Handoff & archive duty (in the implementing PR)
 
 - If work will continue after the current session or another agent is asked to

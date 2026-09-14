@@ -1,4 +1,4 @@
-# K-Dense BYOK
+# K-Dense BYOK (MCP fork)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![X](https://img.shields.io/badge/Follow_on_X-%40k__dense__ai-000000?logo=x)](https://x.com/k_dense_ai)
@@ -17,8 +17,12 @@
 > upstream project and its authors, not to this fork. The MIT License badge is
 > not in that group: that licence covers this repository too.
 >
-> The install commands below clone this fork, so they give you the MCP work as
-> well as everything upstream provides. This fork is public but not promoted —
+> The install commands below clone this fork, so they give you the MCP work.
+> Upstream keeps shipping, and we merge their changes on a best-effort basis,
+> so this fork can lag behind upstream — cloning it does not promise
+> everything upstream has today. See [Keeping up with
+> upstream](CONTRIBUTING.md#keeping-up-with-upstream) for the sync policy and
+> how to check what is missing. This fork is public but not promoted —
 > use it if it is useful to you, and expect no support commitment.
 
 > ### 🎥 Webinar recording: **Getting Started with K-Dense BYOK**

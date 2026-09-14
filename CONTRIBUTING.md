@@ -146,14 +146,24 @@ to that role. Reviews are assigned manually per PR.
 
 This fork merges upstream (`K-Dense-AI/k-dense-byok`) on a best-effort basis:
 no schedule is promised, and the fork may lag. The `upstream-sync` label on
-the issue tracker is the status board — an open issue there means upstream's
-`main` has commits this fork has not merged; no open issue means we are
-current (the check runs weekly, plus on demand).
+the issue tracker reflects the latest *successful* weekly comparison — an
+open issue there means upstream's `main` had commits this fork had not merged
+at the last check. It is not proof of current status in either direction: a
+failed or skipped check leaves stale state behind, and no open issue may mean
+"current" or "the check hasn't run". Before treating the fork as current,
+run the manual check below.
 
 To check status by hand:
 
 ```bash
-git remote add upstream https://github.com/K-Dense-AI/k-dense-byok.git 2>/dev/null
+# Point `upstream` at the real upstream (add it, or repair it if the name
+# already exists pointing elsewhere — otherwise the fetch below silently
+# reads the wrong repository).
+if git remote get-url upstream >/dev/null 2>&1; then
+  git remote set-url upstream https://github.com/K-Dense-AI/k-dense-byok.git
+else
+  git remote add upstream https://github.com/K-Dense-AI/k-dense-byok.git
+fi
 git fetch upstream main
 git log --oneline upstream/main --not main | wc -l   # upstream-only commits
 git log --oneline main --not upstream/main | wc -l   # fork-only commits

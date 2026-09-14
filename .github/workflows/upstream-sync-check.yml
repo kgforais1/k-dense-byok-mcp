@@ -58,24 +58,27 @@ jobs:
           set -euo pipefail
           NUMBER=$(gh issue list --label upstream-sync --state open --json number --repo "$GITHUB_REPOSITORY" --jq '.[0].number // ""')
           TODAY=$(date -u +%Y-%m-%d)
+          # Signature binds HEAD and outstanding count so neither dimension
+          # can change without re-notifying.
+          SIGNATURE="upstream-sync signature: $UPSTREAM_SHA / ahead ${AHEAD:-0}"
           if [ "${AHEAD:-0}" -gt 0 ]; then
             if [ -n "$NUMBER" ]; then
-              # Re-comment (which notifies) only when upstream actually moved
-              # since the last report.
-              if ! gh issue view "$NUMBER" --json body --repo "$GITHUB_REPOSITORY" --jq .body | grep -qF "<!-- upstream-sync signature: $UPSTREAM_SHA -->"; then
+              # Re-comment (which notifies) only when the report actually
+              # changed since the last one.
+              if ! gh issue view "$NUMBER" --json body --repo "$GITHUB_REPOSITORY" --jq .body | grep -qF "<!-- $SIGNATURE -->"; then
                 {
                   cat upstream-check-result.md
                   echo
-                  echo "<!-- upstream-sync signature: $UPSTREAM_SHA -->"
+                  echo "<!-- $SIGNATURE -->"
                 } > upstream-check-body.md
                 gh issue edit "$NUMBER" --body-file upstream-check-body.md --repo "$GITHUB_REPOSITORY"
-                gh issue comment "$NUMBER" --body "Upstream moved to \`$UPSTREAM_SHA\` — re-checked $TODAY." --repo "$GITHUB_REPOSITORY"
+                gh issue comment "$NUMBER" --body "Upstream status changed (HEAD \`$UPSTREAM_SHA\`, ${AHEAD:-0} commit(s) outstanding) — re-checked $TODAY." --repo "$GITHUB_REPOSITORY"
               fi
             else
               {
                 cat upstream-check-result.md
                 echo
-                echo "<!-- upstream-sync signature: $UPSTREAM_SHA -->"
+                echo "<!-- $SIGNATURE -->"
               } > upstream-check-body.md
               gh issue create \
                 --title "Upstream changes to merge" \

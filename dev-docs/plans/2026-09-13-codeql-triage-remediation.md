@@ -201,22 +201,16 @@ finding** — the 183 stay in the false-positive bucket):
   sinks already carry same-function or one-frame-up guards; no further moves.
   Each migrated sink keeps a regression test asserting the same
   reject/accept behavior (valid names still pass, traversal still 403/404).
-- [ ] DECISION NEEDED — model pack vs per-alert dismissal (see below).
-  This repo runs CodeQL on GitHub's **default setup** (no CodeQL config in
-  `.github/workflows/`, no `codeql-config.yml`): a custom barrier model
-  requires migrating to **advanced setup** (new workflow + config + model
-  pack), which also moves the `Rules1` gate onto the new workflow. That is a
-  CI-infrastructure change, not a config edit — needs an explicit call.
-  Alternative within this plan's guardrails: dismiss per-alert with
-  barrier + call-site evidence (the sample trace above is the basis; no bulk
-  dismissal). Either way the signal is preserved: a genuinely unguarded new
-  sink still alerts.
-- [ ] Add a CodeQL model pack (new `.github/codeql*` config) naming the
-  surviving barriers — `safePath`, `containedIn`, `resolvePdf`, and whichever
-  name-regexes survive the move. Re-run CodeQL and record how many of the
-  183 clear. Expect the regex-guarded `skills*.ts` / `agent-files.ts` sinks
-  to need their own answer.
-- [ ] Dismiss whatever remains per-alert with barrier + call-site evidence.
+- [x] DECISION — model pack vs per-alert dismissal: **dismissal chosen**
+  2026-09-14. A barrier model needs advanced setup (new workflow + config +
+  pack, moving the `Rules1` gate); the regex-validator barriers at issue are
+  exactly the class CodeQL models worst, so the pack would not have cleared
+  the bulk anyway. Per-alert dismissal with evidence preserves the signal
+   (new unguarded sinks still alert) with no infra risk.
+- [ ] ~~Add a CodeQL model pack~~ — decided against with the call above; kept
+  visible so a future reader knows it was considered, not overlooked.
+- [ ] Dismiss whatever remains per-alert with barrier + call-site evidence
+  (`/tmp/dismiss-codeql.sh` — dry-run green 183/183; fires only on explicit go).
 
 **Exit criteria:** 183 cleared by model or dismissed per-alert with reason;
 sample trace recorded in the plan/PR.

@@ -142,6 +142,40 @@ gh pr create --repo kgforais1/k-dense-byok-mcp --title "..." --body "..."
 owners, so a `CODEOWNERS` file would auto-request reviewers who have not agreed
 to that role. Reviews are assigned manually per PR.
 
+## Keeping up with upstream
+
+This fork merges upstream (`K-Dense-AI/k-dense-byok`) on a best-effort basis:
+no schedule is promised, and the fork may lag. The `upstream-sync` label on
+the issue tracker is the status board — an open issue there means upstream's
+`main` has commits this fork has not merged; no open issue means we are
+current (the check runs weekly, plus on demand).
+
+To check status by hand:
+
+```bash
+git remote add upstream https://github.com/K-Dense-AI/k-dense-byok.git 2>/dev/null
+git fetch upstream main
+git log --oneline upstream/main --not main | wc -l   # upstream-only commits
+git log --oneline main --not upstream/main | wc -l   # fork-only commits
+```
+
+To perform a sync (never push to `upstream`, never rebase `main` — merge, so
+fork history stays readable):
+
+```bash
+git fetch upstream main
+git checkout -b sync/upstream-YYYY-MM-DD main
+git merge upstream/main   # resolve conflicts; upstream wins on product code,
+                          # fork wins on fork-owned files (MCP server, fork docs)
+npm run verify -- all     # must be green before review
+gh pr create --repo kgforais1/k-dense-byok-mcp --base main --head sync/upstream-YYYY-MM-DD
+```
+
+Record the outcome in [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md)
+in the same PR (counts merged, conflicts resolved, verification evidence).
+The pre-push hook already blocks pushes to any remote that is not the fork,
+so a mistaken `git push upstream` fails locally before it can do harm.
+
 ## Handoff & archive duty (in the implementing PR)
 
 - If work will continue after the current session or another agent is asked to

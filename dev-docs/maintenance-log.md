@@ -6,6 +6,21 @@ This document records ongoing maintenance, security triaging, dependency lifecyc
 
 ## Log Entries
 
+### 2026-09-14: Fork positioning and upstream-sync automation
+- **Branch:** `fork-positioning`
+- **Category:** operational / docs / CI
+- **Summary:**
+  - README title is now `K-Dense BYOK (MCP fork)`; the fork notice no
+    longer claims cloning gives "everything upstream provides" — it states
+    best-effort merging and links the sync policy. (Upstream is 38 commits
+    ahead as of this writing; the actual merge is separate work.)
+  - `CONTRIBUTING.md` gained a "Keeping up with upstream" runbook (remote,
+    fetch, merge-no-rebase into a sync branch, verify, PR, log).
+  - New `upstream-sync-check` workflow (weekly + dispatch, mirrors
+    `harness-update-check`): compares upstream `main` against fork `main`
+    via the compare API and files/updates/closes a labeled issue. No
+    checkout, no third-party actions, minimum permissions.
+
 ### 2026-09-14: CodeQL Backlog Clearance (195 → 0 open)
 - **Branch:** `codeql-phase2-path-injection` (follows PR #28, which shipped
   the refreshed triage + Phase 1 code fixes)

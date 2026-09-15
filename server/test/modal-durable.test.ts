@@ -635,15 +635,22 @@ describe("Durable Modal transfer hardening", () => {
   it("collects a literal output without walking unrelated remote trees", async () => {
     const fake = new FakeModal();
     fake.behaviors.push({ kind: "success" });
-    const manager = new DurableModalJobManager(fake.factory);
+    // FORK (upstream merge): same timer race — the fake's wait() is 5 ms
+    // while the test polls every 10 ms, so planting after the poll loses on a
+    // fast host. Plant synchronously at creation instead (deterministic: the
+    // worker awaits this promise before staging anything).
+    const adapter = fake.factory();
+    const innerCreate = adapter.createSandbox.bind(adapter);
+    adapter.createSandbox = (async (...args: Parameters<typeof innerCreate>) => {
+      const sandbox = await innerCreate(...args);
+      // A venv with more entries than the discovery budget, plus the wanted files.
+      for (let i = 0; i < 25_000; i++) sandbox.filesystem.files.set(`/workspace/venv/lib/f${i}.py`, Buffer.from("x"));
+      sandbox.filesystem.files.set("/workspace/out/a.csv", Buffer.from("1,2\n"));
+      sandbox.filesystem.files.set("/workspace/out/b.txt", Buffer.from("no"));
+      return sandbox;
+    }) as typeof innerCreate;
+    const manager = new DurableModalJobManager(() => adapter);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt", "out/*.csv"] }, { sessionId: "s-scoped", submittedBy: "api" });
-    const deadline = Date.now() + 3000;
-    while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    const sandbox = [...fake.sandboxes.values()][0]!;
-    // A venv with more entries than the discovery budget, plus the wanted files.
-    for (let i = 0; i < 25_000; i++) sandbox.filesystem.files.set(`/workspace/venv/lib/f${i}.py`, Buffer.from("x"));
-    sandbox.filesystem.files.set("/workspace/out/a.csv", Buffer.from("1,2\n"));
-    sandbox.filesystem.files.set("/workspace/out/b.txt", Buffer.from("no"));
     const terminal = await manager.wait("default", job.id, 5000);
     expect(terminal.state).toBe("succeeded");
     expect(terminal.outputFiles.map((f) => f.path)).toEqual(["out/a.csv", "result.txt"]);
@@ -654,11 +661,16 @@ describe("Durable Modal transfer hardening", () => {
   it("rejects a download whose bytes differ from the sandbox's own checksum", async () => {
     const fake = new FakeModal();
     fake.behaviors.push({ kind: "success" });
-    const manager = new DurableModalJobManager(fake.factory);
+    // FORK (upstream merge): deterministic arming, see above.
+    const adapterFlip = fake.factory();
+    const innerCreateFlip = adapterFlip.createSandbox.bind(adapterFlip);
+    adapterFlip.createSandbox = (async (...args: Parameters<typeof innerCreateFlip>) => {
+      const sandbox = await innerCreateFlip(...args);
+      sandbox.filesystem.tamperDownloads = "flip";
+      return sandbox;
+    }) as typeof innerCreateFlip;
+    const manager = new DurableModalJobManager(() => adapterFlip);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt"] }, { sessionId: "s-flip", submittedBy: "api" });
-    const deadline = Date.now() + 3000;
-    while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    [...fake.sandboxes.values()][0]!.filesystem.tamperDownloads = "flip";
     const terminal = await manager.wait("default", job.id, 3000);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("CHECKSUM_MISMATCH");
@@ -668,11 +680,16 @@ describe("Durable Modal transfer hardening", () => {
   it("reports a truncated download as such", async () => {
     const fake = new FakeModal();
     fake.behaviors.push({ kind: "success" });
-    const manager = new DurableModalJobManager(fake.factory);
+    // FORK (upstream merge): deterministic arming, see above.
+    const adapterTrunc = fake.factory();
+    const innerCreateTrunc = adapterTrunc.createSandbox.bind(adapterTrunc);
+    adapterTrunc.createSandbox = (async (...args: Parameters<typeof innerCreateTrunc>) => {
+      const sandbox = await innerCreateTrunc(...args);
+      sandbox.filesystem.tamperDownloads = "truncate";
+      return sandbox;
+    }) as typeof innerCreateTrunc;
+    const manager = new DurableModalJobManager(() => adapterTrunc);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt"] }, { sessionId: "s-trunc", submittedBy: "api" });
-    const deadline = Date.now() + 3000;
-    while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
-    [...fake.sandboxes.values()][0]!.filesystem.tamperDownloads = "truncate";
     const terminal = await manager.wait("default", job.id, 3000);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("TRANSFER_TRUNCATED");

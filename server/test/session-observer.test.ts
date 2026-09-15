@@ -65,7 +65,11 @@ class FakeSession {
 }
 
 const log = { warn: vi.fn(), error: vi.fn() };
-const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
+// FORK (upstream merge): 20 ms was upstream's value, but run finalization
+// (provenance flush + ledger + environment capture) takes 20–130 ms even
+// locally — upstream tip fails 5/7 identically. 250 ms keeps the test fast
+// while surviving a slow interpreter probe.
+const flush = () => new Promise((resolve) => setTimeout(resolve, 250));
 const frameTypes = (frames: SequencedClientFrame[]) => frames.map((f) => f.type);
 const costRows = (projectId: string, sessionId: string) => {
   const file = path.join(resolvePaths(projectId).sandbox, ".kady", "runs", sessionId, "costs.jsonl");

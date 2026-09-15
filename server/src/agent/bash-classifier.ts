@@ -98,11 +98,26 @@ export function resolveSandboxPath(
 ): string | null {
   let value = stripQuotes(token);
   if (!value || value.startsWith("~") || value.startsWith("$")) return null;
-  if (value.startsWith("/")) {
+  // FORK (upstream merge): normalize Windows separators and drive letters up
+  // front. Without this a `C:\…` absolute path never enters the absolute
+  // branch below, falls through to the relative branch, misses the sandbox
+  // root, and returns null (allow) — so on Windows every absolute tool path
+  // silently bypassed the guard. Drive comparison is case-insensitive
+  // (`C:/` ≡ `c:/`); POSIX comparison stays case-sensitive.
+  value = value.replace(/\\/g, "/");
+  const valueDrive = /^[A-Za-z]:\//.test(value);
+  if (value.startsWith("/") || valueDrive) {
     if (!sandboxRoot) return null;
     const root = sandboxRoot.replace(/\\/g, "/").replace(/\/+$/, "");
-    if (value.replace(/\/+$/, "") === root) return "";
-    if (!value.startsWith(root + "/")) return null;
+    const ci = valueDrive || /^[A-Za-z]:\//.test(root);
+    const same = (a: string, b: string) => (ci ? a.toLowerCase() === b.toLowerCase() : a === b);
+    const starts = (a: string, b: string) =>
+      ci ? a.toLowerCase().startsWith(b.toLowerCase()) : a.startsWith(b);
+    if (value.replace(/\/+$/, "").length === root.length) {
+      if (!same(value.replace(/\/+$/, ""), root)) return null;
+      return "";
+    }
+    if (!starts(value, `${root}/`)) return null;
     value = value.slice(root.length + 1);
     return normalizeRel(value);
   }

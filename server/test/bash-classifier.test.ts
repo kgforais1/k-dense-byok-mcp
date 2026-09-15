@@ -99,6 +99,13 @@ for (const [name, mod] of [
       expect(mod.classifyFilePath("/etc/hosts", opts)).toEqual({ kind: "allow" });
       expect(mod.classifyFilePath("../escape/user_data/a.csv", opts)).toEqual({ kind: "allow" });
     });
+    it("relativizes Windows absolute paths against a drive-letter root", () => {
+      const win = { protectedGlobs: globs, sandboxRoot: "C:\\proj\\sandbox" };
+      expect(mod.classifyFilePath("C:\\proj\\sandbox\\user_data\\a.csv", win)).toMatchObject({ kind: "protected", path: "user_data/a.csv" });
+      expect(mod.classifyFilePath("c:/proj/sandbox/user_data/a.csv", win)).toMatchObject({ kind: "protected" });
+      expect(mod.classifyFilePath("D:\\other\\user_data\\a.csv", win)).toEqual({ kind: "allow" });
+      expect(mod.classifyFilePath("C:\\proj\\sandbox", win)).toMatchObject({ kind: "allow" });
+    });
     it("matches globs as documented", () => {
       expect(mod.globToRegExp("user_data/**").test("user_data")).toBe(true);
       expect(mod.globToRegExp("user_data/**").test("user_data/a/b.csv")).toBe(true);

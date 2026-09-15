@@ -57,8 +57,26 @@ const costRows = (projectId: string, sessionId: string) => {
 };
 
 let projectId: string;
-beforeEach(() => {
-  fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+beforeEach(async () => {
+  // FORK (upstream merge): on Windows the sandbox dir can stay locked briefly
+  // after a run (a probe child started with cwd inside it), so a single rmSync
+  // flakes with EBUSY. Retry the reset; POSIX keeps the single attempt.
+  if (process.platform === "win32") {
+    let lastError: unknown = new Error("unreachable");
+    for (let attempt = 0; attempt < 10; attempt++) {
+      try {
+        fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+        lastError = undefined;
+        break;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    if (lastError) throw lastError;
+  } else {
+    fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+  }
   fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
   runBroker.clear();
   pinSession.mockClear();

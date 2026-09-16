@@ -69,7 +69,7 @@ export async function snapshotInputs(projectId: string, inputs: string[], destin
         output = await fs.promises.open(dest, "wx", 0o600);
       }
       const hash = crypto.createHash("sha256");
-      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      const buffer = Buffer.alloc(1024 * 1024);
       let position = 0;
       while (position < before.size) {
         const { bytesRead } = await file.read(buffer, 0, Math.min(buffer.length, before.size - position), position);

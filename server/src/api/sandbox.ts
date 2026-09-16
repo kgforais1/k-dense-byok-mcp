@@ -379,7 +379,7 @@ export async function registerSandboxRoutes(app: FastifyInstance): Promise<void>
         }
         // A file can grow after stat while an agent writes it. Bound the
         // actual read too, rather than allocating a newly huge dataset.
-        const buffer = Buffer.allocUnsafe(MAX_PREVIEW_BYTES + 1);
+        const buffer = Buffer.alloc(MAX_PREVIEW_BYTES + 1);
         let length = 0;
         while (length < buffer.length) {
           const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);

@@ -40,7 +40,7 @@ async function checkArtifact(sandbox: string, requested: string, budget: Budget)
     if (before.size > NOTEBOOK_HASH_FILE_BYTES || before.size > budget.bytes) return { ...base, reason: "budget" };
     budget.bytes -= before.size;
     const hash = crypto.createHash("sha256");
-    const buf = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, before.size)));
+    const buf = Buffer.alloc(Math.min(64 * 1024, Math.max(1, before.size)));
     let position = 0;
     // Never chase a concurrently growing file beyond its initial size.
     while (position < before.size) {

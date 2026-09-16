@@ -80,7 +80,7 @@ export async function hashEvidenceFile(projectId: string, absolute: string, limi
   try {
     if (stat.size > limit || budget && stat.size > budget.remaining) throw new EvidencePackageError("READ_BUDGET", "File exceeds the evidence verification budget", 413);
     if (budget) budget.remaining -= stat.size;
-    const hash = crypto.createHash("sha256"); const buffer = Buffer.allocUnsafe(1024 * 1024); let offset = 0;
+    const hash = crypto.createHash("sha256"); const buffer = Buffer.alloc(1024 * 1024); let offset = 0;
     while (offset < stat.size) {
       const n = (await handle.read(buffer, 0, Math.min(buffer.length, stat.size - offset), offset)).bytesRead;
       if (!n) throw new EvidencePackageError("SOURCE_CHANGED", "File changed during verification", 409);
@@ -96,7 +96,7 @@ export function verifiedEvidenceStream(projectId: string, absolute: string, expe
     const { handle, stat } = await openSafe(projectId, absolute, false);
     try {
       if (stat.size !== expected.size || stat.size > limit) throw new EvidencePackageError("SNAPSHOT_CHANGED", "Packaged file size no longer matches the reviewed snapshot", 409);
-      const hash = crypto.createHash("sha256"); const buffer = Buffer.allocUnsafe(1024 * 1024); let offset = 0;
+      const hash = crypto.createHash("sha256"); const buffer = Buffer.alloc(1024 * 1024); let offset = 0;
       while (offset < stat.size) {
         const n = (await handle.read(buffer, 0, Math.min(buffer.length, stat.size - offset), offset)).bytesRead;
         if (!n) throw new EvidencePackageError("SNAPSHOT_CHANGED", "Packaged file changed during streaming", 409);
@@ -120,7 +120,7 @@ export async function captureBlob(projectId: string, absolute: string, expected:
     if (stat.size > ARTIFACT_BYTES || stat.size > budget.remaining) throw new EvidencePackageError("ARTIFACT_BUDGET", "Artifact exceeds 128 MiB/file or the package read budget", 413);
     budget.remaining -= stat.size;
     output = await fs.promises.open(tmp, "wx", 0o600);
-    const hash = crypto.createHash("sha256"); const buf = Buffer.allocUnsafe(1024 * 1024); let position = 0;
+    const hash = crypto.createHash("sha256"); const buf = Buffer.alloc(1024 * 1024); let position = 0;
     while (position < stat.size) {
       const n = (await handle.read(buf, 0, Math.min(buf.length, stat.size - position), position)).bytesRead;
       if (!n) throw new EvidencePackageError("SOURCE_CHANGED", "Artifact changed during capture", 409);

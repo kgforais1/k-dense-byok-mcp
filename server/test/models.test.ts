@@ -25,12 +25,15 @@ describe("catalogueEntryFor (reasoning-effort suffix pricing)", () => {
   });
 
   it("does NOT strip -fast (a distinct catalogue model with its own pricing)", () => {
-    const fast = catalogueEntryFor("anthropic/claude-opus-4.8-fast");
-    const base = catalogueEntryFor("anthropic/claude-opus-4.8");
-    expect(fast).toBeDefined();
+    // -fast is its own (pricier) model, not a reasoning-effort suffix, so it
+    // must never collapse to the base row. The Anthropic -fast variants have
+    // been delisted from OpenRouter, so a correct lookup finds nothing; a
+    // suffix-stripping one would wrongly return `base`. Tolerate a relisting
+    // as long as the pricing stays distinct.
+    const base = catalogueEntryFor("anthropic/claude-opus-5");
     expect(base).toBeDefined();
-    // -fast is its own model (pricier); it must not collapse to the base price.
-    expect(fast!.costInput).not.toBe(base!.costInput);
+    const fast = catalogueEntryFor("anthropic/claude-opus-5-fast");
+    expect(fast === undefined || fast.costInput !== base!.costInput).toBe(true);
   });
 
   it("returns undefined for an unknown model", () => {
@@ -67,10 +70,12 @@ describe("provider-aware model resolution", () => {
     ).toThrowError(ModelResolutionError);
   });
 
-  it("requires OAuth rather than an ambient API key for subscription providers", async () => {
-    const model = resolveModel("anthropic/claude-opus-4-8", registry);
+  it("requires OAuth rather than an ambient token for OAuth-only providers", async () => {
+    // Anthropic/xAI now take an API key too (provider-catalog.ts); Copilot is
+    // OAuth-only, so its COPILOT_GITHUB_TOKEN must not pass as a subscription.
+    const model = resolveModel("github-copilot/claude-sonnet-5", registry);
     const apiKeyRuntime = {
-      checkAuth: async () => ({ type: "api_key" as const, source: "ANTHROPIC_API_KEY" }),
+      checkAuth: async () => ({ type: "api_key" as const, source: "COPILOT_GITHUB_TOKEN" }),
     };
     await expect(
       assertModelAuthentication(
@@ -88,5 +93,30 @@ describe("provider-aware model resolution", () => {
         oauthRuntime as Parameters<typeof assertModelAuthentication>[1],
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("custom model servers in ref resolution", () => {
+  it("resolves <custom-id>/<model> through the registry and errors on unknown ids", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { KADY_PI_AGENT_DIR } = await import("../src/config.ts");
+    const { writeCustomProviders } = await import("../src/agent/custom-models.ts");
+    writeCustomProviders(
+      [{ id: "hpc-vllm", baseUrl: "http://gpu:8000/v1", api: "openai-completions", models: [{ id: "llama-3.3-70b" }] }],
+      KADY_PI_AGENT_DIR,
+    );
+    try {
+      const found = { id: "llama-3.3-70b", provider: "hpc-vllm", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+      const registry = { find: (provider: string, id: string) => (provider === "hpc-vllm" && id === "llama-3.3-70b" ? found : null) } as never;
+      expect(resolveModel("hpc-vllm/llama-3.3-70b", registry)).toBe(found);
+      expect(() => resolveModel("hpc-vllm/not-listed", registry)).toThrow(ModelResolutionError);
+      expect(() => resolveModel("hpc-vllm/not-listed", registry)).toThrow(/Unknown hpc-vllm model/);
+      // Unknown prefixes that are not custom providers keep the legacy OpenRouter fallback.
+      expect(modelReference(resolveModel("meta-llama/llama-3.3-70b", registry))).toBe("openrouter/meta-llama/llama-3.3-70b");
+    } finally {
+      fs.rmSync(path.join(KADY_PI_AGENT_DIR, "models.json"), { force: true });
+      fs.rmSync(path.join(KADY_PI_AGENT_DIR, "kady-custom-models.json"), { force: true });
+    }
   });
 });

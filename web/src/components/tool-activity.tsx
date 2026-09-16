@@ -17,7 +17,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import {
   Collapsible,
@@ -48,6 +48,8 @@ function ToolIcon({ toolName }: { toolName?: string }) {
     case "ls":
       return <FolderTreeIcon className={className} />;
     case "subagent":
+    case "bg_wait":
+    case "subagent_wait":
       return <UsersIcon className={className} />;
     default:
       return <WrenchIcon className={className} />;
@@ -73,10 +75,22 @@ function subagentNames(
       }
     }
   }
+  // Since pi-subagents 0.43 children are declared inside a `workflowScript`
+  // string as `runs.run(key, { agent: "name", task })`; read the literals.
+  if (typeof args.workflowScript === "string") {
+    for (const match of args.workflowScript.matchAll(
+      /\bagent\s*:\s*(["'`])([A-Za-z0-9][A-Za-z0-9._-]*)\1/g,
+    )) {
+      add(match[2]);
+    }
+  }
 
   if (result) {
     const asyncNames = /^Async (?:parallel|single): \[([^\]]+)\]/m.exec(result)?.[1];
     if (asyncNames) asyncNames.split("+").forEach(add);
+    // pi-subagents ≥0.65 receipt: "Async single run (agent) …"
+    const asyncSingle = /^Async single run \(([A-Za-z0-9][A-Za-z0-9._-]*)\)/m.exec(result)?.[1];
+    if (asyncSingle) add(asyncSingle);
     for (const match of result.matchAll(
       /^(?:Step \d+|Agent \d+\/\d+):\s+([A-Za-z0-9][A-Za-z0-9._-]*)/gm,
     )) {
@@ -116,6 +130,9 @@ function summarize(
       if (a.action === "interrupt") return "interrupt subagent";
       return firstLine(a.task ?? a.prompt ?? a.description) || "subtask";
     }
+    if (toolName === "bg_wait" || toolName === "subagent_wait") {
+      return "wait for subagents";
+    }
     const keys = Object.keys(a);
     if (keys.length) return firstLine(a[keys[0]]) || keys.join(", ");
   }
@@ -145,7 +162,7 @@ function fullArgs(args: unknown): string {
   return String(args);
 }
 
-function ToolCard({ item }: { item: ActivityItem }) {
+const ToolCard = memo(function ToolCard({ item }: { item: ActivityItem }) {
   const [open, setOpen] = useState(false);
   // A read of a SKILL.md is Pi's skill activation — surface the skill's name
   // instead of a generic file read (the path stays visible under Input). The
@@ -233,7 +250,7 @@ function ToolCard({ item }: { item: ActivityItem }) {
       )}
     </Collapsible>
   );
-}
+});
 
 /** Compact pointer from Modal tool activity to its durable Compute record. */
 export function ModalJobChip({

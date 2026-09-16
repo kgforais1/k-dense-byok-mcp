@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as projects from "@/lib/projects";
 import {
   buildRunBody,
+  IDLE_RUN_POLL_MS,
   parseContextUsage,
   useAgent,
   type SessionLoadOutcome,
@@ -645,5 +646,328 @@ describe("useAgent live-run reconnect", () => {
     expect(restored).toEqual(["queued one", "queued two"]);
     expect(calls).toContain("/sessions/stop-me/abort");
     expect(result.current.runState).toBe("idle");
+  });
+});
+
+describe("useAgent system-initiated runs", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("restores a running system run without echoing a prompt bubble", async () => {
+    let eventsController!: ReadableStreamDefaultController<Uint8Array>;
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string) => {
+      if (path === "/sessions/sys/run/state") {
+        return new Response(
+          JSON.stringify({
+            status: "running",
+            run: {
+              runId: "sys-1",
+              prompt: "",
+              images: [],
+              origin: "system",
+              kind: "turn",
+              reason: "subagent_supervisor_request",
+              baseline: { messages: [{ role: "user", content: "earlier", timestamp: 1 }], contextUsage: null },
+              frames: [
+                { seq: 1, type: "run_start", runId: "sys-1", origin: "system", kind: "turn" },
+                { seq: 2, type: "agent_start" },
+                {
+                  seq: 3,
+                  type: "message_start",
+                  role: "custom",
+                  customType: "subagent_supervisor_request",
+                  content: "Child asks: which cutoff?",
+                  details: { agent: "worker" },
+                },
+                { seq: 4, type: "text_delta", delta: "Relaying" },
+              ],
+              lastSeq: 4,
+            },
+          }),
+        );
+      }
+      if (path === "/sessions/sys/interview") return new Response(JSON.stringify({ pending: null }));
+      if (path === "/sessions/sys/run/events?after=4") {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              eventsController = controller;
+            },
+          }),
+        );
+      }
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+
+    const { result } = renderHook(() => useAgent("p"));
+    let loadPromise!: Promise<SessionLoadOutcome>;
+    act(() => {
+      loadPromise = result.current.loadSession("sys");
+    });
+    await waitFor(() => expect(result.current.status).toBe("streaming"));
+    expect(result.current.messages.map((m) => m.role)).toEqual(["user", "system", "assistant"]);
+    expect(result.current.messages[1]).toMatchObject({
+      customType: "subagent_supervisor_request",
+      content: "Child asks: which cutoff?",
+    });
+    expect(result.current.messages[2].content).toBe("Relaying");
+
+    const encoder = new TextEncoder();
+    eventsController.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 5, type: "done" })}\n\n`));
+    eventsController.close();
+    await act(async () => {
+      expect(await loadPromise).toBe("restored");
+    });
+    expect(result.current.status).toBe("ready");
+  });
+
+  it("loads history for a completed notice run", async () => {
+    const calls: string[] = [];
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string) => {
+      calls.push(path);
+      if (path === "/sessions/n/run/state") {
+        return new Response(
+          JSON.stringify({
+            status: "complete",
+            run: { runId: "notice-1", prompt: "", images: [], origin: "system", kind: "notice", baseline: { messages: [], contextUsage: null }, frames: [], lastSeq: 3 },
+          }),
+        );
+      }
+      if (path === "/sessions/n/history") {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              { role: "user", content: "stored" },
+              { role: "system", customType: "subagent_watchdog_warning", content: "Stalemate", details: { severity: "concern" } },
+            ],
+          }),
+        );
+      }
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+    const { result } = renderHook(() => useAgent("p"));
+    await act(async () => {
+      expect(await result.current.loadSession("n")).toBe("restored");
+    });
+    expect(calls).toEqual(["/sessions/n/run/state", "/sessions/n/history"]);
+    expect(result.current.messages.map((m) => m.role)).toEqual(["user", "system"]);
+    expect(result.current.messages[1]).toMatchObject({ customType: "subagent_watchdog_warning", details: { severity: "concern" } });
+  });
+
+  it("polls run state while idle and adopts a new system run", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let probes = 0;
+    let stateCalls = 0;
+    const calls: string[] = [];
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string) => {
+      calls.push(path);
+      if (path === "/sessions/idle/run/state" && ++stateCalls === 1) {
+        // Mount-time restore: nothing running yet.
+        return new Response(JSON.stringify({ status: "none" }));
+      }
+      if (path === "/sessions/idle/history") {
+        return new Response(JSON.stringify({ messages: [{ role: "user", content: "stored" }, { role: "assistant", frames: [{ type: "text_delta", delta: "reply" }] }] }));
+      }
+      if (path === "/sessions/idle/run/state?frames=0") {
+        probes++;
+        if (probes === 1) return new Response(JSON.stringify({ status: "none" }));
+        return new Response(
+          JSON.stringify({ status: "complete", run: { runId: "sys-2", prompt: "", images: [], origin: "system", kind: "turn", baseline: { messages: [], contextUsage: null }, frames: [], lastSeq: 3 } }),
+        );
+      }
+      if (path === "/sessions/idle/run/state") {
+        return new Response(
+          JSON.stringify({
+            status: "complete",
+            run: {
+              runId: "sys-2",
+              prompt: "",
+              images: [],
+              origin: "system",
+              kind: "turn",
+              baseline: { messages: [], contextUsage: null },
+              frames: [
+                { seq: 1, type: "run_start", runId: "sys-2", origin: "system", kind: "turn" },
+                { seq: 2, type: "message_start", role: "custom", customType: "subagent-notify", content: "worker finished", details: { agent: "worker", status: "complete" } },
+                { seq: 3, type: "text_delta", delta: "Summarizing the result" },
+                { seq: 4, type: "done" },
+              ],
+              lastSeq: 4,
+            },
+          }),
+        );
+      }
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+
+    const { result } = renderHook(() => useAgent("p"));
+    await act(async () => {
+      expect(await result.current.loadSession("idle")).toBe("restored");
+    });
+    expect(result.current.messages).toHaveLength(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_RUN_POLL_MS + 10);
+    });
+    expect(probes).toBe(1);
+    expect(result.current.messages).toHaveLength(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_RUN_POLL_MS + 10);
+    });
+    await waitFor(() => expect(result.current.messages).toHaveLength(4));
+    expect(result.current.messages.map((m) => m.role)).toEqual(["user", "assistant", "system", "assistant"]);
+    expect(result.current.messages[2]).toMatchObject({ customType: "subagent-notify", content: "worker finished" });
+    expect(result.current.messages[3].content).toBe("Summarizing the result");
+    expect(result.current.status).toBe("ready");
+
+    // Already adopted: later probes with the same run id change nothing.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_RUN_POLL_MS + 10);
+    });
+    expect(result.current.messages).toHaveLength(4);
+    expect(calls.filter((c) => c === "/sessions/idle/run/state").length).toBe(2);
+  });
+});
+
+describe("useAgent send() while a system run is live", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("adopts the live run and queues the message as a follow-up instead of failing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let stateCalls = 0;
+    const posts: Array<{ path: string; body: unknown }> = [];
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/sessions/idle/run/state" && ++stateCalls === 1) {
+        return new Response(JSON.stringify({ status: "none" }));
+      }
+      if (path === "/sessions/idle/history") {
+        return new Response(JSON.stringify({ messages: [{ role: "user", content: "stored" }, { role: "assistant", frames: [{ type: "text_delta", delta: "reply" }] }] }));
+      }
+      if (path === "/sessions/idle/run") {
+        posts.push({ path, body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({ detail: "busy", reason: "streaming", runId: "sys-7" }), { status: 409 });
+      }
+      if (path === "/sessions/idle/run/state") {
+        return new Response(
+          JSON.stringify({
+            status: "complete",
+            run: {
+              runId: "sys-7",
+              prompt: "",
+              images: [],
+              origin: "system",
+              kind: "turn",
+              baseline: { messages: [], contextUsage: null },
+              frames: [
+                { seq: 1, type: "run_start", runId: "sys-7", origin: "system", kind: "turn" },
+                { seq: 2, type: "text_delta", delta: "Replied to the specialist." },
+                { seq: 3, type: "done" },
+              ],
+              lastSeq: 3,
+            },
+          }),
+        );
+      }
+      if (path === "/sessions/idle/follow-up") {
+        posts.push({ path, body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({ ok: true, pending: ["and then this"] }));
+      }
+      if (path.startsWith("/sessions/idle/run/state?frames=0")) {
+        return new Response(JSON.stringify({ status: "none" }));
+      }
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+
+    const { result } = renderHook(() => useAgent("p"));
+    await act(async () => {
+      expect(await result.current.loadSession("idle")).toBe("restored");
+    });
+
+    await act(async () => {
+      const sendPromise = result.current.send("and then this");
+      await vi.advanceTimersByTimeAsync(3_000);
+      await sendPromise;
+    });
+
+    // Five attempts at /run, then the follow-up route — never a failed bubble.
+    expect(posts.filter((p) => p.path === "/sessions/idle/run")).toHaveLength(5);
+    expect(posts.at(-1)).toMatchObject({ path: "/sessions/idle/follow-up", body: { message: "and then this" } });
+    await waitFor(() => expect(result.current.pendingFollowUps).toEqual(["and then this"]));
+    await waitFor(() => expect(result.current.messages.map((m) => m.content)).toContain("Replied to the specialist."));
+    expect(result.current.messages.some((m) => m.content.includes("Something went wrong"))).toBe(false);
+  });
+});
+
+describe("useAgent compact()", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("posts to /compact, resets the gauge and reloads the transcript from history", async () => {
+    const calls: Array<{ path: string; method?: string; body?: string }> = [];
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string, init?: RequestInit) => {
+      calls.push({ path, method: init?.method, body: typeof init?.body === "string" ? init.body : undefined });
+      if (path === "/sessions/s/run/state") return new Response(JSON.stringify({ status: "none" }));
+      if (path === "/sessions/s/history" && calls.filter((c) => c.path === path).length === 1) {
+        return new Response(JSON.stringify({ messages: [{ role: "user", content: "long chat" }], contextUsage: { tokens: 150_000, contextWindow: 200_000, percent: 75 } }));
+      }
+      if (path === "/sessions/s/compact") {
+        return new Response(
+          JSON.stringify({ ok: true, tokensBefore: 150_000, estimatedTokensAfter: 12_000, costUsd: 0.02, contextUsage: { tokens: null, contextWindow: 200_000, percent: null } }),
+        );
+      }
+      if (path === "/sessions/s/history") {
+        return new Response(
+          JSON.stringify({
+            messages: [
+              { role: "user", content: "long chat" },
+              { role: "system", customType: "compaction", content: "Context compacted", details: { tokensBefore: 150_000 } },
+            ],
+          }),
+        );
+      }
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+    const { result } = renderHook(() => useAgent("p"));
+    await act(async () => {
+      expect(await result.current.loadSession("s")).toBe("restored");
+    });
+    expect(result.current.contextUsage).toEqual({ tokens: 150_000, contextWindow: 200_000, percent: 75 });
+
+    let outcome!: Awaited<ReturnType<typeof result.current.compact>>;
+    await act(async () => {
+      outcome = await result.current.compact("keep thresholds");
+    });
+    expect(outcome).toEqual({ ok: true, tokensBefore: 150_000, estimatedTokensAfter: 12_000, costUsd: 0.02 });
+    const post = calls.find((c) => c.path === "/sessions/s/compact");
+    expect(post).toMatchObject({ method: "POST", body: JSON.stringify({ instructions: "keep thresholds" }) });
+    expect(result.current.contextUsage).toEqual({ tokens: null, contextWindow: 200_000, percent: null });
+    expect(result.current.messages.map((m) => m.role)).toEqual(["user", "system"]);
+    expect(result.current.messages[1]).toMatchObject({ customType: "compaction" });
+  });
+
+  it("maps 409/402 to streaming/budget reasons", async () => {
+    let status = 409;
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string) => {
+      if (path === "/sessions/s/run/state") return new Response(JSON.stringify({ status: "none" }));
+      if (path === "/sessions/s/history") return new Response(JSON.stringify({ messages: [] }));
+      if (path === "/sessions/s/compact") return new Response(JSON.stringify({ detail: "nope" }), { status });
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+    const { result } = renderHook(() => useAgent("p"));
+    await act(async () => {
+      await result.current.loadSession("s");
+    });
+    await act(async () => {
+      expect(await result.current.compact()).toEqual({ ok: false, reason: "streaming", detail: "nope" });
+    });
+    status = 402;
+    await act(async () => {
+      expect(await result.current.compact()).toEqual({ ok: false, reason: "budget", detail: "nope" });
+    });
   });
 });

@@ -1,6 +1,15 @@
 import crypto from "node:crypto";
 import {
+  ClientClosedError,
+  FunctionTimeoutError,
+  InvalidError,
   ModalClient,
+  NotFoundError,
+  SandboxFilesystemError,
+  SandboxFilesystemFileTooLargeError,
+  SandboxFilesystemNotFoundError,
+  SandboxTimeoutError,
+  TimeoutError,
   type App,
   type ContainerProcess,
   type FileInfo,
@@ -8,7 +17,8 @@ import {
   type Sandbox,
   type Volume,
 } from "modal";
-import { gpuString, type ModalInstanceSpec } from "./catalog.ts";
+import { checkedImageBase, gpuString, validateImageRequest, type ModalInstanceSpec } from "./catalog.ts";
+import { safeEnvironmentName } from "./environment.ts";
 import { ModalJobError, type ModalImageRequest } from "./types.ts";
 
 export interface ModalRemoteProcess {
@@ -22,6 +32,7 @@ export interface ModalRemoteFilesystem {
   listFiles(remotePath: string): Promise<readonly FileInfo[]>;
   stat(remotePath: string): Promise<FileInfo>;
   readText(remotePath: string): Promise<string>;
+  readBytes(remotePath: string): Promise<Uint8Array>;
   writeText(data: string, remotePath: string): Promise<void>;
 }
 
@@ -49,6 +60,8 @@ export interface ModalEnvironment {
   cacheName: string | null;
   snapshotName?: string;
   imageId?: string;
+  /** A previously published named environment was reused instead of rebuilt. */
+  reusedSnapshot?: boolean;
   opaque: unknown;
 }
 
@@ -74,6 +87,8 @@ export interface ModalAdapter {
     params: ModalCreateSandboxParams,
   ): Promise<ModalRemoteSandbox>;
   fromId(sandboxId: string): Promise<ModalRemoteSandbox>;
+  /** First live sandbox carrying every given tag, or null. */
+  findByTags(tags: Record<string, string>): Promise<ModalRemoteSandbox | null>;
   clearCache(cacheName: string): Promise<void>;
   close(): void;
 }
@@ -93,28 +108,68 @@ function credentials(): { tokenId: string; tokenSecret: string } {
   return { tokenId, tokenSecret };
 }
 
-const PACKAGE_TOKEN_RE = /^[A-Za-z0-9_.+@/:<>=!~,[\]-]+$/;
-const IMAGE_RE = /^[A-Za-z0-9._:@/+-]+$/;
-
-function checkedTokens(values: string[] | undefined, field: "pip" | "apt"): string[] {
-  return (values ?? []).map((raw) => {
-    const value = raw.trim();
-    if (!value || value.length > 240 || !PACKAGE_TOKEN_RE.test(value)) {
-      throw new ModalJobError(
-        "INVALID_IMAGE",
-        `Unsafe or invalid ${field} package token: ${JSON.stringify(raw)}`,
-      );
-    }
-    return value;
-  });
+/**
+ * Map an error thrown by the Modal SDK (or the gRPC layer underneath it) to a
+ * typed `ModalJobError` with an honest `retryable` flag. Without this every SDK
+ * failure — a revoked token included — reads as a retryable "remote failure"
+ * and the manager cycles the whole instance fallback chain on it.
+ */
+export function classifyModalError(error: unknown): ModalJobError {
+  if (error instanceof ModalJobError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  const name = (error as { name?: unknown })?.name;
+  const grpcCode = (error as { code?: unknown })?.code;
+  // nice-grpc ClientError is not re-exported by the SDK; 16 = UNAUTHENTICATED,
+  // 7 = PERMISSION_DENIED.
+  if (
+    (name === "ClientError" && (grpcCode === 16 || grpcCode === 7)) ||
+    /UNAUTHENTICATED|PERMISSION_DENIED|invalid token|token (id|secret)?\s*(is )?(invalid|expired)/i.test(message)
+  ) {
+    return new ModalJobError("AUTH_FAILED", `Modal rejected the configured credentials: ${message}`, 401, false);
+  }
+  if (/Image build .*failed/i.test(message)) {
+    return new ModalJobError("IMAGE_BUILD_FAILED", message, 422, false);
+  }
+  if (error instanceof InvalidError) return new ModalJobError("INVALID_REQUEST", message, 400, false);
+  if (error instanceof NotFoundError || error instanceof SandboxFilesystemNotFoundError) {
+    return new ModalJobError("REMOTE_NOT_FOUND", message, 404, false);
+  }
+  if (error instanceof SandboxFilesystemFileTooLargeError) {
+    return new ModalJobError("OUTPUT_TOO_LARGE", message, 413, false);
+  }
+  if (
+    error instanceof SandboxTimeoutError ||
+    error instanceof FunctionTimeoutError ||
+    error instanceof TimeoutError ||
+    /timeout|timed out/i.test(message)
+  ) {
+    return new ModalJobError("TIMEOUT", message, 504, true);
+  }
+  if (error instanceof ClientClosedError) return new ModalJobError("CLIENT_CLOSED", message, 503, true);
+  if (error instanceof SandboxFilesystemError) return new ModalJobError("REMOTE_FS_ERROR", message, 502, true);
+  return new ModalJobError("REMOTE_FAILURE", message, 502, true);
 }
 
-function checkedImageBase(value: string): string {
-  const base = value.trim();
-  if (!base || base.length > 500 || !IMAGE_RE.test(base)) {
-    throw new ModalJobError("INVALID_IMAGE", "Invalid registry image name");
+async function classified<T>(promise: Promise<T>): Promise<T> {
+  try {
+    return await promise;
+  } catch (error) {
+    throw classifyModalError(error);
   }
-  return base;
+}
+
+/** Every filesystem call surfaces a classified error. */
+function classifiedFilesystem(fs: Sandbox["filesystem"]): ModalRemoteFilesystem {
+  return {
+    makeDirectory: (remotePath, options) => classified(fs.makeDirectory(remotePath, options)),
+    copyFromLocal: (localPath, remotePath) => classified(fs.copyFromLocal(localPath, remotePath)),
+    copyToLocal: (remotePath, localPath) => classified(fs.copyToLocal(remotePath, localPath)),
+    listFiles: (remotePath) => classified(fs.listFiles(remotePath)),
+    stat: (remotePath) => classified(fs.stat(remotePath)),
+    readText: (remotePath) => classified(fs.readText(remotePath)),
+    readBytes: (remotePath) => classified(fs.readBytes(remotePath)),
+    writeText: (data, remotePath) => classified(fs.writeText(data, remotePath)),
+  };
 }
 
 class SdkRemoteSandbox implements ModalRemoteSandbox {
@@ -125,7 +180,7 @@ class SdkRemoteSandbox implements ModalRemoteSandbox {
   constructor(sandbox: Sandbox) {
     this.sandbox = sandbox;
     this.id = sandbox.sandboxId;
-    this.filesystem = sandbox.filesystem;
+    this.filesystem = classifiedFilesystem(sandbox.filesystem);
   }
 
   async exec(
@@ -138,15 +193,16 @@ class SdkRemoteSandbox implements ModalRemoteSandbox {
       env?: Record<string, string>;
     },
   ): Promise<ModalRemoteProcess> {
-    return (await this.sandbox.exec(command, params)) as ContainerProcess<string>;
+    const process = (await classified(this.sandbox.exec(command, params))) as ContainerProcess<string>;
+    return { wait: () => classified(process.wait()) };
   }
 
   async terminate(): Promise<void> {
-    await this.sandbox.terminate();
+    await classified(this.sandbox.terminate());
   }
 
   poll(): Promise<number | null> {
-    return this.sandbox.poll();
+    return classified(this.sandbox.poll());
   }
 
   detach(): void {
@@ -163,7 +219,11 @@ interface SdkEnvironmentOpaque {
 export class SdkModalAdapter implements ModalAdapter {
   private client: ModalClient;
 
-  constructor(tokenId?: string, tokenSecret?: string) {
+  constructor(tokenId?: string, tokenSecret?: string, client?: ModalClient) {
+    if (client) {
+      this.client = client;
+      return;
+    }
     const pair = tokenId && tokenSecret ? { tokenId, tokenSecret } : credentials();
     this.client = new ModalClient(pair);
   }
@@ -172,15 +232,25 @@ export class SdkModalAdapter implements ModalAdapter {
     // `list().next()` is read-only and harmless. It proves both credentials
     // authenticate without creating apps, sandboxes, images, or volumes.
     const iterator = this.client.sandboxes.list({ tags: { "kady-validation": "never" } });
-    await iterator.next();
+    await classified(iterator.next());
   }
 
-  async prepareEnvironment(
+  prepareEnvironment(
     projectId: string,
     request: ModalImageRequest | undefined,
     defaultImage: string,
     environment?: string,
     cache: "project" | "none" = "project",
+  ): Promise<ModalEnvironment> {
+    return classified(this.prepareEnvironmentUnclassified(projectId, request, defaultImage, environment, cache));
+  }
+
+  private async prepareEnvironmentUnclassified(
+    projectId: string,
+    request: ModalImageRequest | undefined,
+    defaultImage: string,
+    environment: string | undefined,
+    cache: "project" | "none",
   ): Promise<ModalEnvironment> {
     const appName = "kady";
     const cacheName = `kady-cache-${projectId}`.slice(0, 63);
@@ -189,10 +259,13 @@ export class SdkModalAdapter implements ModalAdapter {
       cache === "project"
         ? await this.client.volumes.fromName(cacheName, { createIfMissing: true })
         : null;
-    const base = checkedImageBase(request?.base ?? defaultImage);
+    // Requests are validated at submission; re-run the same rule here so the
+    // adapter stays safe when driven directly (tests, future callers).
+    const validated = validateImageRequest(request);
+    const base = checkedImageBase(validated?.base ?? defaultImage);
     let image = this.client.images.fromRegistry(base);
-    const apt = checkedTokens(request?.apt, "apt");
-    const pip = checkedTokens(request?.pip, "pip");
+    const apt = validated?.apt ?? [];
+    const pip = validated?.pip ?? [];
     const commands: string[] = [];
     if (apt.length) {
       commands.push(
@@ -202,12 +275,9 @@ export class SdkModalAdapter implements ModalAdapter {
     if (pip.length) commands.push(`RUN pip install --no-cache-dir ${pip.join(" ")}`);
     if (commands.length) image = image.dockerfileCommands(commands);
     let snapshotName: string | undefined;
+    let reusedSnapshot = false;
     if (environment) {
-      const safeEnvironment = environment
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 24);
+      const safeEnvironment = safeEnvironmentName(environment);
       if (!safeEnvironment) {
         throw new ModalJobError("INVALID_ENVIRONMENT", "environment must contain a letter or digit");
       }
@@ -217,14 +287,25 @@ export class SdkModalAdapter implements ModalAdapter {
         .digest("hex")
         .slice(0, 16);
       snapshotName = `kady-${projectId}-${safeEnvironment}:${specHash}`.slice(0, 127);
-      image = await image.build(app);
-      await image.publish(snapshotName);
+      // The name embeds the spec hash, so a hit is exactly this environment.
+      // Reuse it; only build and publish when nothing was published before.
+      const published = await this.client.images.fromName(snapshotName).catch((error) => {
+        if (error instanceof NotFoundError || /not found/i.test(String((error as Error)?.message))) return null;
+        throw error;
+      });
+      if (published) {
+        image = published;
+        reusedSnapshot = true;
+      } else {
+        image = await image.build(app);
+        await image.publish(snapshotName);
+      }
     }
     return {
       appId: app.appId,
       appName,
       cacheName: volume ? cacheName : null,
-      ...(snapshotName ? { snapshotName, imageId: image.imageId } : {}),
+      ...(snapshotName ? { snapshotName, imageId: image.imageId, reusedSnapshot } : {}),
       opaque: { app, image, volume } satisfies SdkEnvironmentOpaque,
     };
   }
@@ -234,25 +315,33 @@ export class SdkModalAdapter implements ModalAdapter {
     params: ModalCreateSandboxParams,
   ): Promise<ModalRemoteSandbox> {
     const { app, image, volume } = environment.opaque as SdkEnvironmentOpaque;
-    const sandbox = await this.client.sandboxes.create(app, image, {
-      gpu: gpuString(params.instance, params.gpuCount),
-      cpu: params.instance.cpu,
-      memoryMiB: params.instance.memoryMiB,
-      timeoutMs: params.timeoutMs,
-      workdir: "/workspace",
-      ...(volume ? { volumes: { "/cache": volume } } : {}),
-      name: params.name,
-      tags: params.tags,
-    });
+    const sandbox = await classified(
+      this.client.sandboxes.create(app, image, {
+        gpu: gpuString(params.instance, params.gpuCount),
+        cpu: params.instance.cpu,
+        memoryMiB: params.instance.memoryMiB,
+        timeoutMs: params.timeoutMs,
+        workdir: "/workspace",
+        ...(volume ? { volumes: { "/cache": volume } } : {}),
+        name: params.name,
+        tags: params.tags,
+      }),
+    );
     return new SdkRemoteSandbox(sandbox);
   }
 
   async fromId(sandboxId: string): Promise<ModalRemoteSandbox> {
-    return new SdkRemoteSandbox(await this.client.sandboxes.fromId(sandboxId));
+    return new SdkRemoteSandbox(await classified(this.client.sandboxes.fromId(sandboxId)));
+  }
+
+  async findByTags(tags: Record<string, string>): Promise<ModalRemoteSandbox | null> {
+    const iterator = this.client.sandboxes.list({ tags });
+    const first = await classified(iterator.next());
+    return first.done || !first.value ? null : new SdkRemoteSandbox(first.value);
   }
 
   async clearCache(cacheName: string): Promise<void> {
-    await this.client.volumes.delete(cacheName, { allowMissing: true });
+    await classified(this.client.volumes.delete(cacheName, { allowMissing: true }));
   }
 
   close(): void {

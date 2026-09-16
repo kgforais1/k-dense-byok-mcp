@@ -16,6 +16,8 @@ import {
 } from "../projects.ts";
 import { projectCostSummary } from "../cost/ledger.ts";
 import { readProjectNotebooks } from "../agent/notebook-store.ts";
+import { withNotebookArtifactHealth } from "../agent/notebook-artifacts.ts";
+import { withNotebookPlanHistory } from "../agent/notebook-research.ts";
 import { readNotebookAnnotations } from "../agent/notebook-annotations.ts";
 import { notebookToMarkdown } from "../agent/notebook-export.ts";
 import { buildNotebookZip } from "../agent/notebook-zip.ts";
@@ -27,9 +29,20 @@ import {
   disposeProjectSessions,
   listSessions,
 } from "../agent/session-registry.ts";
-import { syncSandboxVenv } from "../sandbox-seed.ts";
+import { agentsMdStatus, restoreAgentsMd, syncSandboxVenv } from "../sandbox-seed.ts";
 import { listProjectActivities } from "../project-activity.ts";
 import { modalJobManager } from "../modal/manager.ts";
+import {
+  COMPACTION_BOUNDS,
+  readCompactionSettings,
+  validateCompactionPatch,
+  writeCompactionSettings,
+} from "../agent/compaction-settings.ts";
+import {
+  readGuardPolicy,
+  validateGuardPolicyPatch,
+  writeGuardPolicy,
+} from "../agent/guard-policy.ts";
 
 export async function registerProjectRoutes(app: FastifyInstance): Promise<void> {
   app.get("/projects", async () => listProjects());
@@ -88,6 +101,80 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
     }
   });
 
+  // Per-project context-compaction knobs (stored in sandbox/.pi/settings.json).
+  app.get<{ Params: { projectId: string } }>("/projects/:projectId/compaction", async (req, reply) => {
+    if (!getProject(req.params.projectId)) {
+      reply.code(404);
+      return { detail: "Project not found" };
+    }
+    return { ...readCompactionSettings(resolvePaths(req.params.projectId)), bounds: COMPACTION_BOUNDS };
+  });
+
+  app.put<{ Params: { projectId: string } }>("/projects/:projectId/compaction", async (req, reply) => {
+    if (!getProject(req.params.projectId)) {
+      reply.code(404);
+      return { detail: "Project not found" };
+    }
+    const error = validateCompactionPatch(req.body);
+    if (error) {
+      reply.code(400);
+      return { detail: error };
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const written = writeCompactionSettings(resolvePaths(req.params.projectId), {
+      ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+      ...(typeof body.reserveTokens === "number" ? { reserveTokens: body.reserveTokens } : {}),
+      ...(typeof body.keepRecentTokens === "number" ? { keepRecentTokens: body.keepRecentTokens } : {}),
+    });
+    if (!written) {
+      reply.code(409);
+      return { detail: "sandbox/.pi/settings.json is not valid JSON; fix it before changing compaction settings" };
+    }
+    return { ...written, bounds: COMPACTION_BOUNDS };
+  });
+
+  // Raw-data guard policy (sandbox/.kady/policy.json; read by lead and children).
+  app.get<{ Params: { projectId: string } }>("/projects/:projectId/guard-policy", async (req, reply) => {
+    if (!getProject(req.params.projectId)) {
+      reply.code(404);
+      return { detail: "Project not found" };
+    }
+    return readGuardPolicy(resolvePaths(req.params.projectId).sandbox);
+  });
+
+  app.put<{ Params: { projectId: string } }>("/projects/:projectId/guard-policy", async (req, reply) => {
+    if (!getProject(req.params.projectId)) {
+      reply.code(404);
+      return { detail: "Project not found" };
+    }
+    const error = validateGuardPolicyPatch(req.body);
+    if (error) {
+      reply.code(400);
+      return { detail: error };
+    }
+    const body = req.body as { protectedPaths?: string[]; destructiveConfirm?: boolean };
+    return writeGuardPolicy(resolvePaths(req.params.projectId).sandbox, body);
+  });
+
+  // Sandbox AGENTS.md: is it the shipped text, an older version, or user-edited?
+  app.get<{ Params: { projectId: string } }>("/projects/:projectId/instructions", async (req, reply) => {
+    if (!getProject(req.params.projectId)) {
+      reply.code(404);
+      return { detail: "Project not found" };
+    }
+    return { status: agentsMdStatus(resolvePaths(req.params.projectId)) };
+  });
+
+  app.post<{ Params: { projectId: string } }>("/projects/:projectId/instructions/restore", async (req, reply) => {
+    if (!getProject(req.params.projectId)) {
+      reply.code(404);
+      return { detail: "Project not found" };
+    }
+    const paths = resolvePaths(req.params.projectId);
+    restoreAgentsMd(paths);
+    return { status: agentsMdStatus(paths) };
+  });
+
   app.get<{ Params: { projectId: string } }>("/projects/:projectId/costs", async (req) => {
     return projectCostSummary(req.params.projectId);
   });
@@ -98,9 +185,10 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
   app.get<{ Params: { projectId: string } }>("/projects/:projectId/notebook", async (req, reply) => {
     try {
       const notebooks = readProjectNotebooks(req.params.projectId);
-      const entries = notebooks
+      reply.header("Cache-Control", "no-store");
+      const entries = withNotebookPlanHistory(await withNotebookArtifactHealth(notebooks
         .flatMap((nb) => nb.entries.map((e) => ({ ...e, sessionId: nb.sessionId })))
-        .sort((a, b) => a.timestamp - b.timestamp || a.sessionId.localeCompare(b.sessionId));
+        .sort((a, b) => a.timestamp - b.timestamp || a.sessionId.localeCompare(b.sessionId)), req.params.projectId), req.params.projectId);
       const sessions = notebooks
         .filter((nb) => nb.entries.length > 0)
         .map((nb) => ({
@@ -131,11 +219,12 @@ export async function registerProjectRoutes(app: FastifyInstance): Promise<void>
       const projectId = req.params.projectId;
       try {
         const notebooks = readProjectNotebooks(projectId);
-        const entries = notebooks
+        reply.header("Cache-Control", "no-store");
+        const entries = withNotebookPlanHistory(await withNotebookArtifactHealth(notebooks
           .flatMap((nb) => nb.entries.map((e) => ({ ...e, sessionId: nb.sessionId })))
-          .sort((a, b) => a.timestamp - b.timestamp || a.sessionId.localeCompare(b.sessionId));
+          .sort((a, b) => a.timestamp - b.timestamp || a.sessionId.localeCompare(b.sessionId)), projectId), projectId);
         const annotations = notebooks.flatMap(
-          (nb) => readNotebookAnnotations(nb.sessionId, projectId).doc.annotations,
+          (nb) => readNotebookAnnotations(nb.sessionId, projectId).doc.annotations.map((a) => ({ ...a, sessionId: nb.sessionId })),
         );
         const paths = resolvePaths(projectId);
         const projectName = getProject(projectId)?.name ?? projectId;

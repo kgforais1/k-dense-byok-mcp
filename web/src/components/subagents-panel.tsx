@@ -19,21 +19,30 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
   BotIcon,
+  BrainIcon,
   LockIcon,
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
+  ShieldAlertIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useProjects } from "@/lib/use-projects";
 import {
+  clearAgentMemory,
   deleteAgent,
+  getAgentMemory,
   getAgents,
+  getWatchdogSettings,
   restoreDefaultAgents,
   saveAgent,
+  saveAgentMemory,
+  saveWatchdogSettings,
   setAgentEnabled,
   THINKING_LEVELS,
   type AgentFile,
+  type AgentMemoryFile,
+  type WatchdogSettings,
 } from "@/lib/agents";
 
 interface AgentFormState {
@@ -47,6 +56,8 @@ interface AgentFormState {
   systemPromptMode: "append" | "replace";
   inheritProjectContext: boolean;
   inheritSkills: boolean;
+  memoryEnabled: boolean;
+  memoryScope: "project" | "user";
   extra?: Record<string, string>;
   systemPrompt: string;
 }
@@ -61,6 +72,8 @@ const EMPTY_FORM: AgentFormState = {
   systemPromptMode: "append",
   inheritProjectContext: true,
   inheritSkills: true,
+  memoryEnabled: false,
+  memoryScope: "project",
   systemPrompt: "",
 };
 
@@ -75,9 +88,162 @@ function formFromAgent(agent: AgentFile, asCopy: boolean): AgentFormState {
     systemPromptMode: agent.systemPromptMode ?? "append",
     inheritProjectContext: agent.inheritProjectContext ?? true,
     inheritSkills: agent.inheritSkills ?? true,
+    memoryEnabled: Boolean(agent.memory),
+    memoryScope: agent.memory?.scope ?? "project",
     extra: agent.extra,
     systemPrompt: agent.systemPrompt,
   };
+}
+
+/**
+ * Settings card for pi-subagents' opt-in watchdog: a second model that
+ * reviews each turn's edits and steers findings into the chat.
+ */
+export function WatchdogCard({ projectId }: { projectId: string }) {
+  const [settings, setSettings] = useState<WatchdogSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSettings(null);
+    getWatchdogSettings()
+      .then((s) => {
+        if (!cancelled) setSettings(s);
+      })
+      .catch((exc) => {
+        if (!cancelled) setError(exc instanceof Error ? exc.message : "Failed to load watchdog settings");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const update = useCallback(
+    async (patch: Partial<Omit<WatchdogSettings, "metered">>) => {
+      if (!settings) return;
+      const previous = settings;
+      setSettings({ ...settings, ...patch });
+      setSaving(true);
+      setError(null);
+      try {
+        setSettings(await saveWatchdogSettings(patch));
+      } catch (exc) {
+        setSettings(previous);
+        setError(exc instanceof Error ? exc.message : "Save failed");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [settings],
+  );
+
+  const [modelDraft, setModelDraft] = useState<string | null>(null);
+
+  return (
+    <section className="rounded-lg border p-3" aria-label="Watchdog" data-testid="watchdog-card">
+      <div className="flex items-center gap-2">
+        <ShieldAlertIcon className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium">Watchdog</div>
+          <p className="text-[11px] text-muted-foreground">
+            A second model reviews what the agent just did and steers findings into the chat: raw data
+            touched, silent row drops, unlogged parameter changes, claims without evidence. Applies to new chat tabs.
+          </p>
+        </div>
+        <Switch
+          aria-label="Enable watchdog"
+          checked={settings?.enabled ?? false}
+          disabled={!settings || saving}
+          onCheckedChange={(enabled) => void update({ enabled })}
+        />
+      </div>
+      <p className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-300">
+        Watchdog model calls are not metered by pi-subagents: they are not ledgered and do not count toward
+        the project spend cap. Prefer a subscription or local model.
+      </p>
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {settings?.enabled && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-[11px] text-muted-foreground">
+            Model (empty = the chat&apos;s model)
+            <Input
+              value={modelDraft ?? settings.model}
+              placeholder="provider/model, e.g. openrouter/openai/gpt-5.5"
+              className="mt-1 h-8 font-mono text-xs"
+              aria-label="Watchdog model"
+              onChange={(e) => setModelDraft(e.target.value)}
+              onBlur={() => {
+                if (modelDraft !== null && modelDraft.trim() !== settings.model) void update({ model: modelDraft.trim() });
+                setModelDraft(null);
+              }}
+            />
+          </label>
+          <label className="text-[11px] text-muted-foreground">
+            Thinking
+            <select
+              className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs"
+              aria-label="Watchdog thinking level"
+              value={settings.thinking}
+              onChange={(e) => void update({ thinking: e.target.value })}
+            >
+              <option value="">inherit</option>
+              {THINKING_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-[11px] text-muted-foreground">
+            Also review mid-turn every N tool calls (empty = only at turn end)
+            <Input
+              type="number"
+              min={5}
+              max={500}
+              className="mt-1 h-8 text-xs"
+              aria-label="Watchdog cadence"
+              value={settings.cadenceEveryNTools ?? ""}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                void update({ cadenceEveryNTools: raw === "" ? null : Number(raw) });
+              }}
+            />
+          </label>
+          <label className="text-[11px] text-muted-foreground">
+            Report
+            <select
+              className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-xs"
+              aria-label="Watchdog severity threshold"
+              value={settings.severityThreshold}
+              onChange={(e) => void update({ severityThreshold: e.target.value as WatchdogSettings["severityThreshold"] })}
+            >
+              <option value="concern">concerns and blockers</option>
+              <option value="blocker">blockers only</option>
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground sm:col-span-2">
+            Also review background specialists&apos; own turns
+            <Switch
+              aria-label="Watch specialists"
+              checked={settings.children}
+              disabled={saving}
+              onCheckedChange={(children) => void update({ children })}
+            />
+          </label>
+          <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground sm:col-span-2">
+            Read the project&apos;s <code>.pi/WATCHDOG.md</code> standing instructions
+            <Switch
+              aria-label="Use WATCHDOG.md"
+              checked={settings.watchdogMd}
+              disabled={saving}
+              onCheckedChange={(watchdogMd) => void update({ watchdogMd })}
+            />
+          </label>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function SubagentsPanel() {
@@ -155,6 +321,7 @@ export function SubagentsPanel() {
         systemPromptMode: form.systemPromptMode,
         inheritProjectContext: form.inheritProjectContext,
         inheritSkills: form.inheritSkills,
+        memory: form.memoryEnabled ? { scope: form.memoryScope, path: name } : undefined,
         extra: form.extra,
         systemPrompt: form.systemPrompt,
       });
@@ -202,11 +369,54 @@ export function SubagentsPanel() {
     }
   }, [refresh]);
 
+  const [memoryOpen, setMemoryOpen] = useState<{ name: string; file: AgentMemoryFile | null; draft: string } | null>(null);
+  const openMemory = useCallback(async (agent: AgentFile) => {
+    if (memoryOpen?.name === agent.name) {
+      setMemoryOpen(null);
+      return;
+    }
+    setMemoryOpen({ name: agent.name, file: null, draft: "" });
+    try {
+      const file = await getAgentMemory(agent.name);
+      setMemoryOpen({ name: agent.name, file, draft: file.content });
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Failed to load memory");
+      setMemoryOpen(null);
+    }
+  }, [memoryOpen]);
+  const saveMemory = useCallback(async () => {
+    if (!memoryOpen) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await saveAgentMemory(memoryOpen.name, memoryOpen.draft);
+      setMemoryOpen({ ...memoryOpen, file: memoryOpen.file ? { ...memoryOpen.file, exists: true, content: memoryOpen.draft } : null });
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [memoryOpen]);
+  const clearMemory = useCallback(async () => {
+    if (!memoryOpen) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await clearAgentMemory(memoryOpen.name);
+      setMemoryOpen({ ...memoryOpen, draft: "", file: memoryOpen.file ? { ...memoryOpen.file, exists: false, content: "" } : null });
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "Clear failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [memoryOpen]);
+
   const project = agents.filter((a) => a.source === "project");
   const builtins = agents.filter((a) => a.source === "builtin");
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto">
+      <WatchdogCard projectId={activeProjectId} />
       <div>
         <h3 className="text-sm font-medium">Sub-agents</h3>
         <p className="text-xs text-muted-foreground mt-1">
@@ -326,6 +536,35 @@ export function SubagentsPanel() {
             </label>
           </div>
 
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-md border p-2.5">
+            <label className="flex items-center gap-2 text-xs">
+              <Switch
+                aria-label="Persistent memory"
+                checked={form.memoryEnabled}
+                onCheckedChange={(v) => setForm({ ...form, memoryEnabled: v })}
+              />
+              Persistent memory
+            </label>
+            {form.memoryEnabled && (
+              <label className="flex items-center gap-2 text-xs">
+                Scope
+                <select
+                  className="h-7 rounded-md border bg-background px-2 text-xs"
+                  aria-label="Memory scope"
+                  value={form.memoryScope}
+                  onChange={(e) => setForm({ ...form, memoryScope: e.target.value as "project" | "user" })}
+                >
+                  <option value="project">this project</option>
+                  <option value="user">all projects</option>
+                </select>
+              </label>
+            )}
+            <p className="w-full text-[11px] text-muted-foreground">
+              A role-specific MEMORY.md the agent reads at the start of every run and may append dated
+              notes to. Self-written by the model — instructions, not evidence.
+            </p>
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium">System prompt</label>
             <Textarea
@@ -372,6 +611,18 @@ export function SubagentsPanel() {
                     {agent.model}
                   </Badge>
                 )}
+                {agent.memory && (
+                  <Button
+                    variant={memoryOpen?.name === agent.name ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 gap-1 text-[11px]"
+                    aria-label={`Memory of ${agent.name}`}
+                    onClick={() => void openMemory(agent)}
+                  >
+                    <BrainIcon className="size-3.5" />
+                    Memory
+                  </Button>
+                )}
                 <Switch
                   aria-label={`Toggle ${agent.name}`}
                   checked={agent.enabled !== false}
@@ -405,6 +656,50 @@ export function SubagentsPanel() {
               </div>
             )}
           </div>
+
+          {memoryOpen && (
+            <div className="flex flex-col gap-2 rounded-lg border p-3" data-testid="agent-memory-pane">
+              <div className="flex items-center gap-2 text-xs font-medium">
+                <BrainIcon className="size-3.5 text-muted-foreground" />
+                Memory of {memoryOpen.name}
+                {memoryOpen.file && (
+                  <span className="font-normal text-muted-foreground">
+                    · {memoryOpen.file.memory.scope === "user" ? "all projects" : "this project"} · first{" "}
+                    {memoryOpen.file.limits.lines} lines are injected
+                  </span>
+                )}
+              </div>
+              {!memoryOpen.file ? (
+                <p className="text-[11px] text-muted-foreground">Loading…</p>
+              ) : (
+                <>
+                  {!memoryOpen.file.exists && !memoryOpen.draft && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Nothing written yet. The agent creates this file on its first run; you can also seed it here.
+                    </p>
+                  )}
+                  <Textarea
+                    value={memoryOpen.draft}
+                    spellCheck={false}
+                    className="min-h-40 font-mono text-[11px]"
+                    aria-label={`MEMORY.md for ${memoryOpen.name}`}
+                    onChange={(e) => setMemoryOpen({ ...memoryOpen, draft: e.target.value })}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" className="h-7 text-xs" disabled={saving} onClick={() => void saveMemory()}>
+                      Save memory
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" disabled={saving} onClick={() => void clearMemory()}>
+                      Clear
+                    </Button>
+                    <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs" onClick={() => setMemoryOpen(null)}>
+                      Close
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <Button

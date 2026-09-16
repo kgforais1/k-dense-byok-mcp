@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { atomicJson } from "../atomic-json.ts";
 import { resolvePaths } from "../projects.ts";
 import {
   isTerminalModalState,
@@ -42,20 +43,6 @@ export function modalJobFiles(projectId: string, jobId: string): ModalJobFiles {
     stderr: path.join(dir, "stderr.log"),
     staging: path.join(dir, "staging"),
   };
-}
-
-function atomicJson(file: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  const data = JSON.stringify(value, null, 2) + "\n";
-  const fd = fs.openSync(tmp, "w", 0o600);
-  try {
-    fs.writeFileSync(fd, data, "utf-8");
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmp, file);
 }
 
 export class ModalJobStore {
@@ -251,6 +238,33 @@ export class ModalJobStore {
     // truncation; cursor APIs use the monotonic logical count.
     void size;
     this.write(job);
+  }
+
+  /**
+   * After a crash between a log append and the counter write, the logical
+   * byte count lags the file. Recovery calls this so later cursor reads line
+   * up with the bytes actually retained.
+   */
+  resyncLogCounters(projectId: string, jobId: string): void {
+    const files = modalJobFiles(projectId, jobId);
+    const job = this.require(projectId, jobId);
+    let changed = false;
+    for (const stream of ["stdout", "stderr"] as const) {
+      let size = 0;
+      try {
+        size = fs.statSync(stream === "stdout" ? files.stdout : files.stderr).size;
+      } catch {
+        continue;
+      }
+      const bytesKey = stream === "stdout" ? "stdoutBytes" : "stderrBytes";
+      const baseKey = stream === "stdout" ? "stdoutBaseCursor" : "stderrBaseCursor";
+      const expected = job[baseKey] + size;
+      if (job[bytesKey] !== expected) {
+        job[bytesKey] = expected;
+        changed = true;
+      }
+    }
+    if (changed) this.write(job);
   }
 
   replaceLog(

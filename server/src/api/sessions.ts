@@ -30,6 +30,11 @@ import {
   type SessionComputeOptions,
 } from "../agent/modal-tool.ts";
 import {
+  cancelPermissionsForSession,
+  pendingPermissionFor,
+  resolvePermission,
+} from "../agent/permissions.ts";
+import {
   assertModelAuthentication,
   ModelAuthenticationError,
   modelReference,
@@ -37,7 +42,13 @@ import {
 } from "../agent/models.ts";
 import { explainProviderRefusal } from "../agent/model-refusal.ts";
 import { parseRunImages, type RunImage } from "../agent/prompt-images.ts";
+import { expandLeadingCommand } from "../agent/prompt-expansion.ts";
+import { expandableTemplates } from "../agent/prompts.ts";
+import { globalSkillRoot, listProjectSkills, projectSkillRoot } from "../agent/skills.ts";
+import { schedulerSessionId } from "../agent/scheduler-state.ts";
 import { readNotebookEntries } from "../agent/notebook-store.ts";
+import { withNotebookArtifactHealth } from "../agent/notebook-artifacts.ts";
+import { withNotebookPlanHistory } from "../agent/notebook-research.ts";
 import { notebookToMarkdown } from "../agent/notebook-export.ts";
 import { buildNotebookZip } from "../agent/notebook-zip.ts";
 import {
@@ -51,6 +62,10 @@ import { runBroker, type RunHandle } from "../agent/run-broker.ts";
 import { runStartFailure } from "../agent/run-start-errors.ts";
 import { persistTerminalRunResult } from "../agent/run-results.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
+import {
+  isRunClaimed,
+  snapshot,
+} from "../agent/run-pipeline.ts";
 import { SandboxError } from "../sandbox-fs.ts";
 import {
   findSessionFile,
@@ -88,17 +103,6 @@ import {
   type BillingContext,
 } from "../cost/billing.ts";
 
-function snapshot(session: { getSessionStats(): { cost: number; tokens: { input: number; output: number; cacheRead: number; total: number } } }): CostSnapshot {
-  const s = session.getSessionStats();
-  return {
-    costUsd: s.cost,
-    input: s.tokens.input,
-    output: s.tokens.output,
-    cacheRead: s.tokens.cacheRead,
-    total: s.tokens.total,
-  };
-}
-
 interface RunBody {
   message?: string;
   model?: string;
@@ -118,6 +122,23 @@ interface RunBody {
 // otherwise both pass the guard and the loser's close handler would abort the
 // winner's live turn.
 const activeRuns = new Set<string>();
+
+/**
+ * Expand a leading `/skill:name args` or `/template args` from disk (project
+ * entries win), so a just-installed skill or just-edited template works
+ * without a session reload. Returns the text unchanged when it is not a command.
+ */
+function expandChatCommand(paths: ReturnType<typeof activePaths>, text: string): string {
+  if (!text.startsWith("/")) return text;
+  const skills = new Map<string, { name: string; filePath: string; baseDir: string }>();
+  for (const root of [globalSkillRoot(), projectSkillRoot(paths)]) {
+    for (const skill of listProjectSkills(root)) skills.set(skill.name, skill);
+  }
+  return expandLeadingCommand(text, {
+    skills: [...skills.values()],
+    templates: expandableTemplates(paths),
+  }).text;
+}
 
 /** Attach one HTTP response to a broker-owned run. Closing the response only
  * removes this observer; the run itself remains owned by the broker. */
@@ -166,6 +187,7 @@ interface PreparedRun {
   runKey: string;
   body: RunBody;
   prompt: string;
+  dispatchExtensionCommand: boolean;
   images: RunImage[];
   baseline: {
     messages: ReturnType<typeof toHistory>;
@@ -272,11 +294,18 @@ async function prepareRun(
   }
 
   const runId = mintRunId();
+  // Kady expands slash commands itself (see expandChatCommand) and tells Pi
+  // not to, so composer-appended context never becomes `$ARGUMENTS`. A
+  // leading `/command` Kady did not recognize is left for Pi to dispatch:
+  // extension commands such as pi-subagents' `/subagents-watchdog status`
+  // answer with a custom message (a notice card) instead of a model turn.
+  const prompt = expandChatCommand(paths, body.message);
+  const dispatchExtensionCommand = prompt === body.message && /^\/[a-z]/i.test(prompt);
   try {
     setSessionRunId(projectId, session.sessionId, runId);
     const handle = runBroker.start(projectId, sessionId, {
       runId,
-      prompt: body.message,
+      prompt,
       images: parsedImages.images.map(({ data, mimeType }) => ({ data, mimeType })),
       baseline,
     });
@@ -288,7 +317,8 @@ async function prepareRun(
       sessionId,
       runKey,
       body,
-      prompt: body.message,
+      prompt,
+      dispatchExtensionCommand,
       images: parsedImages.images,
       baseline,
       isFusion: Boolean(body.model && body.model.startsWith("fusion/")),
@@ -486,10 +516,10 @@ async function promptAndRecordRun(run: PreparedRun, log: FastifyRequest["log"]):
         Math.max(0, snapshot(run.session).costUsd - before.costUsd),
       );
     }
-    await run.session.prompt(
-      run.prompt,
-      run.images.length > 0 ? { images: run.images } : undefined,
-    );
+    await run.session.prompt(run.prompt, {
+      expandPromptTemplates: run.dispatchExtensionCommand,
+      ...(run.images.length > 0 ? { images: run.images } : {}),
+    });
     const errorMessage = run.session.state.errorMessage;
     if (errorMessage && errorMessage !== priorError) {
       run.handle.publish(withRefusalGuidance({ type: "error", message: errorMessage }));
@@ -601,8 +631,11 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
   });
 
   app.get("/sessions", async () => {
-    const infos = await listSessionsLabelled(currentProjectId(), activePaths());
-    return infos.map((i) => ({
+    const paths = activePaths();
+    const infos = await listSessionsLabelled(currentProjectId(), paths);
+    // Kady-owned resident sessions (the scheduler host) are not chats.
+    const hidden = schedulerSessionId(paths);
+    return infos.filter((i) => i.id !== hidden).map((i) => ({
       id: i.id,
       name: i.name ?? null,
       created: i.created,
@@ -645,7 +678,9 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
 
   app.get<{ Params: { id: string } }>("/sessions/:id/notebook", async (req, reply) => {
     try {
-      return { entries: readNotebookEntries(req.params.id, currentProjectId()) };
+      reply.header("Cache-Control", "no-store");
+      const projectId = currentProjectId();
+      return { entries: withNotebookPlanHistory(await withNotebookArtifactHealth(readNotebookEntries(req.params.id, projectId), projectId), projectId, req.params.id) };
     } catch (exc) {
       reply.code(400);
       return { detail: (exc as Error).message };
@@ -662,7 +697,8 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       }
       try {
         const projectId = currentProjectId();
-        const entries = readNotebookEntries(req.params.id, projectId);
+        const entries = withNotebookPlanHistory(await withNotebookArtifactHealth(readNotebookEntries(req.params.id, projectId), projectId), projectId, req.params.id);
+        reply.header("Cache-Control", "no-store");
         const projectName = getProject(projectId)?.name ?? projectId;
         // Pins, comments and standalone notes live in a sidecar. Leaving them
         // out made every export silently drop the user's own layer.
@@ -848,15 +884,43 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
+  // Data-guard permission decisions (destructive shell commands).
+  app.post<{ Params: { id: string; requestId: string }; Body: { allow?: unknown } }>(
+    "/sessions/:id/permissions/:requestId",
+    async (req, reply) => {
+      const allow = req.body?.allow;
+      if (typeof allow !== "boolean") {
+        reply.code(400);
+        return { detail: "allow must be a boolean" };
+      }
+      const ok = resolvePermission(currentProjectId(), req.params.id, req.params.requestId, allow);
+      if (!ok) {
+        reply.code(404);
+        return { detail: "No pending permission request for this id" };
+      }
+      return { ok: true };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>("/sessions/:id/permissions", async (req) => {
+    return { pending: pendingPermissionFor(currentProjectId(), req.params.id) };
+  });
+
   // Pending interview for a session (lets a reconnecting UI re-render the form).
   app.get<{ Params: { id: string } }>("/sessions/:id/interview", async (req) => {
     return { pending: pendingInterviewFor(currentProjectId(), req.params.id) };
   });
 
-  app.get<{ Params: { id: string } }>("/sessions/:id/run/state", async (req, reply) => {
-    reply.header("Cache-Control", "no-store");
-    return runBroker.state(currentProjectId(), req.params.id);
-  });
+  // `?frames=0` returns metadata only (no replay buffer/baseline) so an idle
+  // tab can poll cheaply for a run it did not start (system-initiated runs).
+  app.get<{ Params: { id: string }; Querystring: { frames?: string } }>(
+    "/sessions/:id/run/state",
+    async (req, reply) => {
+      reply.header("Cache-Control", "no-store");
+      const includeFrames = req.query.frames !== "0";
+      return runBroker.state(currentProjectId(), req.params.id, { includeFrames });
+    },
+  );
 
   app.get<{ Params: { id: string }; Querystring: { after?: string } }>(
     "/sessions/:id/run/events",
@@ -884,6 +948,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     // Release any interview blocking the turn before aborting: a form still
     // waiting on user input would otherwise keep the run alive.
     cancelInterviewsForSession(projectId, req.params.id);
+    cancelPermissionsForSession(projectId, req.params.id);
     const session = await getSession(projectId, activePaths(), req.params.id);
     if (!session) return { ok: true, restored: [] };
     // Clear BEFORE abort so a pending steer can't be delivered into the
@@ -931,7 +996,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
           reason: "budget",
         };
       }
-      await session.steer(message);
+      await session.steer(expandChatCommand(activePaths(), message));
       // The run can end between the guard and the queue write; a steer left
       // behind would silently deliver into the NEXT run, so pull it back out.
       if (!session.isStreaming) {
@@ -946,6 +1011,134 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         };
       }
       return { ok: true, pending: [...session.getSteeringMessages()] };
+    },
+  );
+
+  // Manual context compaction ("Compact now"). Runs outside a run: Pi's
+  // compact() aborts any live turn first, so refuse while streaming instead.
+  // The summary call's usage lands on the compaction entry and in
+  // getSessionStats(), so the before/after delta is ledgered like a turn.
+  app.post<{ Params: { id: string }; Body: { instructions?: string } }>(
+    "/sessions/:id/compact",
+    async (req, reply) => {
+      const projectId = currentProjectId();
+      const sessionId = req.params.id;
+      const session = await getSession(projectId, activePaths(), sessionId);
+      if (!session) {
+        reply.code(404);
+        return { detail: "No such session" };
+      }
+      if (session.isStreaming || isRunClaimed(projectId, sessionId)) {
+        reply.code(409);
+        return { detail: "Wait for the current run to finish before compacting", reason: "streaming" };
+      }
+      const instructions =
+        typeof req.body?.instructions === "string" ? req.body.instructions.slice(0, 2_000) : undefined;
+      const billing = session.model
+        ? await billingForModel(session.model, getModelRuntime())
+        : { provider: "unknown", authType: "none" as const, billingMode: "payg" as const };
+      const budget = isBudgetExceeded(projectId);
+      if (billingCountsTowardBudget(billing) && budget.exceeded) {
+        reply.code(402);
+        return {
+          detail:
+            `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
+            `$${(budget.limitUsd ?? 0).toFixed(2)}). Raise the limit in project settings.`,
+          reason: "budget",
+        };
+      }
+      const before = snapshot(session);
+      let result: Awaited<ReturnType<typeof session.compact>>;
+      try {
+        result = await session.compact(instructions);
+      } catch (err) {
+        const message = (err as Error).message;
+        // Pi refuses when every message fits inside `keepRecentTokens`; that
+        // is a normal state, not a failure.
+        if (/nothing to compact/i.test(message)) {
+          reply.code(409);
+          return {
+            detail: "Nothing to compact yet: the whole conversation still fits inside the recent-context window.",
+            reason: "too_small",
+          };
+        }
+        reply.code(502);
+        return { detail: `Compaction failed: ${message}` };
+      }
+      const entry = recordRun({
+        sessionId,
+        projectId,
+        model: session.model ? modelReference(session.model) : "unknown",
+        role: "agent",
+        before: emptySnapshot(),
+        after: snapshotDelta(before, snapshot(session)),
+        billing,
+      });
+      return {
+        ok: true,
+        tokensBefore: result.tokensBefore,
+        estimatedTokensAfter: result.estimatedTokensAfter ?? null,
+        costUsd: entry?.costUsd ?? 0,
+        billingMode: billing.billingMode,
+        contextUsage: contextUsageForClient(session) ?? null,
+      };
+    },
+  );
+
+  // Follow-up side-channel: queue a message that Pi delivers once the live
+  // run has no more tool calls or steering messages, still inside the same
+  // run (same SSE stream, same ledger row). Unlike steering it may carry
+  // images. Same 409/403 contract as /steer.
+  app.post<{ Params: { id: string }; Body: { message?: string; images?: unknown } }>(
+    "/sessions/:id/follow-up",
+    async (req, reply) => {
+      const projectId = currentProjectId();
+      const session = await getSession(projectId, activePaths(), req.params.id);
+      if (!session) {
+        reply.code(404);
+        return { detail: "No such session" };
+      }
+      const message = req.body?.message;
+      if (!message || !message.trim()) {
+        reply.code(400);
+        return { detail: "message is required" };
+      }
+      const parsedImages = parseRunImages(req.body?.images);
+      if ("error" in parsedImages) {
+        reply.code(400);
+        return { detail: parsedImages.error };
+      }
+      if (!session.isStreaming) {
+        reply.code(409);
+        return { detail: "No run in flight", reason: "not_streaming" };
+      }
+      const budget = isBudgetExceeded(projectId);
+      const followUpBilling = session.model
+        ? await billingForModel(session.model, getModelRuntime())
+        : { provider: "unknown", authType: "none" as const, billingMode: "payg" as const };
+      if (billingCountsTowardBudget(followUpBilling) && budget.exceeded) {
+        reply.code(403);
+        return {
+          detail:
+            `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
+            `$${(budget.limitUsd ?? 0).toFixed(2)}).`,
+          reason: "budget",
+        };
+      }
+      await session.followUp(
+        expandChatCommand(activePaths(), message),
+        parsedImages.images.length > 0 ? parsedImages.images : undefined,
+      );
+      if (!session.isStreaming) {
+        const cleared = session.clearQueue();
+        reply.code(409);
+        return {
+          detail: "Run ended before the message was delivered",
+          reason: "not_streaming",
+          restored: [...cleared.steering, ...cleared.followUp],
+        };
+      }
+      return { ok: true, pending: [...session.getFollowUpMessages()] };
     },
   );
 

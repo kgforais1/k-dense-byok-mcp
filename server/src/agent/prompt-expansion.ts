@@ -115,7 +115,7 @@ export function expandLeadingCommand(text: string, sources: ExpansionSources): E
   if (!match) return { kind: "none", text };
   const [, skillPrefix, name, rawArgs = ""] = match;
   const args = rawArgs.trim();
-  const tail = rest.trim() ? `\n\n${rest.replace(/\s+$/, "")}` : "";
+  const tail = rest.trim() ? `\n\n${rest.trimEnd()}` : "";
   const readFile = sources.readFile ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
   if (skillPrefix) {

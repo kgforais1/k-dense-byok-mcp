@@ -60,6 +60,13 @@ describe("expandLeadingCommand", () => {
     );
   });
 
+  it("removes trailing Unicode whitespace from a composer tail without changing its interior", () => {
+    const out = expandLeadingCommand("/review\nfirst \t line\r\nsecond\u00a0\u2028\ufeff", { skills, templates, readFile });
+    expect(out.text).toBe(
+      '<prompt-template name="review">\nReview the methods used so far.\n</prompt-template>\n\nfirst \t line\r\nsecond',
+    );
+  });
+
   it("only treats the first line as a command and passes unknown commands through", () => {
     for (const text of ["/unknown thing", "hello /qc x", "/skill:missing a", "  /qc a", "/", "//qc"]) {
       expect(expandLeadingCommand(text, { skills, templates, readFile })).toEqual({ kind: "none", text });

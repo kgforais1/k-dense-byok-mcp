@@ -374,7 +374,7 @@ export async function registerSandboxRoutes(app: FastifyInstance): Promise<void>
           `W/"${s.dev}-${s.ino}-${s.size}-${s.mtimeNs}-${s.ctimeNs}"`;
         const etag = version(stat);
         reply.header("Cache-Control", "private, no-cache");
-        if (req.headers["if-none-match"]?.split(/\s*,\s*/).includes(etag)) {
+        if (req.headers["if-none-match"]?.split(",").some((value) => ["*", etag].includes(value.trim()))) {
           return reply.header("ETag", etag).code(304).send();
         }
         // A file can grow after stat while an agent writes it. Bound the

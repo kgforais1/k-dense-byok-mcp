@@ -54,6 +54,12 @@ describe("conditional file previews", () => {
     fs.renameSync(target() + ".tmp", target());
     expect((await get(String(changed.headers.etag))).body).toBe("new");
   });
+  it("matches an ETag in a comma-separated validator list", async () => {
+    fs.writeFileSync(target(), "one");
+    const etag = String((await get()).headers.etag);
+    expect((await get(`"other",  ${etag} , "newer"`)).statusCode).toBe(304);
+    expect((await get("*")).statusCode).toBe(304);
+  });
   it("does not let an old validator hide missing or oversized files", async () => {
     fs.writeFileSync(target(), "one");
     const etag = String((await get()).headers.etag);

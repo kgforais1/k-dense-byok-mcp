@@ -79,6 +79,15 @@ M (merge resolution, ~30 overlap files — hot: session-registry.ts, skills-inst
 
 **Exit criteria:** merged to main, plan archived, handoff closed.
 
+## Post-merge follow-ups
+
+- [ ] Make evidence-package storage resilient to one corrupt package: surface or quarantine the
+  corrupt entry while conservatively charging its on-disk bytes, so it remains removable without
+  blocking preparation of unrelated packages. Keep quota enforcement fail-closed.
+- [ ] Consolidate the legacy HTTP user-run lifecycle with the shared `run-pipeline` lifecycle.
+  Preserve `runBroker` as the common ownership signal and add parity tests before removing the
+  observer's legacy-broker compatibility check.
+
 ## Guardrails
 
 - Never push to / PR against upstream K-Dense-AI (pre-push hook + `--repo` flag).

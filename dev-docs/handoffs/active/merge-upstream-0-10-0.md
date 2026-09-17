@@ -3,7 +3,7 @@ branch: "merge/upstream-0.10.0"
 plan: "dev-docs/plans/2026-09-14-upstream-0-10-0-merge.md"
 owner: ""
 status: "in-progress"
-updated: "2026-09-14"
+updated: "2026-09-17"
 ---
 
 # Active Handoff: merge/upstream-0-10-0
@@ -48,6 +48,13 @@ fork. Base 2026-08-27; fork 213 ahead, upstream 38 ahead. 11 conflicted files.
 ## Blockers
 
 - None.
+
+## Deferred follow-ups
+
+- Evidence-package storage: tolerate and expose a corrupt package without letting it block new
+  package preparation; account for its bytes conservatively and keep it removable.
+- Run lifecycle: consolidate the legacy HTTP user-run path with `run-pipeline`; retain broker-based
+  ownership and regression coverage until both paths share one lifecycle.
 
 ## Next action
 

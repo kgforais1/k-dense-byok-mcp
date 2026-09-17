@@ -80,6 +80,12 @@ function writeSchedule(pid: string, id: string, overrides: Record<string, unknow
   fs.writeFileSync(path.join(dir, "history.json"), JSON.stringify({ schemaVersion: 1, runs }));
 }
 
+function setSchedulePaused(pid: string, id: string, paused: boolean): void {
+  const file = path.join(schedulesDir(resolvePaths(pid)), id, "schedule.json");
+  const record = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
+  fs.writeFileSync(file, JSON.stringify({ ...record, paused }));
+}
+
 beforeEach(() => {
   fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
   fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
@@ -159,6 +165,7 @@ describe("resident session and budget hold", () => {
     expect(result).toEqual({ held: ["a"], released: [] });
     expect(calls).toEqual([{ action: "schedule.pause", id: "a" }]);
     expect(readSchedulerState(resolvePaths(capped.id)).heldByBudget).toEqual(["a"]);
+    setSchedulePaused(capped.id, "a", true);
     // Still over budget: nothing new.
     result = await reconcileBudgetHolds(capped.id);
     expect(result).toEqual({ held: [], released: [] });
@@ -171,22 +178,40 @@ describe("resident session and budget hold", () => {
     expect(calls.at(-1)).toEqual({ action: "schedule.resume", id: "a" });
     expect(readSchedulerState(resolvePaths(capped.id)).heldByBudget).toEqual([]);
   });
+
+  it("re-applies a budget hold if a held schedule is manually resumed", async () => {
+    const calls: Record<string, unknown>[] = [];
+    configureScheduler({ invoke: async (_p, params) => { calls.push(params); return { text: "ok", details: {} }; } });
+    const capped = createProject({ name: "Reheld", spendLimitUsd: 0.01 });
+    writeSchedule(capped.id, "a");
+    const zero = { costUsd: 0, input: 0, output: 0, cacheRead: 0, total: 0 };
+    recordRun({ sessionId: "s", projectId: capped.id, model: "m", before: zero, after: { ...zero, costUsd: 0.02 } });
+    await reconcileBudgetHolds(capped.id);
+    setSchedulePaused(capped.id, "a", false);
+    await reconcileBudgetHolds(capped.id);
+    expect(calls).toEqual([
+      { action: "schedule.pause", id: "a" },
+      { action: "schedule.pause", id: "a" },
+    ]);
+  });
 });
 
 describe("automation routes", () => {
   it("lists, acts on schedules through the resident session, and hides the host from the chat list", async () => {
     writeSchedule(projectId, "nightly-qc");
-    writeSchedulerState(resolvePaths(projectId), { sessionId: "existing-host", heldByBudget: [] });
+    writeSchedulerState(resolvePaths(projectId), { sessionId: "existing-host", heldByBudget: ["nightly-qc"] });
     const calls: Record<string, unknown>[] = [];
     configureScheduler({ invoke: async (_p, params) => { calls.push(params); return { text: "paused", details: {} }; } });
 
     let res = await app.inject({ method: "GET", url: "/schedules", headers: hg(projectId) });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ schedulerSessionId: "existing-host", heldByBudget: [], schedules: [{ id: "nightly-qc" }] });
+    expect(res.json()).toMatchObject({ schedulerSessionId: "existing-host", heldByBudget: ["nightly-qc"], schedules: [{ id: "nightly-qc" }] });
 
     res = await app.inject({ method: "POST", url: "/schedules/nightly-qc/pause", headers: hg(projectId) });
     expect(res.statusCode).toBe(200);
     expect(calls).toEqual([{ action: "schedule.pause", id: "nightly-qc" }]);
+    expect(readSchedulerState(resolvePaths(projectId)).heldByBudget).toEqual([]);
+    expect(readSchedulerState(resolvePaths(projectId)).manuallyPaused).toEqual(["nightly-qc"]);
     res = await app.inject({ method: "POST", url: "/schedules/nightly-qc/explode", headers: hg(projectId) });
     expect(res.statusCode).toBe(400);
     res = await app.inject({ method: "POST", url: "/schedules/nope/run", headers: hg(projectId) });

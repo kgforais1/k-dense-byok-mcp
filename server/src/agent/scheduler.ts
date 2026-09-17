@@ -242,7 +242,10 @@ export function ensureSchedulerSession(projectId: string): Promise<AgentSession 
     const session = await deps.openSession(projectId, paths, state.sessionId ?? null);
     if (!session) return null;
     markSystemSession(projectId, session.sessionId);
-    if (state.sessionId !== session.sessionId) writeSchedulerState(paths, { ...state, sessionId: session.sessionId });
+    if (state.sessionId !== session.sessionId) {
+      const current = readSchedulerState(paths);
+      writeSchedulerState(paths, { ...current, sessionId: session.sessionId });
+    }
     return session;
   })().finally(() => ensuring.delete(projectId));
   ensuring.set(projectId, promise);
@@ -264,6 +267,20 @@ async function defaultInvoke(projectId: string, params: Record<string, unknown>)
 
 export function invokeSubagentAction(projectId: string, params: Record<string, unknown>): Promise<{ text: string; details: unknown }> {
   return deps.invoke(projectId, params);
+}
+
+/** A manual pause supersedes Kady's budget-hold ownership. */
+export function recordManualScheduleAction(projectId: string, scheduleId: string, action: "pause" | "resume" | "delete"): void {
+  const paths = resolvePaths(projectId);
+  const state = readSchedulerState(paths);
+  const manuallyPaused = new Set(state.manuallyPaused ?? []);
+  if (action === "pause") manuallyPaused.add(scheduleId);
+  else manuallyPaused.delete(scheduleId);
+  writeSchedulerState(paths, {
+    ...state,
+    heldByBudget: state.heldByBudget.filter((id) => id !== scheduleId),
+    manuallyPaused: [...manuallyPaused],
+  });
 }
 
 /** Projects whose schedule store holds at least one non-paused schedule. */
@@ -299,30 +316,38 @@ export async function reconcileBudgetHolds(projectId: string): Promise<{ held: s
   const exceeded = isBudgetExceeded(projectId).exceeded;
   const held: string[] = [];
   const released: string[] = [];
-  const nextHeld = new Set(state.heldByBudget);
   if (exceeded) {
     for (const schedule of schedules) {
-      if (schedule.paused || nextHeld.has(schedule.id)) continue;
+      const current = readSchedulerState(paths);
+      if (current.manuallyPaused?.includes(schedule.id) || schedule.paused) continue;
+      // A user can resume a held schedule while the cap is still exceeded.
+      // Re-apply the hold instead of treating membership as proof it is paused.
       try {
         await deps.invoke(projectId, { action: "schedule.pause", id: schedule.id });
-        nextHeld.add(schedule.id);
-        held.push(schedule.id);
+        const latest = readSchedulerState(paths);
+        if (!latest.manuallyPaused?.includes(schedule.id)) {
+          writeSchedulerState(paths, { ...latest, heldByBudget: [...new Set([...latest.heldByBudget, schedule.id])] });
+          held.push(schedule.id);
+        }
       } catch (err) {
         deps.log.warn({ err, projectId, scheduleId: schedule.id }, "could not pause schedule over budget");
       }
     }
   } else {
-    for (const id of [...nextHeld]) {
+    for (const id of [...readSchedulerState(paths).heldByBudget]) {
       try {
-        if (schedules.some((s) => s.id === id)) await deps.invoke(projectId, { action: "schedule.resume", id });
-        nextHeld.delete(id);
+        const current = readSchedulerState(paths);
+        if (!current.manuallyPaused?.includes(id) && schedules.some((s) => s.id === id)) {
+          await deps.invoke(projectId, { action: "schedule.resume", id });
+        }
+        const latest = readSchedulerState(paths);
+        writeSchedulerState(paths, { ...latest, heldByBudget: latest.heldByBudget.filter((heldId) => heldId !== id) });
         released.push(id);
       } catch (err) {
         deps.log.warn({ err, projectId, scheduleId: id }, "could not resume schedule after budget cleared");
       }
     }
   }
-  if (held.length || released.length) writeSchedulerState(paths, { ...state, heldByBudget: [...nextHeld] });
   return { held, released };
 }
 

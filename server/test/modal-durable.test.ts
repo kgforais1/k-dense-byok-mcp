@@ -768,6 +768,37 @@ describe("Durable Modal transfer hardening", () => {
     expect(fs.readdirSync(root()).filter((name) => name.includes(".modal-"))).toEqual([]);
   });
 
+  it("rolls back every output when a later install rename fails", async () => {
+    fs.writeFileSync(path.join(root(), "result.txt"), "old result\n");
+    fs.writeFileSync(path.join(root(), "other.txt"), "old other\n");
+    const originalRename = fs.renameSync.bind(fs);
+    let installs = 0;
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (String(from).includes(".modal-") && String(from).endsWith(".tmp") && ++installs === 2) {
+        const error = new Error("synthetic second install failure") as NodeJS.ErrnoException;
+        error.code = "ENOSPC";
+        throw error;
+      }
+      return originalRename(from, to);
+    });
+    try {
+      const fake = new FakeModal();
+      fake.behaviors.push({ kind: "success" });
+      const manager = new DurableModalJobManager(fake.factory);
+      const job = manager.submit("default", { command: "work", filesOut: ["result.txt", "other.txt"] }, { sessionId: "s-rollback", submittedBy: "api" });
+      const deadline = Date.now() + 3000;
+      while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      [...fake.sandboxes.values()][0]!.filesystem.files.set("/workspace/other.txt", Buffer.from("new other\n"));
+      const terminal = await manager.wait("default", job.id, 3000);
+      expect(terminal.state).toBe("failed");
+      expect(fs.readFileSync(path.join(root(), "result.txt"), "utf-8")).toBe("old result\n");
+      expect(fs.readFileSync(path.join(root(), "other.txt"), "utf-8")).toBe("old other\n");
+      expect(fs.readdirSync(root()).filter((name) => name.includes(".modal-"))).toEqual([]);
+    } finally {
+      rename.mockRestore();
+    }
+  });
+
   it("records no input digest for a job that never ran", async () => {
     const fake = new FakeModal();
     fake.behaviors.push({ kind: "hang" });

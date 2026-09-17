@@ -79,6 +79,7 @@ import type { NotebookEntry } from "@/lib/notebook";
 import { routeSubmit, steerNotStreamingFallback, type SendIntent } from "@/lib/chat-routing";
 import {
   moveQueuedMessage,
+  removeQueuedMessage,
   updateQueuedMessageText,
   type QueueDirection,
 } from "@/lib/message-queue";
@@ -438,6 +439,7 @@ function MessageQueueDisplay({
   onMove,
   onEdit,
   editingId,
+  sendingId,
   onEditingChange,
   paused = false,
   onResume,
@@ -451,6 +453,8 @@ function MessageQueueDisplay({
   onEdit: (id: string, text: string) => void;
   /** Item currently open in the inline editor; auto-send holds while set. */
   editingId: string | null;
+  /** Item awaiting server admission; its controls stay locked. */
+  sendingId?: string | null;
   onEditingChange: (id: string | null) => void;
   /** True after Stop, while queued messages are held back. */
   paused?: boolean;
@@ -530,6 +534,7 @@ function MessageQueueDisplay({
             <div className="max-h-52 overflow-y-auto py-1">
               {queue.map((item, i) => {
                 const editing = editingId === item.id;
+                const sending = sendingId === item.id;
                 return (
                 <div
                   key={item.id}
@@ -584,7 +589,7 @@ function MessageQueueDisplay({
                       )}
                     </div>
                   </div>
-                  {!editing && (
+                  {!editing && !sending && (
                     <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                       <button
                         type="button"
@@ -676,6 +681,7 @@ function ChatInput({
   onMoveInQueue,
   onEditQueued,
   queueEditingId,
+  queueSendingId,
   onQueueEditingChange,
   queuePaused = false,
   onResumeQueue,
@@ -725,6 +731,7 @@ function ChatInput({
   onMoveInQueue: (id: string, direction: QueueDirection) => void;
   onEditQueued: (id: string, text: string) => void;
   queueEditingId: string | null;
+  queueSendingId?: string | null;
   onQueueEditingChange: (id: string | null) => void;
   queuePaused?: boolean;
   onResumeQueue?: () => void;
@@ -1104,6 +1111,7 @@ function ChatInput({
             onMove={onMoveInQueue}
             onEdit={onEditQueued}
             editingId={queueEditingId}
+            sendingId={queueSendingId}
             onEditingChange={onQueueEditingChange}
             paused={queuePaused}
             onResume={onResumeQueue}
@@ -1758,6 +1766,8 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   // Set by Stop: without it, cancelling a turn immediately started the next
   // queued message, so "Stop" only ever paused for a fraction of a second.
   const [queuePaused, setQueuePaused] = useState(false);
+  const queueFlushInFlightRef = useRef(false);
+  const [queueSendingId, setQueueSendingId] = useState<string | null>(null);
   const [steerError, setSteerError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1870,11 +1880,14 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     // fire mid-edit with the old text and the editor vanishes under the user.
     if (queueEditingId !== null) return;
     if (!initialSessionReady || status !== "ready" || messageQueue.length === 0) return;
-    const [next, ...rest] = messageQueue;
+    if (queueFlushInFlightRef.current) return;
+    const [next] = messageQueue;
     if (!isModelAvailable(next.model)) return;
     if (budgetState === "exceeded" && modelUsesBillableBudget(next.model)) return;
     const id = window.setTimeout(() => {
-      setMessageQueue(rest);
+      queueFlushInFlightRef.current = true;
+      setQueueSendingId(next.id);
+      let accepted = false;
       void send(
         next.text,
         next.model.id,
@@ -1888,7 +1901,20 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
         next.computeOptions,
         next.thinkingLevel ?? undefined,
         next.images.length > 0 ? next.images : undefined,
-      );
+        () => {
+          accepted = true;
+          setMessageQueue((current) => removeQueuedMessage(current, next.id));
+          setQueueSendingId(null);
+        },
+      ).then((acceptedId) => {
+        if (!accepted && !acceptedId) {
+          setQueuePaused(true);
+          toast.error("Queued message was not delivered. The queue has been paused.");
+        }
+      }).finally(() => {
+        queueFlushInFlightRef.current = false;
+        setQueueSendingId(null);
+      });
     }, 0);
     return () => window.clearTimeout(id);
   }, [
@@ -2313,6 +2339,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             onMoveInQueue={moveInQueue}
             onEditQueued={editQueuedMessage}
             queueEditingId={queueEditingId}
+            queueSendingId={queueSendingId}
             onQueueEditingChange={setEditingQueueIdState}
             queuePaused={queuePaused && messageQueue.length > 0}
             onResumeQueue={resumeQueue}

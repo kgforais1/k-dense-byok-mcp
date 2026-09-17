@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { moveQueuedMessage, updateQueuedMessageText } from "./message-queue";
+import { moveQueuedMessage, removeQueuedMessage, updateQueuedMessageText } from "./message-queue";
 
 const queue = [
   { id: "1", text: "first", rawText: "first" },
@@ -26,6 +26,17 @@ describe("moveQueuedMessage", () => {
     const copy = [...queue];
     moveQueuedMessage(queue, "1", "down");
     expect(queue).toEqual(copy);
+  });
+});
+
+describe("removeQueuedMessage", () => {
+  it("removes only the accepted id and preserves concurrent additions", () => {
+    const concurrent = [...queue, { id: "4", text: "later", rawText: "later" }];
+    expect(removeQueuedMessage(concurrent, "1").map((item) => item.id)).toEqual(["2", "3", "4"]);
+  });
+
+  it("keeps identity when the id is absent", () => {
+    expect(removeQueuedMessage(queue, "missing")).toBe(queue);
   });
 });
 

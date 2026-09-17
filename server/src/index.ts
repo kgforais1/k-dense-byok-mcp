@@ -30,7 +30,7 @@ import { registerSkillRoutes } from "./api/skills.ts";
 import { registerPromptRoutes } from "./api/prompts.ts";
 import { registerAutomationRoutes } from "./api/automation.ts";
 import { setScheduleActivityListener } from "./agent/subagent-bridge.ts";
-import { bootSchedulerSessions, configureScheduler, onScheduleActivity, startSchedulerTick } from "./agent/scheduler.ts";
+import { bootSchedulerSessions, configureScheduler, onScheduleActivity, recordManualScheduleAction, startSchedulerTick } from "./agent/scheduler.ts";
 import { registerSystemRoutes } from "./api/system.ts";
 import { registerMcpRoutes } from "./api/mcp.ts";
 import { registerCredentialRoutes } from "./api/credentials.ts";
@@ -225,7 +225,12 @@ if (isMain) {
   // open those hosts now and keep the budget hold reconciled (not in
   // buildApp: tests must not open Pi sessions).
   configureScheduler({ log: app.log });
-  setScheduleActivityListener((projectId) => onScheduleActivity(projectId));
+  setScheduleActivityListener((projectId, action, scheduleId) => {
+    if (scheduleId && (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete")) {
+      recordManualScheduleAction(projectId, scheduleId, action.slice("schedule.".length) as "pause" | "resume" | "delete");
+    }
+    onScheduleActivity(projectId);
+  });
   void bootSchedulerSessions().then((started) => {
     if (started.length) app.log.info({ projects: started }, "scheduler sessions opened");
   });

@@ -1277,6 +1277,7 @@ export function useAgent(projectId?: string) {
       },
       thinkingLevel?: string,
       images?: PromptImage[],
+      onAccepted?: () => void,
     ): Promise<string | undefined> => {
       if (!text.trim() || status === "submitted" || status === "streaming") return;
       sendClaimRef.current = true;
@@ -1332,11 +1333,15 @@ export function useAgent(projectId?: string) {
             scopedProjectId,
             "stream",
           );
-        let response = await startRun();
-        for (let attempt = 0; response.status === 409 && attempt < 4; attempt++) {
-          await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
-          response = await startRun();
-        }
+        const admitRun = async () => {
+          let admitted = await startRun();
+          for (let attempt = 0; admitted.status === 409 && attempt < 4; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+            admitted = await startRun();
+          }
+          return admitted;
+        };
+        let response = await admitRun();
         if (response.status === 409) {
           // The session is busy with a turn this tab did not start (a system
           // run: supervisor request, scheduled-run notice). Adopt that run so
@@ -1347,19 +1352,30 @@ export function useAgent(projectId?: string) {
             setMessages(messages);
             sendClaimRef.current = false;
             if (clientFetchRef.current === controller) clientFetchRef.current = null;
-            void adoptRun(id, busy.runId);
+            const adoption = adoptRun(id, busy.runId);
             const queued = await followUp(text, images);
-            if (queued === "ok") return userMsgId;
-            if (queued === "not_streaming") {
-              // The system run ended in between: send normally on the next tick.
-              setStatus("ready");
-              setRunState("idle");
-              return undefined;
+            if (queued === "ok") {
+              onAccepted?.();
+              void adoption;
+              return userMsgId;
             }
-            throw new Error("run failed: 409");
+            if (queued === "not_streaming" || queued === "error") {
+              // The adopted run ended between the 409 and follow-up request.
+              // Let its terminal state settle, then admit the original prompt
+              // as a normal run instead of silently dropping it.
+              await adoption;
+              if (!mountedRef.current) return undefined;
+              sendClaimRef.current = true;
+              clientFetchRef.current = controller;
+              setMessages(consumer.transcript);
+              setStatus("submitted");
+              setRunState("running");
+              response = await admitRun();
+            }
           }
         }
         if (!response.ok) throw new Error(`run failed: ${response.status}`);
+        onAccepted?.();
         setStatus("streaming");
         await consumeRunResponse(response, consumer);
         if (clientFetchRef.current === controller && mountedRef.current) finalizeRun(consumer);
@@ -1370,6 +1386,7 @@ export function useAgent(projectId?: string) {
         ) {
           failRun(consumer, isAbortError(error));
         }
+        return undefined;
       } finally {
         sendClaimRef.current = false;
         if (clientFetchRef.current === controller) clientFetchRef.current = null;

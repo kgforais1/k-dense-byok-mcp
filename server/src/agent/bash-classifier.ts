@@ -135,6 +135,7 @@ export function matchProtected(rel: string, globs: readonly string[]): string | 
 }
 
 function stripQuotes(token: string): string {
+  if (token.length >= 3 && token.startsWith("$'") && token.endsWith("'")) return token.slice(2, -1);
   if (token.length >= 2 && ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'")))) {
     return token.slice(1, -1);
   }
@@ -225,6 +226,8 @@ const MUTATING = new Set([
   "tee", "install", "ln", "mkfifo", "touch",
 ]);
 const ENV_WRAPPERS = new Set(["sudo", "env", "nice", "nohup", "time", "command", "exec"]);
+const SHELL_INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "ksh", "fish"]);
+const CODE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "perl"]);
 /** Targets whose recursive removal is routine, not destructive. */
 const BENIGN_RM_TARGETS = [
   /^(\/tmp|tmp|\.tmp|\.cache|\.venv|venv|node_modules|__pycache__|\.pytest_cache|\.mypy_cache|\.ipynb_checkpoints|dist|build|\.ruff_cache)(\/|$)/,
@@ -239,7 +242,10 @@ function unwrap(tokens: string[]): string[] {
   while (i < tokens.length && (ENV_WRAPPERS.has(tokens[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]))) {
     i++;
     // `sudo -u x`, `env -i`: skip flags following a wrapper
-    while (i < tokens.length && isFlag(tokens[i])) i++;
+    while (i < tokens.length && isFlag(tokens[i])) {
+      const flag = tokens[i++];
+      if ((flag === "-u" || flag === "--user" || flag === "-g" || flag === "--group") && i < tokens.length) i++;
+    }
   }
   return tokens.slice(i);
 }
@@ -250,11 +256,22 @@ function unwrap(tokens: string[]): string[] {
  */
 // FORK (upstream merge): complexity 73 over the 62 ceiling. The classifier
 // table grew upstream; keep the byte-parity copy in sync (see test).
-// eslint-disable-next-line complexity
 export function classifyBashCommand(command: string, opts: ClassifyOptions): BashVerdict {
+  return classifyBashCommandAt(command, opts, "", 0);
+}
+
+// eslint-disable-next-line complexity
+function classifyBashCommandAt(command: string, opts: ClassifyOptions, initialCwd: string, depth: number): BashVerdict {
   const globs = opts.protectedGlobs;
-  let cwd = "";
+  let cwd = initialCwd;
   let destructive: BashVerdict | null = null;
+  // FORK: wrappers and command substitutions must not bypass protected-path policy.
+  if (depth < 4) {
+    for (const match of command.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) {
+      const nested = classifyBashCommandAt(match[1] ?? match[2] ?? "", opts, initialCwd, depth + 1);
+      if (nested.kind !== "allow") return nested;
+    }
+  }
   const protectedHit = (token: string): { rel: string; glob: string } | null => {
     const rel = resolveSandboxPath(token, cwd, opts.sandboxRoot);
     if (rel === null) return null;
@@ -278,9 +295,31 @@ export function classifyBashCommand(command: string, opts: ClassifyOptions): Bas
 
     const tokens = unwrap(raw.filter((t) => t !== ">" && t !== ">>"));
     if (tokens.length === 0) continue;
-    const cmd = stripQuotes(tokens[0]).split("/").pop() ?? tokens[0];
+    const cmd = (stripQuotes(tokens[0]).split("/").pop() ?? tokens[0]).replace(/\.exe$/i, "");
     const args = tokens.slice(1);
     const pathArgs = args.filter((a) => !isFlag(a));
+
+    if (depth < 4 && SHELL_INTERPRETERS.has(cmd)) {
+      const commandIndex = args.findIndex((arg) => arg === "-c" || arg === "--command");
+      const payload = commandIndex >= 0 ? stripQuotes(args[commandIndex + 1] ?? "") : "";
+      if (payload) {
+        const nested = classifyBashCommandAt(payload, opts, cwd, depth + 1);
+        if (nested.kind !== "allow") return nested;
+      }
+    }
+
+    if (CODE_INTERPRETERS.has(cmd)) {
+      const codeIndex = args.findIndex((arg) => arg === "-c" || arg === "-e" || arg === "--eval");
+      const code = codeIndex >= 0 ? stripQuotes(args[codeIndex + 1] ?? "") : "";
+      const mutates = /\b(?:write|write_text|write_bytes|writeFile|writeFileSync|appendFile|appendFileSync|unlink|unlinkSync|rm|rmSync|rmtree|remove|rename|replace|truncate|chmod|chown)\s*\(/.test(code)
+        || /\bopen\s*\([^)]*,\s*["'][wax+]/.test(code);
+      if (code && mutates) {
+        for (const match of code.matchAll(/(["'])(.*?)\1/g)) {
+          const hit = protectedHit(match[2]);
+          if (hit) return { kind: "protected", path: hit.rel, glob: hit.glob, detail: `${cmd} inline mutation of ${hit.rel}` };
+        }
+      }
+    }
 
     if (cmd === "cd") {
       const target = pathArgs[0];

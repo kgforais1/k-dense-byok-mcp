@@ -902,6 +902,70 @@ describe("useAgent send() while a system run is live", () => {
     await waitFor(() => expect(result.current.messages.map((m) => m.content)).toContain("Replied to the specialist."));
     expect(result.current.messages.some((m) => m.content.includes("Something went wrong"))).toBe(false);
   });
+
+  it("retries the original prompt when the adopted run ends before follow-up admission", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let stateCalls = 0;
+    let runPosts = 0;
+    vi.spyOn(projects, "apiFetch").mockImplementation(async (path: string) => {
+      if (path === "/sessions/idle/run/state" && ++stateCalls === 1) {
+        return new Response(JSON.stringify({ status: "none" }));
+      }
+      if (path === "/sessions/idle/history") {
+        return new Response(JSON.stringify({ messages: [] }));
+      }
+      if (path === "/sessions/idle/run") {
+        runPosts++;
+        if (runPosts <= 5) {
+          return new Response(JSON.stringify({ detail: "busy", reason: "streaming", runId: "sys-race" }), { status: 409 });
+        }
+        return new Response(sseStream([
+          { seq: 1, type: "run_start", runId: "user-retry" },
+          { seq: 2, type: "text_delta", delta: "accepted" },
+          { seq: 3, type: "done" },
+        ]), { status: 200 });
+      }
+      if (path === "/sessions/idle/run/state") {
+        return new Response(JSON.stringify({
+          status: "complete",
+          run: {
+            runId: "sys-race",
+            prompt: "",
+            images: [],
+            origin: "system",
+            kind: "turn",
+            baseline: { messages: [], contextUsage: null },
+            frames: [
+              { seq: 1, type: "run_start", runId: "sys-race", origin: "system", kind: "turn" },
+              { seq: 2, type: "done" },
+            ],
+            lastSeq: 2,
+          },
+        }));
+      }
+      if (path === "/sessions/idle/follow-up") {
+        return new Response(JSON.stringify({ reason: "not_streaming", restored: ["retry me"] }), { status: 409 });
+      }
+      if (path.startsWith("/sessions/idle/run/state?frames=0")) {
+        return new Response(JSON.stringify({ status: "none" }));
+      }
+      throw new Error(`unexpected apiFetch path: ${path}`);
+    });
+
+    const { result } = renderHook(() => useAgent("p"));
+    await act(async () => {
+      expect(await result.current.loadSession("idle")).toBe("restored");
+    });
+    await act(async () => {
+      const pending = result.current.send("retry me");
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(await pending).toBeTruthy();
+    });
+
+    expect(runPosts).toBe(6);
+    expect(result.current.messages.some((message) => message.role === "user" && message.content === "retry me")).toBe(true);
+    expect(result.current.messages.some((message) => message.content === "accepted")).toBe(true);
+  });
 });
 
 describe("useAgent compact()", () => {

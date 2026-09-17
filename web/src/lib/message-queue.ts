@@ -5,6 +5,12 @@
 
 export type QueueDirection = "up" | "down";
 
+/** Remove the accepted item by identity without discarding concurrent edits. */
+export function removeQueuedMessage<T extends { id: string }>(queue: readonly T[], id: string): T[] {
+  const next = queue.filter((item) => item.id !== id);
+  return next.length === queue.length ? queue as T[] : next;
+}
+
 /** Swap `id` with its neighbour; returns the same array when nothing moves. */
 export function moveQueuedMessage<T extends { id: string }>(
   queue: readonly T[],

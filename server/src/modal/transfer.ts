@@ -561,9 +561,8 @@ export async function collectOutputs(args: {
   }
 
   // Install only after every requested output has staged and verified. Every
-  // file is first copied next to its final path, then all are renamed, so a
-  // failure while copying installs nothing and the sandbox keeps its previous
-  // versions. Renames after successful copies are the residual window.
+  // file is copied next to its final path and existing outputs are backed up;
+  // a failed rename rolls the whole set back to its pre-install state.
   const finals = manifest.map((file) => {
     const final = safeLocal(args.sandboxRoot, file.path);
     let existing: fs.Stats | undefined;
@@ -575,21 +574,66 @@ export async function collectOutputs(args: {
     if (existing?.isDirectory()) {
       throw new ModalTransferError("OUTPUT_TARGET_IS_DIRECTORY", `Output path is an existing directory: ${file.path}`);
     }
-    return { file, final, incoming: `${final}.modal-${crypto.randomBytes(6).toString("hex")}.tmp` };
+    const nonce = crypto.randomBytes(6).toString("hex");
+    return {
+      file,
+      final,
+      incoming: `${final}.modal-${nonce}.tmp`,
+      backup: existing ? `${final}.modal-${nonce}.bak` : null,
+    };
   });
   const pendingTmp = new Set<string>();
+  const pendingBackups = new Map<string, string>();
+  const installed = new Set<string>();
   try {
     for (const { file, final, incoming } of finals) {
       fs.mkdirSync(path.dirname(final), { recursive: true });
-      fs.copyFileSync(path.join(args.stagingDir, ...file.path.split("/")), incoming);
       pendingTmp.add(incoming);
+      fs.copyFileSync(path.join(args.stagingDir, ...file.path.split("/")), incoming);
+    }
+    for (const { final, backup } of finals) {
+      if (!backup) continue;
+      await renameWithRetry(final, backup);
+      pendingBackups.set(final, backup);
     }
     for (const { final, incoming } of finals) {
       await renameWithRetry(incoming, final);
       pendingTmp.delete(incoming);
+      installed.add(final);
     }
+    // Installation is committed now. Backup cleanup must not turn a complete
+    // install into a rollback after another backup was already deleted.
+    for (const backup of pendingBackups.values()) {
+      try {
+        fs.rmSync(backup, { force: true });
+      } catch {
+        /* retain the harmless backup rather than risk the committed outputs */
+      }
+    }
+    pendingBackups.clear();
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    for (const { final } of [...finals].reverse()) {
+      try {
+        if (installed.has(final)) fs.rmSync(final, { force: true });
+        const backup = pendingBackups.get(final);
+        if (backup && fs.existsSync(backup)) await renameWithRetry(backup, final);
+        pendingBackups.delete(final);
+      } catch (rollbackError) {
+        rollbackErrors.push(`${final}: ${(rollbackError as Error).message}`);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new ModalTransferError(
+        "OUTPUT_ROLLBACK_FAILED",
+        `Output installation failed and rollback was incomplete (${rollbackErrors.join("; ")}): ${(error as Error).message}`,
+      );
+    }
+    throw error;
   } finally {
     for (const tmp of pendingTmp) fs.rmSync(tmp, { force: true });
+    // Keep any backup whose restoration failed; deleting it would destroy the
+    // only recoverable copy of the user's previous output.
   }
   return { files: manifest, missing, verified: expected !== null };
 }

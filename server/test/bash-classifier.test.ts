@@ -37,6 +37,16 @@ const protectedCases: Array<[string, string]> = [
   ['rm "user_data/with space.csv"', "user_data/with space.csv"],
   ["git rm user_data/a.csv", "user_data/a.csv"],
   ["rsync -a derived/ user_data/", "user_data"],
+  ["bash -c 'rm -rf user_data'", "user_data"],
+  ["sh -c 'cd user_data && rm a.csv'", "user_data/a.csv"],
+  ["python3 -c \"open('user_data/a.csv','w').write('x')\"", "user_data/a.csv"],
+  ["python -c \"from pathlib import Path; Path('user_data/a.csv').unlink()\"", "user_data/a.csv"],
+  ["node -e \"require('fs').rmSync('user_data',{recursive:true})\"", "user_data"],
+  ["echo $(rm -rf user_data)", "user_data"],
+  ["echo `rm user_data/a.csv`", "user_data/a.csv"],
+  ["sudo -u root bash -c 'rm user_data/a.csv'", "user_data/a.csv"],
+  ["bash -c $'rm user_data/a.csv'", "user_data/a.csv"],
+  ["C:/tools/node.exe -e \"require('fs').writeFileSync('user_data/a.csv','x')\"", "user_data/a.csv"],
 ];
 
 const destructiveCases: string[] = [
@@ -73,6 +83,7 @@ const allowedCases: string[] = [
   "cd user_data && cd .. && rm derived/x",
   "find results -name '*.png'",
   "python -c \"print('rm -rf user_data')\"",
+  "python -c \"print('user_data/a.csv')\"",
 ];
 
 for (const [name, mod] of [

@@ -512,9 +512,9 @@ function recordModelAttempts(args: {
  * the scheduler (agent/scheduler.ts, registered from index.ts to avoid an
  * import cycle through session-registry) can keep a resident session alive.
  */
-let scheduleActivityListener: ((projectId: string, action: string) => void) | null = null;
+let scheduleActivityListener: ((projectId: string, action: string, scheduleId?: string) => void) | null = null;
 export function setScheduleActivityListener(
-  listener: ((projectId: string, action: string) => void) | null,
+  listener: ((projectId: string, action: string, scheduleId?: string) => void) | null,
 ): void {
   scheduleActivityListener = listener;
 }
@@ -542,6 +542,10 @@ export function makeSubagentLedgerExtension(
       if (event.toolName !== "subagent") return;
       const action =
         typeof event.input.action === "string" ? event.input.action : undefined;
+      if (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete") {
+        const scheduleId = typeof event.input.id === "string" ? event.input.id : undefined;
+        scheduleActivityListener?.(projectId, action, scheduleId);
+      }
       // Schedules defer model work past this hook (a fire produces no tool
       // call), so gate their creation and manual firing like a launch now.
       if (action === "schedule.create") {

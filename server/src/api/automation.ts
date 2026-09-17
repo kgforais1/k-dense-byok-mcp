@@ -12,6 +12,7 @@ import {
   invokeSubagentAction,
   listMissions,
   listSchedules,
+  recordManualScheduleAction,
 } from "../agent/scheduler.ts";
 import { readSchedulerState } from "../agent/scheduler-state.ts";
 
@@ -46,6 +47,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     }
     try {
       const result = await invokeSubagentAction(projectId, { action: verb, id });
+      recordManualScheduleAction(projectId, id, action as "pause" | "resume" | "delete");
       return { ok: true, message: result.text, schedules: listSchedules(projectId) };
     } catch (err) {
       reply.code(502);

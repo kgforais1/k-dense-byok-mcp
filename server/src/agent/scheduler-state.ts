@@ -14,6 +14,8 @@ export interface SchedulerState {
   sessionId?: string;
   /** Schedule ids Kady paused because the project reached its spend limit. */
   heldByBudget: string[];
+  /** Schedule ids explicitly paused by a user, never auto-resumed. */
+  manuallyPaused?: string[];
   updatedAt?: string;
 }
 
@@ -27,10 +29,11 @@ export function readSchedulerState(paths: ProjectPaths): SchedulerState {
     return {
       ...(typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
       heldByBudget: Array.isArray(raw.heldByBudget) ? raw.heldByBudget.filter((x): x is string => typeof x === "string") : [],
+      manuallyPaused: Array.isArray(raw.manuallyPaused) ? raw.manuallyPaused.filter((x): x is string => typeof x === "string") : [],
       ...(typeof raw.updatedAt === "string" ? { updatedAt: raw.updatedAt } : {}),
     };
   } catch {
-    return { heldByBudget: [] };
+    return { heldByBudget: [], manuallyPaused: [] };
   }
 }
 

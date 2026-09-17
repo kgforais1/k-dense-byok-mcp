@@ -579,6 +579,8 @@ async function build(
   // reads the live sessionId through the same holder as the ledger extension.
   // It is included by default for regular chat sessions; set includeInterview
   // to false for headless / MCP-only sessions that must not block on user input.
+  // FORK: headless/MCP sessions cannot block on the interactive interview UI,
+  // so session construction needs this narrow opt-out from upstream defaults.
   const includeInterview = options?.includeInterview ?? true;
   const interviewTool = includeInterview
     ? makeInterviewTool(projectId, () => holder.session?.sessionId ?? "")

@@ -1,13 +1,13 @@
 ---
 title: "upstream-0-10-0-merge"
-status: accepted
+status: completed
 created: 2026-09-14
 branch: merge/upstream-0-10-0
 ---
 
 # Merge upstream v0.9.13 → v0.10.0 into the MCP fork
 
-**Status:** Accepted
+**Status:** Completed and merged in PR #31
 
 **Goal:** Merge the 38 upstream commits (K-Dense-AI/k-dense-byok `7b3e895..21a4ff6`, releases
 0.9.13–0.10.0) into the fork while preserving fork behavior (billing/subscription, CodeQL
@@ -56,26 +56,26 @@ M (merge resolution, ~30 overlap files — hot: session-registry.ts, skills-inst
 ### Phase 1 — Merge + mechanical resolution
 
 - [x] Branch `merge/upstream-0.10.0`, `git merge upstream/main`
-- [ ] Resolve textual conflicts (version bumps, lockfile, README title vs #47, docs)
-- [ ] `npm run verify -- fast` green
+- [x] Resolve textual conflicts (version bumps, lockfile, README title vs #47, docs)
+- [x] `npm run verify -- fast` green
 
 **Exit criteria:** merge commit exists, no conflict markers, fast ladder green.
 
 ### Phase 2 — Semantic resolution (both sides changed behavior)
 
-- [ ] `session-registry.ts` (system runs, follow-up queue, lifecycle vs fork session work)
-- [ ] `skills-install.ts` (keep CodeQL Phase-2 `stageForSkill` gate against upstream refactors)
-- [ ] `provenance/store.ts` + harvest (upstream lineage/env-capture vs fork harvest)
-- [ ] `modal/*` (upstream hardening vs fork modal work)
-- [ ] `models.ts`/billing/catalogue (every-provider vs subscription billing + Astra default)
-- [ ] `npm run verify -- all` green; targeted tests for each seam
+- [x] `session-registry.ts` (system runs, follow-up queue, lifecycle vs fork session work)
+- [x] `skills-install.ts` (keep CodeQL Phase-2 `stageForSkill` gate against upstream refactors)
+- [x] `provenance/store.ts` + harvest (upstream lineage/env-capture vs fork harvest)
+- [x] `modal/*` (upstream hardening vs fork modal work)
+- [x] `models.ts`/billing/catalogue (every-provider vs subscription billing + Astra default)
+- [x] `npm run verify -- all` green; targeted tests for each seam
 
 **Exit criteria:** full ladder green, no `<<<<<<<`, behavior checklist per file.
 
 ### Phase 3 — PR + policy landing
 
-- [ ] Open PR against `kgforais1/k-dense-byok-mcp` main, bot findings triaged
-- [ ] Two reviews (SHIP), merge, move this plan to `completed/`
+- [x] Open PR against `kgforais1/k-dense-byok-mcp` main, bot findings triaged
+- [x] Two reviews (SHIP), merge, move this plan to `completed/`
 
 **Exit criteria:** merged to main, plan archived, handoff closed.
 

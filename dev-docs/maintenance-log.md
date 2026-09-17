@@ -1,5 +1,19 @@
 # Maintenance Log
 
+### 2026-09-17 — Upstream v0.10.0 merge (PR #31)
+
+- **Category:** Upstream sync
+- **Summary:** Merged upstream releases v0.9.13 through v0.10.0 while
+  preserving the fork's billing, security, Modal, provenance, and session
+  overlays. Added the standing fork-overlay policy and triaged all automated
+  review findings before merge.
+- **Evidence:** Required GitHub checks were green at merge; CodeQL and
+  DeepSource passed, and focused regression tests covered the reviewed
+  session, follow-up, scheduler, Modal, and path-safety changes.
+- **Follow-up:** The completed plan retains the explicitly deferred hardening
+  items; the weekly `upstream-sync-check` workflow reports future upstream
+  drift through the `upstream-sync` issue label.
+
 This document records ongoing maintenance, security triaging, dependency lifecycle, refactoring, and infrastructure tasks performed on the fork (`kgforais1/k-dense-byok-mcp`).
 
 ---

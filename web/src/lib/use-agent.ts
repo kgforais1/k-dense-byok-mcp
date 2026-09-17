@@ -1234,7 +1234,7 @@ export function useAgent(projectId?: string) {
   /** Queue a message Pi delivers once the live run has no more tool calls or
    * steering messages — still inside this run. May carry images. */
   const followUp = useCallback(
-    async (text: string, images?: PromptImage[]): Promise<"ok" | "not_streaming" | "error"> => {
+    async (text: string, images?: PromptImage[], requestId?: string): Promise<"ok" | "not_streaming" | "error"> => {
       const id = sessionIdRef.current;
       if (!id) return "not_streaming";
       try {
@@ -1245,6 +1245,7 @@ export function useAgent(projectId?: string) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               message: text,
+              ...(requestId ? { requestId } : {}),
               ...(images && images.length > 0 ? { images } : {}),
             }),
           },
@@ -1288,6 +1289,7 @@ export function useAgent(projectId?: string) {
       const userMsgId = nextId();
       const assistantId = nextId();
       const timestamp = Date.now();
+      const followUpRequestId = `${timestamp}-${userMsgId}-${Math.random().toString(36).slice(2)}`;
       const consumer: RunConsumer = {
         transcript: [
           ...messages,
@@ -1353,13 +1355,27 @@ export function useAgent(projectId?: string) {
             sendClaimRef.current = false;
             if (clientFetchRef.current === controller) clientFetchRef.current = null;
             const adoption = adoptRun(id, busy.runId);
-            const queued = await followUp(text, images);
+            let queued = await followUp(text, images, followUpRequestId);
             if (queued === "ok") {
               onAccepted?.();
               void adoption;
               return userMsgId;
             }
-            if (queued === "not_streaming" || queued === "error") {
+            if (queued === "error") {
+              // A lost response is admission-ambiguous. After the adopted run
+              // settles, retry the same idempotency key: the server confirms a
+              // prior admission without queueing twice, or reports that the
+              // run ended before accepting it.
+              await adoption;
+              if (!mountedRef.current) return undefined;
+              queued = await followUp(text, images, followUpRequestId);
+              if (queued === "ok") {
+                onAccepted?.();
+                return userMsgId;
+              }
+              if (queued === "error") throw new Error("follow-up admission could not be confirmed");
+            }
+            if (queued === "not_streaming") {
               // The adopted run ended between the 409 and follow-up request.
               // Let its terminal state settle, then admit the original prompt
               // as a normal run instead of silently dropping it.

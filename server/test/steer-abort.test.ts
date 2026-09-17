@@ -571,6 +571,18 @@ describe("POST /sessions/:id/follow-up", () => {
     expect(s.followUps[0].images).toEqual([{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }]);
   });
 
+  it("deduplicates a retried follow-up after its response is lost", async () => {
+    const s = new FakeSession();
+    fakeSessions.set("s1", s);
+    const body = { message: "then plot it", requestId: "client-message-1" };
+    expect((await followUp("s1", body)).statusCode).toBe(200);
+    s.isStreaming = false;
+    const retry = await followUp("s1", body);
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json()).toMatchObject({ ok: true, duplicate: true });
+    expect(s.followUps).toHaveLength(1);
+  });
+
   it("409s with reason not_streaming when no run is live, and 400s on bad images", async () => {
     const s = new FakeSession();
     s.isStreaming = false;

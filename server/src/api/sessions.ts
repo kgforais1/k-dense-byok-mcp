@@ -84,6 +84,17 @@ import {
   pinSession,
   unpinSession,
 } from "../agent/session-registry.ts";
+
+const FOLLOW_UP_RECEIPT_LIMIT = 2_000;
+const followUpReceipts = new Map<string, true>();
+function rememberFollowUpReceipt(key: string): void {
+  followUpReceipts.set(key, true);
+  while (followUpReceipts.size > FOLLOW_UP_RECEIPT_LIMIT) {
+    const oldest = followUpReceipts.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    followUpReceipts.delete(oldest);
+  }
+}
 import { parseThinkingLevel } from "../agent/thinking.ts";
 import {
   addTurnUsage,
@@ -1089,7 +1100,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
   // run has no more tool calls or steering messages, still inside the same
   // run (same SSE stream, same ledger row). Unlike steering it may carry
   // images. Same 409/403 contract as /steer.
-  app.post<{ Params: { id: string }; Body: { message?: string; images?: unknown } }>(
+  app.post<{ Params: { id: string }; Body: { message?: string; images?: unknown; requestId?: string } }>(
     "/sessions/:id/follow-up",
     async (req, reply) => {
       const projectId = currentProjectId();
@@ -1107,6 +1118,15 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       if ("error" in parsedImages) {
         reply.code(400);
         return { detail: parsedImages.error };
+      }
+      const requestId = req.body?.requestId;
+      if (requestId !== undefined && (typeof requestId !== "string" || !requestId || requestId.length > 128)) {
+        reply.code(400);
+        return { detail: "requestId must be a non-empty string of at most 128 characters" };
+      }
+      const receiptKey = requestId ? `${projectId}\0${req.params.id}\0${requestId}` : null;
+      if (receiptKey && followUpReceipts.has(receiptKey)) {
+        return { ok: true, pending: [...session.getFollowUpMessages()], duplicate: true };
       }
       if (!session.isStreaming) {
         reply.code(409);
@@ -1138,6 +1158,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
           restored: [...cleared.steering, ...cleared.followUp],
         };
       }
+      if (receiptKey) rememberFollowUpReceipt(receiptKey);
       return { ok: true, pending: [...session.getFollowUpMessages()] };
     },
   );

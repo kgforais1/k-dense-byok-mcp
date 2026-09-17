@@ -772,12 +772,11 @@ describe("Durable Modal transfer hardening", () => {
     fs.writeFileSync(path.join(root(), "result.txt"), "old result\n");
     fs.writeFileSync(path.join(root(), "other.txt"), "old other\n");
     const originalRename = fs.renameSync.bind(fs);
-    let installs = 0;
     let sawExistingDuringInstall = false;
     const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
       if (String(from).includes(".modal-") && String(from).endsWith(".tmp")) {
         sawExistingDuringInstall ||= fs.existsSync(String(to));
-        if (++installs !== 2) return originalRename(from, to);
+        if (!String(to).endsWith("result.txt")) return originalRename(from, to);
         const error = new Error("synthetic second install failure") as NodeJS.ErrnoException;
         error.code = "ENOSPC";
         throw error;

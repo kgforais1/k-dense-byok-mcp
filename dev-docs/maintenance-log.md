@@ -2,7 +2,7 @@
 
 ### 2026-09-17 — Plan-close lifecycle clarified (PR #33)
 
-- **Category:** Repository workflow
+- **Category:** operational
 - **Summary:** Made plan completion an explicit same-PR operation: finalize
   status, create at least one durable changelog or maintenance record, archive
   the plan, and remove its active handoff before merge. Clarified that the
@@ -17,8 +17,9 @@
 
 ### 2026-09-17 — Upstream v0.10.0 merge (PR #31)
 
-- **Category:** Upstream sync
-- **Summary:** Merged upstream releases v0.9.13 through v0.10.0 while
+- **Category:** operational
+- **Summary:** Merged upstream releases v0.9.13 through
+  [v0.10.0](https://github.com/K-Dense-AI/k-dense-byok/releases/tag/v0.10.0) while
   preserving the fork's billing, security, Modal, provenance, and session
   overlays. Added the standing fork-overlay policy and triaged all automated
   review findings before merge.

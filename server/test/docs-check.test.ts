@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { commandDiagnostics } from "./helpers/command-diagnostics";
 
 const DOCS_CHECK_PATH = path.resolve(__dirname, "..", "..", "scripts", "docs-check.mjs");
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -14,16 +15,17 @@ function runDocsCheck(cwd = REPO_ROOT) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   return {
-    status: result.status ?? 1,
+    status: result.status,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
+    error: result.error,
   };
 }
 
 describe("scripts/docs-check.mjs", () => {
   it("passes against the current repository state", () => {
     const result = runDocsCheck();
-    expect(result.status).toBe(0);
+    expect(result.status, commandDiagnostics(result)).toBe(0);
     expect(result.stdout).toContain("docs:check: ok");
   });
 
@@ -41,8 +43,8 @@ describe("scripts/docs-check.mjs", () => {
         cwd: REPO_ROOT,
         encoding: "utf8",
       });
-      expect(tracked.status).toBe(0);
-      expect(untracked.status).toBe(0);
+      expect(tracked.status, commandDiagnostics(tracked)).toBe(0);
+      expect(untracked.status, commandDiagnostics(untracked)).toBe(0);
       const NUL = String.fromCharCode(0);
       const files = [...tracked.stdout.split(NUL), ...untracked.stdout.split(NUL)].filter(Boolean);
       expect(files.length).toBeGreaterThan(0);
@@ -53,7 +55,7 @@ describe("scripts/docs-check.mjs", () => {
       }
       const result = runDocsCheck(tmp);
       expect(result.stderr).toBe("");
-      expect(result.status).toBe(0);
+      expect(result.status, commandDiagnostics(result)).toBe(0);
       expect(result.stdout).toContain("docs:check: ok");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -171,7 +173,7 @@ describe("scripts/docs-check.mjs", () => {
         }),
       );
       const result = runInTmp();
-      expect(result.status).toBe(0);
+      expect(result.status, commandDiagnostics(result)).toBe(0);
       expect(result.stdout).toContain("docs:check: ok");
     });
 
@@ -316,7 +318,7 @@ describe("scripts/docs-check.mjs", () => {
         }),
       );
       const result = runInTmp();
-      expect(result.status).toBe(0);
+      expect(result.status, commandDiagnostics(result)).toBe(0);
       expect(result.stdout).toContain("docs:check: ok");
     });
   });
@@ -327,7 +329,7 @@ describe("scripts/docs-check.mjs", () => {
         cwd: REPO_ROOT,
         encoding: "utf8",
       });
-      expect(result.status).toBe(0);
+      expect(result.status, commandDiagnostics(result)).toBe(0);
     });
   });
 });

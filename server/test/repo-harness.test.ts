@@ -14,6 +14,7 @@ import {
   scaffoldMaintenance,
   scaffoldPlan,
 } from "../../scripts/repo.mjs";
+import { commandDiagnostics } from "./helpers/command-diagnostics";
 
 const REPO_ROOT = path.resolve(path.dirname(MANIFEST_PATH), "..");
 
@@ -656,7 +657,7 @@ describe("end-to-end CLI invocation via node", () => {
       cwd: REPO_ROOT,
       encoding: "utf8",
     });
-    expect(result.status).toBe(0);
+    expect(result.status, commandDiagnostics(result)).toBe(0);
     expect(result.stdout).toMatch(/^branch:/m);
   });
 
@@ -676,7 +677,10 @@ describe("end-to-end CLI invocation via node", () => {
     // changes' message. Both are acceptable; what we forbid is a silent
     // crash (status === null) or a different exit code than the script
     // would produce for the same input.
-    expect(result.status === 0 || result.status === 1).toBe(true);
+    expect(
+      result.status === 0 || result.status === 1,
+      commandDiagnostics(result),
+    ).toBe(true);
   });
 
   it("node scripts/repo.mjs handoff:check exits 0 when no handoffs are present", () => {
@@ -684,7 +688,7 @@ describe("end-to-end CLI invocation via node", () => {
       cwd: REPO_ROOT,
       encoding: "utf8",
     });
-    expect(result.status).toBe(0);
+    expect(result.status, commandDiagnostics(result)).toBe(0);
     expect(result.stdout).toMatch(/active handoff\(s\)/);
   });
 });

@@ -7,9 +7,12 @@
   status, create at least one durable changelog or maintenance record, archive
   the plan, and remove its active handoff before merge. Clarified that the
   existing changelog and maintenance log are fork-owned; upstream release
-  notes are linked rather than duplicated into parallel records.
+  notes are linked rather than duplicated into parallel records. Improved
+  subprocess-backed repository tests so CI failures include exit status,
+  spawn errors, stdout, and stderr without weakening their assertions.
 - **Evidence:** `npm run docs:check` validates completed-plan placement,
-  handoff removal, release-record structure, and manifest coverage.
+  handoff removal, release-record structure, and manifest coverage. Focused
+  backend tests (49), lint, and typecheck pass for the diagnostic harness.
 - **Follow-up:** None.
 
 ### 2026-09-17 — Upstream v0.10.0 merge (PR #31)

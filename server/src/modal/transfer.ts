@@ -584,7 +584,7 @@ export async function collectOutputs(args: {
   });
   const pendingTmp = new Set<string>();
   const pendingBackups = new Map<string, string>();
-  const installed = new Set<string>();
+  const installed = new Map<string, string>();
   try {
     for (const { file, final, incoming } of finals) {
       fs.mkdirSync(path.dirname(final), { recursive: true });
@@ -593,13 +593,13 @@ export async function collectOutputs(args: {
     }
     for (const { final, backup } of finals) {
       if (!backup) continue;
-      await renameWithRetry(final, backup);
+      fs.copyFileSync(final, backup, fs.constants.COPYFILE_EXCL);
       pendingBackups.set(final, backup);
     }
-    for (const { final, incoming } of finals) {
+    for (const { file, final, incoming } of finals) {
       await renameWithRetry(incoming, final);
       pendingTmp.delete(incoming);
-      installed.add(final);
+      installed.set(final, file.sha256 ?? "");
     }
     // Installation is committed now. Backup cleanup must not turn a complete
     // install into a rollback after another backup was already deleted.
@@ -615,9 +615,18 @@ export async function collectOutputs(args: {
     const rollbackErrors: string[] = [];
     for (const { final } of [...finals].reverse()) {
       try {
-        if (installed.has(final)) fs.rmSync(final, { force: true });
+        const installedSha = installed.get(final);
         const backup = pendingBackups.get(final);
-        if (backup && fs.existsSync(backup)) await renameWithRetry(backup, final);
+        if (installedSha !== undefined) {
+          if (fs.existsSync(final) && installedSha && (await sha256File(final)) !== installedSha) {
+            throw new Error("output changed concurrently after installation; retained backup for recovery");
+          }
+          fs.rmSync(final, { force: true });
+          if (backup && fs.existsSync(backup)) await renameWithRetry(backup, final);
+        } else if (backup) {
+          // The original was copied, not moved, and no replacement was installed.
+          fs.rmSync(backup, { force: true });
+        }
         pendingBackups.delete(final);
       } catch (rollbackError) {
         rollbackErrors.push(`${final}: ${(rollbackError as Error).message}`);

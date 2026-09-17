@@ -47,7 +47,9 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     }
     try {
       const result = await invokeSubagentAction(projectId, { action: verb, id });
-      recordManualScheduleAction(projectId, id, action as "pause" | "resume" | "delete");
+      if (action === "pause" || action === "resume" || action === "delete") {
+        recordManualScheduleAction(projectId, id, action);
+      }
       return { ok: true, message: result.text, schedules: listSchedules(projectId) };
     } catch (err) {
       reply.code(502);

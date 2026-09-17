@@ -47,6 +47,10 @@ const protectedCases: Array<[string, string]> = [
   ["sudo -u root bash -c 'rm user_data/a.csv'", "user_data/a.csv"],
   ["bash -c $'rm user_data/a.csv'", "user_data/a.csv"],
   ["C:/tools/node.exe -e \"require('fs').writeFileSync('user_data/a.csv','x')\"", "user_data/a.csv"],
+  ["bash -lc 'rm -rf user_data'", "user_data"],
+  ["eval 'rm -rf user_data'", "user_data"],
+  ["echo $(rm -rf $(echo user_data))", "user_data"],
+  ["python3 -c \"import os; os.system('rm -rf user_data')\"", "user_data"],
 ];
 
 const destructiveCases: string[] = [

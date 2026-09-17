@@ -251,6 +251,39 @@ function unwrap(tokens: string[]): string[] {
   return tokens.slice(i);
 }
 
+/** Extract balanced `$(...)` payloads plus backtick payloads, including nesting. */
+function commandSubstitutions(command: string): string[] {
+  const payloads: string[] = [];
+  for (let i = 0; i < command.length; i++) {
+    if (command[i] === "`") {
+      const end = command.indexOf("`", i + 1);
+      if (end >= 0) {
+        payloads.push(command.slice(i + 1, end));
+        i = end;
+      }
+      continue;
+    }
+    if (command[i] !== "$" || command[i + 1] !== "(") continue;
+    let nesting = 1;
+    let quote: string | null = null;
+    for (let j = i + 2; j < command.length; j++) {
+      const ch = command[j];
+      if (quote) {
+        if (ch === quote && command[j - 1] !== "\\") quote = null;
+        continue;
+      }
+      if (ch === "\"" || ch === "'") quote = ch;
+      else if (ch === "(") nesting++;
+      else if (ch === ")" && --nesting === 0) {
+        payloads.push(command.slice(i + 2, j));
+        i = j;
+        break;
+      }
+    }
+  }
+  return payloads;
+}
+
 /**
  * Classify one shell command. Returns the first protected-path mutation, else
  * the first destructive command, else allow.
@@ -268,13 +301,14 @@ function classifyBashCommandAt(command: string, opts: ClassifyOptions, initialCw
   let destructive: BashVerdict | null = null;
   // FORK: wrappers and command substitutions must not bypass protected-path policy.
   if (depth < 4) {
-    for (const match of command.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)) {
-      const nested = classifyBashCommandAt(match[1] ?? match[2] ?? "", opts, initialCwd, depth + 1);
+    for (const payload of commandSubstitutions(command)) {
+      const nested = classifyBashCommandAt(payload, opts, initialCwd, depth + 1);
       if (nested.kind !== "allow") return nested;
     }
   }
   const protectedHit = (token: string): { rel: string; glob: string } | null => {
-    const rel = resolveSandboxPath(token, cwd, opts.sandboxRoot);
+    const candidate = token.replace(/^\$\(+/, "").replace(/\)+$/, "");
+    const rel = resolveSandboxPath(candidate, cwd, opts.sandboxRoot);
     if (rel === null) return null;
     const glob = matchProtected(rel, globs);
     return glob ? { rel, glob } : null;
@@ -301,7 +335,7 @@ function classifyBashCommandAt(command: string, opts: ClassifyOptions, initialCw
     const pathArgs = args.filter((a) => !isFlag(a));
 
     if (depth < 4 && SHELL_INTERPRETERS.has(cmd)) {
-      const commandIndex = args.findIndex((arg) => arg === "-c" || arg === "--command");
+      const commandIndex = args.findIndex((arg) => arg === "--command" || (/^-[^-]*c/.test(arg) && !arg.includes("=")));
       const payload = commandIndex >= 0 ? stripQuotes(args[commandIndex + 1] ?? "") : "";
       if (payload) {
         const nested = classifyBashCommandAt(payload, opts, cwd, depth + 1);
@@ -320,6 +354,17 @@ function classifyBashCommandAt(command: string, opts: ClassifyOptions, initialCw
           if (hit) return { kind: "protected", path: hit.rel, glob: hit.glob, detail: `${cmd} inline mutation of ${hit.rel}` };
         }
       }
+      if (/\b(?:system|popen|exec|spawn|run)\s*\(/.test(code)) {
+        for (const match of code.matchAll(/(["'])(.*?)\1/g)) {
+          const nested = classifyBashCommandAt(match[2], opts, cwd, depth + 1);
+          if (nested.kind !== "allow") return nested;
+        }
+      }
+    }
+
+    if (depth < 4 && cmd === "eval") {
+      const nested = classifyBashCommandAt(args.map(stripQuotes).join(" "), opts, cwd, depth + 1);
+      if (nested.kind !== "allow") return nested;
     }
 
     if (cmd === "cd") {

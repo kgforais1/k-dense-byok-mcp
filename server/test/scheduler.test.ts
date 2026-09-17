@@ -212,6 +212,9 @@ describe("automation routes", () => {
     expect(calls).toEqual([{ action: "schedule.pause", id: "nightly-qc" }]);
     expect(readSchedulerState(resolvePaths(projectId)).heldByBudget).toEqual([]);
     expect(readSchedulerState(resolvePaths(projectId)).manuallyPaused).toEqual(["nightly-qc"]);
+    res = await app.inject({ method: "POST", url: "/schedules/nightly-qc/run", headers: hg(projectId) });
+    expect(res.statusCode).toBe(200);
+    expect(readSchedulerState(resolvePaths(projectId)).manuallyPaused).toEqual(["nightly-qc"]);
     res = await app.inject({ method: "POST", url: "/schedules/nightly-qc/explode", headers: hg(projectId) });
     expect(res.statusCode).toBe(400);
     res = await app.inject({ method: "POST", url: "/schedules/nope/run", headers: hg(projectId) });

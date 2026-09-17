@@ -47,6 +47,23 @@ Three things to know up front:
 
 > 🎬 **Prefer to watch first?** [The Future of Research is Open: Introducing K-Dense BYOK](https://youtu.be/wsG3yVV4P5Q) walks through what the app does and how to get set up. More walkthroughs in [Tutorial videos](#tutorial-videos).
 
+## CompBioBench
+
+As of September 11, 2026, K-Dense BYOK holds **#2** on the public [CompBioBench v1 leaderboard](https://huggingface.co/spaces/Genentech/compbiobench-leaderboard-v1).
+
+CompBioBench is a Genentech benchmark of 100 computational-biology tasks. Each task has one exact-match answer. The gold answers stay on the leaderboard, so an independent grader scores every run.
+
+We ran the same K-Dense BYOK harness four times through OpenRouter. Each run used one model and one isolated project per question.
+
+| Run | Model | Reasoning | Accuracy | Rank (Sept 11, 2026) |
+|-----|-------|-----------|----------|----------------------|
+| r4 | GPT-6 Astra | xhigh | 98% | #2 |
+| r3 | Gemini 3.8 Flash | xhigh | 94% | #7 |
+| r2 | GPT-5.6 SOL | xhigh | 92% | #11 |
+| r1 | DeepSeek V4 Pro | high | 81% | — |
+
+Ranks will move as new submissions arrive. For agreement, failures, and cost on the first three runs, see [K-Dense BYOK on CompBioBench](https://www.k-dense.ai/blog/compbiobench-three-runs).
+
 ## Internal benchmark
 
 ![Internal benchmark comparing K-Dense BYOK with Claude Science and Biomni Lab across scientific quality and research execution](docs/07_platform_performance_summary.png)
@@ -92,6 +109,7 @@ Kady is designed to carry out research work, not only answer questions. You rema
 
 - **Connect supported subscriptions directly through Pi OAuth.** In **Settings → Model providers**, connect ChatGPT Plus/Pro (`openai-codex`), Claude Pro/Max (`anthropic`), GitHub Copilot, or xAI. Kady handles the provider's browser, device-code, or manual sign-in flow and makes its available models appear in the picker.
 - **Use major hosted models** from OpenAI, Anthropic, Google, xAI, Qwen, and others through one [OpenRouter](https://openrouter.ai/) account. Change the model and reasoning level independently in each chat.
+- **Bring a key for any provider Pi supports.** Under **Settings → API keys**, add a key for Anthropic, OpenAI, Google Gemini, xAI, DeepSeek, Mistral, Groq, Cerebras, Hugging Face, Fireworks, Together, Baseten, Vercel AI Gateway, Kimi, Moonshot, MiniMax, Z.AI, Qwen and Xiaomi token plans, or your own Azure OpenAI, Amazon Bedrock, Google Vertex AI, or Cloudflare account — each configured provider gets its own section in the model picker (see [Model selection](./docs/model-selection.md#direct-api-key-providers)).
 - **Use NVIDIA NIM models directly** with an API key from [build.nvidia.com](https://build.nvidia.com/) — Nemotron, Llama, GPT-OSS, and more, billed against your NVIDIA API credits rather than per-token dollar pricing.
 - **Run free local models with [Ollama or any OpenAI-compatible server](./docs/local-models-ollama.md)** (LM Studio, vLLM, …) when cost or data locality matters. Local models appear in the same model picker.
 - **Ask a panel of models with [OpenRouter Fusion](./docs/openrouter-fusion.md).** A preset can send one question to several models and use a judge model to synthesize their perspectives into one response; the picker shows the combined price and benchmark information. Fusion remains OpenRouter-only and requires an OpenRouter API key.
@@ -99,7 +117,7 @@ Kady is designed to carry out research work, not only answer questions. You rema
 
 ### Stay in control
 
-- **See usage and cost as work happens.** Kady records model tokens, specialist usage, and Modal compute by run and project. OpenRouter and Anthropic OAuth metered usage count toward an optional hard dollar limit; provider-managed ChatGPT, Copilot, xAI subscription and NVIDIA NIM credit usage shows token and reference-price information without consuming that cap.
+- **See usage and cost as work happens.** Kady records model tokens, specialist usage, and Modal compute by run and project. OpenRouter, direct API-key providers, and Anthropic OAuth metered usage count toward an optional hard dollar limit; provider-managed ChatGPT, Copilot, xAI and Kimi subscriptions, NVIDIA NIM credits, and prepaid token plans show token and reference-price information without consuming that cap.
 - **Watch local resource use.** A compact system monitor shows CPU, memory, and GPU activity while analyses are running on your computer.
 - **Manage capabilities without editing configuration files.** Settings lets you connect model providers, add API keys, enable or disable skills, create or customize specialists, manage Fusion presets, and change appearance. Disabling a capability does not delete it.
 - **Connect your existing research tools** through [MCP](./docs/mcp-servers.md), a plug-in standard for AI assistants. Add reference managers, GitHub, databases, and other services, test the connection in the app, and make their tools available to Kady.
@@ -113,8 +131,8 @@ You need a compatible computer and at least one model source:
    - On Windows, install [Node.js 22+](https://nodejs.org/) (or `winget install OpenJS.NodeJS.LTS`) and [Git for Windows](https://git-scm.com/download/win) first — Kady's agent runs its shell commands through the Git Bash that Git for Windows provides. (Prefer a Linux environment? [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) works too.)
 2. One of:
    - an **[OpenRouter](https://openrouter.ai/) API key** for broad pay-as-you-go model access,
-   - an **[NVIDIA](https://build.nvidia.com/) API key** for NIM-served models billed against NVIDIA API credits,
-   - a supported **ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, or xAI subscription** that you connect after launch, or
+   - an **API key for any provider Pi supports** — Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek, [NVIDIA NIM](https://build.nvidia.com/), Azure, Bedrock, Vertex, and [more](./docs/model-selection.md#direct-api-key-providers) — pasted in Settings after launch,
+   - a supported **ChatGPT Plus/Pro, Claude Pro/Max, GitHub Copilot, xAI, or Kimi Code subscription** that you connect after launch, or
    - [free local models through Ollama](./docs/local-models-ollama.md).
 
 Open a terminal (on a Mac: press `Cmd+Space`, type "Terminal", press Enter) and run these four lines:
@@ -174,7 +192,7 @@ All guides live in the [`docs/`](./docs) folder:
 | [Sub-agents](./docs/sub-agents.md) | Kady's team of 21 scientific specialists and how to customize them |
 | [Connecting external tools (MCP)](./docs/mcp-servers.md) | Give Kady extra abilities like GitHub, reference managers, and databases |
 | [Local models](./docs/local-models-ollama.md) | Run everything on free local models (Ollama or any OpenAI-compatible server), no API keys required |
-| [Model selection](./docs/model-selection.md) | OpenRouter, Pi subscription, NVIDIA NIM, Ollama, model refs, and billing behavior |
+| [Model selection](./docs/model-selection.md) | OpenRouter, Pi subscriptions, every direct Pi provider (Anthropic, OpenAI, Google, Azure, Bedrock, NVIDIA NIM, …), Ollama, model refs, and billing behavior |
 | [OpenRouter Fusion](./docs/openrouter-fusion.md) | Multi-model deliberation presets — what they are and how the integration works |
 | [Architecture](./docs/architecture.md) | How the two local services fit together (for the technically curious) |
 | [Developer documentation](./docs/development/README.md) | Contributor documentation index, architecture map, verification, and workflow |
@@ -188,6 +206,7 @@ Background reading on the research and evaluation work behind Kady, from the [K-
 
 | Post | What it covers |
 |------|----------------|
+| [K-Dense BYOK on CompBioBench](https://www.k-dense.ai/blog/compbiobench-three-runs) | Three models on the same harness: Gemini 3.8 Flash 94%, GPT-5.6 SOL 92%, DeepSeek V4 Pro 81% |
 | [Introducing K-Bench 01](https://www.k-dense.ai/blog/introducing-k-bench-01-internal-benchmark) | Our internal benchmark of nine frontier models across 178 real scientific tasks, and how often confident answers are wrong |
 | [K-Dense Web vs. Claude Science](https://www.k-dense.ai/blog/k-dense-web-vs-claude-science) | A 20-task comparison focused on execution and auditable research output |
 | [AI Scientists Need Lab Escape Rooms, Not More Exams](https://www.k-dense.ai/blog/science-needs-better-black-boxes) | Why hidden lab environments test AI scientists better than exam-style benchmarks |

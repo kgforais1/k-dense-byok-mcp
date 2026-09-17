@@ -10,7 +10,9 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CustomModelsCard } from "@/components/custom-models-card";
 import { OAuthLoginDialog } from "@/components/oauth-login-dialog";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useProviderAuth,
   type ModelProviderStatus,
@@ -23,19 +25,21 @@ export function ProviderAuthPanel() {
   );
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
   const selected = useMemo(
     () => auth.providers.find((provider) => provider.id === selectedId) ?? null,
     [auth.providers, selectedId],
   );
 
   const disconnect = async (provider: ModelProviderStatus) => {
-    if (
-      !window.confirm(
-        `Disconnect ${provider.accountLabel}? Existing chats remain on disk, but new requests through this provider will stop working.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: `Disconnect ${provider.accountLabel}?`,
+      description:
+        "Existing chats remain on disk, but new requests through this provider will stop working until you reconnect.",
+      confirmLabel: "Disconnect",
+      destructive: true,
+    });
+    if (!ok) return;
     setDisconnecting(provider.id);
     setActionError(null);
     try {
@@ -50,13 +54,14 @@ export function ProviderAuthPanel() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto">
+      {dialog}
       <div>
         <h3 className="text-sm font-medium">Model providers</h3>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Connect an existing AI subscription. OAuth tokens stay in Kady&apos;s
-          local Pi credential store, which is used by the lead agent and its
-          specialist processes. OpenRouter and optional service keys remain
-          under API keys.
+          Connect an existing AI subscription or account by signing in. OAuth
+          tokens stay in Kady&apos;s local Pi credential store, which is used by
+          the lead agent and its specialist processes. API keys for these and
+          every other Pi provider live under API keys.
         </p>
       </div>
 
@@ -93,16 +98,23 @@ export function ProviderAuthPanel() {
                         ? "Reconnect required"
                         : provider.connected
                           ? "Connected"
-                          : "Not connected"}
+                          : provider.credentialType === "api_key"
+                            ? "Using API key"
+                            : "Not connected"}
                     </Badge>
                     <Badge variant="outline">
                       {provider.billingMode === "metered_oauth"
                         ? "Metered extra usage"
-                        : "Subscription managed"}
+                        : provider.billingMode === "payg"
+                          ? "Pay-as-you-go"
+                          : "Subscription managed"}
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs font-medium text-muted-foreground">
                     {provider.accountLabel}
+                    {provider.apiKeyAlternative ? (
+                      <span className="font-normal"> · or paste an API key under API keys</span>
+                    ) : null}
                   </p>
                   <p
                     className={
@@ -165,6 +177,8 @@ export function ProviderAuthPanel() {
         for Anthropic&apos;s documented metered extra usage, Kady records tokens
         but does not treat provider-managed subscription usage as project spend.
       </p>
+
+      <CustomModelsCard />
 
       <OAuthLoginDialog
         provider={selected}

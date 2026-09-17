@@ -147,13 +147,16 @@ describe("SkillsPanel", () => {
       .mockResolvedValueOnce(initial)
       .mockResolvedValue(after);
     const updateSpy = vi.spyOn(caps, "updateSkillFromUpstream").mockResolvedValue();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<SkillsPanel />);
     expect(await screen.findByText("Update available")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: /use upstream version of scanpy/i }),
     );
+
+    // Nothing happens until the in-app confirmation is accepted.
+    expect(updateSpy).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole("button", { name: /^replace$/i }));
 
     await waitFor(() => expect(updateSpy).toHaveBeenCalledWith("scanpy", "project"));
     await waitFor(() =>
@@ -313,13 +316,15 @@ describe("SkillsPanel", () => {
     const removeSpy = vi
       .spyOn(caps, "removeSkill")
       .mockResolvedValue({ name: "scanpy", disposition: "archived" });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
     render(<SkillsPanel />);
     await screen.findByText("scanpy");
     await userEvent.click(screen.getByRole("button", { name: /remove scanpy/i }));
 
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/archived/i);
+    // The confirmation spells out that a catalogue skill is archived, not deleted.
+    expect(await screen.findByText(/archived/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^archive$/i }));
+
     await waitFor(() => expect(removeSpy).toHaveBeenCalledWith("scanpy", "project"));
     expect(await screen.findByText(/Archived scanpy/i)).toBeInTheDocument();
   });
@@ -330,11 +335,11 @@ describe("SkillsPanel", () => {
       listing({ enabled: [skill("scanpy", "single cell")] }),
     );
     const removeSpy = vi.spyOn(caps, "removeSkill");
-    vi.spyOn(window, "confirm").mockReturnValue(false);
 
     render(<SkillsPanel />);
     await screen.findByText("scanpy");
     await userEvent.click(screen.getByRole("button", { name: /remove scanpy/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^cancel$/i }));
     expect(removeSpy).not.toHaveBeenCalled();
   });
 
@@ -361,5 +366,21 @@ describe("SkillsPanel", () => {
       expect(checkSpy).toHaveBeenCalledWith("web-design", "project"),
     );
     expect(await screen.findByText(/web-design is up to date/i)).toBeInTheDocument();
+  });
+});
+
+describe("SkillsPanel user-invoked only", () => {
+  it("badges the flag and toggles it through the API", async () => {
+    stubProjects();
+    vi.spyOn(caps, "getAllSkills").mockResolvedValue(
+      listing({ enabled: [skill("lab-protocol", "Wet lab", { disableModelInvocation: true }), skill("qc", "QC")], sync: syncStatus() }),
+    );
+    const toggle = vi.spyOn(caps, "setSkillModelInvocation").mockResolvedValue({ disableModelInvocation: false });
+    render(<SkillsPanel />);
+    expect(await screen.findByText("User-invoked only")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Let the model invoke lab-protocol" }));
+    await waitFor(() => expect(toggle).toHaveBeenCalledWith("lab-protocol", true, "project"));
+    await userEvent.click(screen.getByRole("button", { name: "Make qc user-invoked only" }));
+    await waitFor(() => expect(toggle).toHaveBeenCalledWith("qc", false, "project"));
   });
 });

@@ -27,6 +27,10 @@ import { registerProjectRoutes } from "./api/projects.ts";
 import { registerSessionRoutes } from "./api/sessions.ts";
 import { registerSandboxRoutes } from "./api/sandbox.ts";
 import { registerSkillRoutes } from "./api/skills.ts";
+import { registerPromptRoutes } from "./api/prompts.ts";
+import { registerAutomationRoutes } from "./api/automation.ts";
+import { setScheduleActivityListener } from "./agent/subagent-bridge.ts";
+import { bootSchedulerSessions, configureScheduler, onScheduleActivity, recordManualScheduleAction, startSchedulerTick } from "./agent/scheduler.ts";
 import { registerSystemRoutes } from "./api/system.ts";
 import { registerMcpRoutes } from "./api/mcp.ts";
 import { registerCredentialRoutes } from "./api/credentials.ts";
@@ -35,6 +39,14 @@ import { registerSpeechRoutes } from "./api/speech.ts";
 import { registerModalRoutes } from "./api/modal.ts";
 import { registerModelProviderRoutes } from "./api/model-providers.ts";
 import { registerInboundMcpRoutes } from "./mcp-server/http.ts";
+import { setSessionObserver } from "./agent/session-registry.ts";
+import { attachSessionObserver } from "./agent/session-observer.ts";
+import { registerNextExperimentRoutes } from "./api/next-experiments.ts";
+import { registerEvidencePackageRoutes } from "./api/evidence-packages.ts";
+import { registerNotebookMemoryRoutes } from "./api/notebook-memory.ts";
+import { registerNotebookResearchRoutes } from "./api/notebook-research.ts";
+import { registerNotebookRobustnessRoutes } from "./api/notebook-robustness.ts";
+import { notebookRobustness } from "./agent/notebook-robustness.ts";
 import { startAutomaticSkillSync } from "./agent/skills-sync.ts";
 import { modalJobManager } from "./modal/manager.ts";
 import { syncHelperVenv } from "./helpers-env.ts";
@@ -85,7 +97,7 @@ export async function buildApp() {
       cb(null, isCorsOriginAllowed(origin));
     },
     credentials: true,
-    exposedHeaders: ["ETag", "X-Project-Fallback"],
+    exposedHeaders: ["ETag", "X-Project-Fallback", "X-Content-SHA256"],
   });
 
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
@@ -146,9 +158,23 @@ export async function buildApp() {
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/config", async () => ({ modal_configured: modalConfigured() }));
 
+  // Adopt turns that Pi extensions start on an idle session (supervisor
+  // requests, scheduled-run notices) as streamed, ledgered Kady runs.
+  setSessionObserver((ctx) => attachSessionObserver({ ...ctx, log: app.log }));
+
   await registerProjectRoutes(app);
   await registerSessionRoutes(app);
+  await registerNotebookResearchRoutes(app);
+  await registerNotebookMemoryRoutes(app);
+  await registerEvidencePackageRoutes(app);
+  await registerNextExperimentRoutes(app);
+  await registerNotebookRobustnessRoutes(app);
+  // NOTE (fork): sandbox routes are NOT registered bare here — they live in the
+  // rate-limited scope above. Upstream's unscoped registerSandboxRoutes(app) would
+  // double-register every sandbox route; do not re-add it.
   await registerSkillRoutes(app);
+  await registerPromptRoutes(app);
+  await registerAutomationRoutes(app);
   await registerSystemRoutes(app);
   await registerMcpRoutes(app);
   await registerCredentialRoutes(app);
@@ -162,6 +188,7 @@ export async function buildApp() {
   // active jobs in the background and immediately reconciles any terminal job
   // whose accounting write was interrupted by a prior shutdown.
   await modalJobManager.recoverAllProjects();
+  await notebookRobustness.recoverAll();
 
   return app;
 }
@@ -182,12 +209,32 @@ const isMain = (() => {
   }
 })();
 if (isMain) {
+  // A rejected promise nobody awaited must not take every chat tab down with
+  // it (Node's default is to exit). Specific sites still handle their own
+  // failures; this is the backstop, and it logs rather than exits.
+  process.on("unhandledRejection", (reason) => {
+    console.error("[server] unhandled promise rejection", reason);
+  });
   // Before anything makes an outbound request: Node's fetch ignores
   // HTTP_PROXY/HTTPS_PROXY on its own, so a proxied network would otherwise
   // only be used by the child `pi` processes that run subagents.
   const proxy = configureHttpProxy();
   syncHelperVenv(); // best-effort; previews degrade gracefully if it fails
   const app = await buildApp();
+  // Durable pi-subagents schedules fire from a resident session per project;
+  // open those hosts now and keep the budget hold reconciled (not in
+  // buildApp: tests must not open Pi sessions).
+  configureScheduler({ log: app.log });
+  setScheduleActivityListener((projectId, action, scheduleId) => {
+    if (scheduleId && (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete")) {
+      recordManualScheduleAction(projectId, scheduleId, action.slice("schedule.".length) as "pause" | "resume" | "delete");
+    }
+    onScheduleActivity(projectId);
+  });
+  void bootSchedulerSessions().then((started) => {
+    if (started.length) app.log.info({ projects: started }, "scheduler sessions opened");
+  });
+  startSchedulerTick();
   if (proxy.enabled) {
     app.log.info(
       { httpProxy: proxy.httpProxy, httpsProxy: proxy.httpsProxy, noProxy: proxy.noProxy },

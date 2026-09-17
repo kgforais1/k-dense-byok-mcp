@@ -25,6 +25,7 @@ import {
   removeSkill,
   saveSkillSource,
   setSkillEnabled,
+  setSkillModelInvocation,
   syncSkills,
   updateSkillFromUpstream,
   type PreviewedSkill,
@@ -41,6 +42,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   Loader2Icon,
   PencilIcon,
@@ -48,6 +50,7 @@ import {
   RefreshCwIcon,
   Trash2Icon,
   DownloadIcon,
+  SlashIcon,
 } from "lucide-react";
 
 interface Row extends SkillInfo {
@@ -64,6 +67,7 @@ type Pane = "none" | "install" | "create" | "edit";
 
 export function SkillsPanel() {
   const { activeProject, activeProjectId } = useProjects();
+  const { confirm, dialog: confirmDialog } = useConfirm();
   const [scope, setScope] = useState<SkillScope>("project");
   const [rows, setRows] = useState<Row[]>([]);
   const [problems, setProblems] = useState<SkillProblem[]>([]);
@@ -278,9 +282,15 @@ export function SkillsPanel() {
       const origin = row.origin ?? "catalogue";
       const consequence =
         origin === "catalogue"
-          ? `${row.name} will be archived and kept out of future catalogue syncs.`
-          : `${row.name} will be deleted.`;
-      if (!window.confirm(`${consequence}\n\nContinue?`)) return;
+          ? `"${row.name}" will be archived and kept out of future catalogue syncs.`
+          : `"${row.name}" will be deleted.`;
+      const ok = await confirm({
+        title: origin === "catalogue" ? "Archive skill?" : "Delete skill?",
+        description: consequence,
+        confirmLabel: origin === "catalogue" ? "Archive" : "Delete",
+        destructive: true,
+      });
+      if (!ok) return;
       await run(`remove:${row.name}`, async () => {
         const result = await removeSkill(row.name, scope);
         return result.disposition === "archived"
@@ -288,7 +298,7 @@ export function SkillsPanel() {
           : `Deleted ${result.name}.`;
       });
     },
-    [run, scope],
+    [confirm, run, scope],
   );
 
   const doCheckUpdate = useCallback(
@@ -307,19 +317,19 @@ export function SkillsPanel() {
     async (row: Row) => {
       const origin = row.origin ?? "catalogue";
       const where = origin === "catalogue" ? "the current upstream version" : row.source;
-      if (
-        !window.confirm(
-          `Replace the local ${row.name} skill with ${where}? Local edits to this skill will be lost.`,
-        )
-      ) {
-        return;
-      }
+      const ok = await confirm({
+        title: `Replace "${row.name}"?`,
+        description: `This replaces the local skill with ${where}. Local edits to this skill will be lost.`,
+        confirmLabel: "Replace",
+        destructive: true,
+      });
+      if (!ok) return;
       await run(`update:${row.name}`, async () => {
         await updateSkillFromUpstream(row.name, scope);
         return `Updated ${row.name}.`;
       });
     },
-    [run, scope],
+    [confirm, run, scope],
   );
 
   const filtered = useMemo(
@@ -336,6 +346,7 @@ export function SkillsPanel() {
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto">
+      {confirmDialog}
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-medium">Skills</h3>
@@ -771,6 +782,11 @@ export function SkillsPanel() {
                           : "Also installed for all projects"}
                       </Badge>
                     )}
+                    {r.disableModelInvocation && (
+                      <Badge variant="outline" className="h-5 text-[10px]" title="Hidden from the model's skills index; runs only via /skill:name">
+                        User-invoked only
+                      </Badge>
+                    )}
                   </div>
                   <div className="truncate text-[11px] text-muted-foreground">
                     {r.description}
@@ -840,6 +856,33 @@ export function SkillsPanel() {
                   ) : (
                     <Trash2Icon className="size-3.5" />
                   )}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={r.disableModelInvocation ? "secondary" : "ghost"}
+                  className="h-7 w-7 p-0"
+                  aria-label={
+                    r.disableModelInvocation
+                      ? `Let the model invoke ${r.name}`
+                      : `Make ${r.name} user-invoked only`
+                  }
+                  title={
+                    r.disableModelInvocation
+                      ? "User-invoked only (/skill:name). Click to let the model activate it."
+                      : "Click to hide from the model; run it yourself with /skill:name."
+                  }
+                  disabled={rowBusy}
+                  onClick={() =>
+                    void run(`invoke:${r.name}`, async () => {
+                      const next = await setSkillModelInvocation(r.name, Boolean(r.disableModelInvocation), scope);
+                      return next.disableModelInvocation
+                        ? `${r.name} now runs only when you type /skill:${r.name}.`
+                        : `${r.name} can be activated by the model again.`;
+                    })
+                  }
+                >
+                  <SlashIcon className="size-3.5" />
                 </Button>
                 <Switch
                   aria-label={`Toggle ${r.name}`}

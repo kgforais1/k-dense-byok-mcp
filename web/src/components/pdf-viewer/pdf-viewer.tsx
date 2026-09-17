@@ -46,6 +46,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { AnnotationLayer } from "./annotation-layer";
+import { usePdfPageRendering } from "./use-pdf-page-rendering";
 import { AnnotationSidebar } from "./annotation-sidebar";
 import { NotePopover } from "./note-popover";
 
@@ -764,6 +765,7 @@ export function PdfViewer({
       <div className="flex flex-1 min-h-0">
         <div
           ref={containerRef}
+          data-pdf-scroll
           className={cn(
             "flex-1 overflow-auto bg-muted/30",
             mode === "note" && "cursor-crosshair",
@@ -998,119 +1000,9 @@ function PageView({
   onUpdate: (id: string, patch: Partial<Annotation>) => void;
   onClickPage: (ev: React.MouseEvent<HTMLDivElement>) => void;
 }) {
-  const pageRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const textLayerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
-  const [viewport, setViewport] = useState<PdfjsViewport | null>(null);
-
-  const [visible, setVisible] = useState(pageNumber <= 2);
-  useEffect(() => {
-    const el = pageRef.current;
-    if (!el || visible) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setVisible(true);
-      },
-      { rootMargin: "150% 0%" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [visible]);
-
-  useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    let renderTask: { cancel: () => void } | null = null;
-
-    (async () => {
-      let page: PdfPage;
-      try {
-        page = await doc.getPage(pageNumber);
-      } catch {
-        // Doc was likely destroyed mid-reload ("Transport destroyed") —
-        // bail silently, same as the cancellation path below.
-        return;
-      }
-      if (cancelled) return;
-
-      const scale = BASE_SCALE * zoom;
-      const rawViewport = page.getViewport({ scale });
-      const viewport = rawViewport as unknown as PdfjsViewport;
-      if (pageRef.current) {
-        stashViewport(pageRef.current, viewport);
-      }
-      setViewport(viewport);
-
-      const canvas = canvasRef.current;
-      const textLayer = textLayerRef.current;
-      if (!canvas || !textLayer) return;
-
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      setSize({ w: viewport.width, h: viewport.height });
-
-      const ctx = canvas.getContext("2d")!;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      const rp = page.render({
-        canvasContext: ctx,
-        viewport,
-        canvas,
-      } as unknown as Parameters<PdfPage["render"]>[0]);
-      renderTask = rp as unknown as { cancel: () => void };
-      try {
-        await rp.promise;
-      } catch {
-        // cancelled
-        return;
-      }
-
-      // Build the text layer. `TextLayer` comes from the top-level module. The
-      // classic `renderTextLayer` fallback that used to sit here was removed in
-      // pdfjs 6, so it was dead code that could never run; `pdfjs-integration
-      // .test.ts` asserts `TextLayer` is still exported, since this cast would
-      // otherwise hide its removal behind pages with no selectable text.
-      textLayer.innerHTML = "";
-      textLayer.style.width = `${viewport.width}px`;
-      textLayer.style.height = `${viewport.height}px`;
-      try {
-        const pdfjs = await loadPdfjs();
-        const textContent = await page.getTextContent();
-        const TextLayerCtor = (pdfjs as unknown as {
-          TextLayer?: new (opts: {
-            textContentSource: unknown;
-            container: HTMLElement;
-            viewport: unknown;
-          }) => { render: () => Promise<void> };
-        }).TextLayer;
-        if (TextLayerCtor) {
-          const layer = new TextLayerCtor({
-            textContentSource: textContent,
-            container: textLayer,
-            viewport,
-          });
-          await layer.render();
-        }
-      } catch {
-        // text layer is best-effort
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (renderTask) {
-        try {
-          renderTask.cancel();
-        } catch {
-          // ignore
-        }
-      }
-    };
-  }, [doc, pageNumber, zoom, visible]);
+const { pageRef, canvasRef, textLayerRef, viewport, size } = usePdfPageRendering(
+    doc, pageNumber, BASE_SCALE * zoom, loadPdfjs,
+  );
 
   return (
     <div
@@ -1146,7 +1038,7 @@ function PageView({
           height={size.h}
           annotations={annotations}
           activeAnnotationId={activeAnnotationId}
-          viewport={viewport}
+          viewport={viewport as unknown as PdfjsViewport | null}
           colorForAuthor={colorForAuthor}
           onRemove={onRemove}
           onUpdate={onUpdate}
@@ -1180,12 +1072,6 @@ function readViewport(el: HTMLElement): PdfjsViewport | null {
   return stashed ?? null;
 }
 
-// Re-export helper used by annotation-layer to pin the viewport.
-export function stashViewport(
-  el: HTMLElement,
-  viewport: PdfjsViewport,
-): void {
-  (el as WithViewport).__pdfViewport = viewport;
-}
-
+// The hook (use-pdf-page-rendering.ts) writes `__pdfViewport` on the page node;
+// annotation hit-testing reads it back via readViewport above.
 export { type Author };

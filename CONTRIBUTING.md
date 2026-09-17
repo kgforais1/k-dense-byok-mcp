@@ -186,6 +186,29 @@ in the same PR (counts merged, conflicts resolved, verification evidence).
 The pre-push hook already blocks pushes to any remote that is not the fork,
 so a mistaken `git push upstream` fails locally before it can do harm.
 
+### Fork-overlay rule: stay additive
+
+Every in-place edit to an upstream-owned file is a future merge conflict.
+Prefer **additive** fork changes so the next `git merge upstream/main` stays
+mechanical:
+
+- New fork behavior goes in **new files** (new modules, routes, tools, docs
+  pages) wired in at narrow seams, not in rewrites of upstream files.
+- Configuration over code: flags, options fields, and catalogue entries beat
+  forks of shared logic.
+- When an in-place edit is unavoidable, isolate it behind a seam (a named
+  function, an option like `OpenSessionOptions.includeInterview`, a
+  `// FORK:`-marked block with a one-line why) so the next merge can see
+  exactly what is ours. The v0.10.0 merge is the reference example:
+  `session-registry.ts` kept one merged options interface instead of two
+  parallel signatures, and `index.ts` kept the fork's rate-limited sandbox
+  scope with a `NOTE (fork)` where upstream's bare registration would have
+  double-registered the routes.
+- Never re-apply a fork change by reverting an upstream file to the fork's
+  old text — port the behavior forward onto the upstream structure instead
+  (e.g. slash-command expansion was ported into the fork's `beginRun` path
+  rather than restoring the pre-merge route body).
+
 ## Handoff & archive duty (in the implementing PR)
 
 - If work will continue after the current session or another agent is asked to

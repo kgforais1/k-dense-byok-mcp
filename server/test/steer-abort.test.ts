@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
+import path from "node:path";
 
 const fakeSessions = new Map<string, FakeSession>();
 
@@ -66,6 +67,7 @@ class FakeSession {
     await this.promptWait;
     this.emit({ type: "agent_end" });
     this.isStreaming = false;
+    this.emit({ type: "agent_settled" });
   }
   getContextUsage() {
     return { tokens: 12, contextWindow: 1_000, percent: 1.2 };
@@ -93,12 +95,38 @@ class FakeSession {
   getSteeringMessages(): readonly string[] {
     return this.steered;
   }
+  followUps: { text: string; images?: unknown }[] = [];
+  onFollowUp: (() => void) | null = null;
+  private followUpWait: Promise<void> | null = null;
+  private releaseFollowUpWait: (() => void) | null = null;
+  /** Park the follow-up inside session.followUp so concurrent requests overlap. */
+  holdFollowUp(): void {
+    this.followUpWait = new Promise<void>((resolve) => {
+      this.releaseFollowUpWait = resolve;
+    });
+  }
+  releaseFollowUp(): void {
+    this.releaseFollowUpWait?.();
+    this.releaseFollowUpWait = null;
+    this.followUpWait = null;
+  }
+  async followUp(text: string, images?: unknown): Promise<void> {
+    this.calls.push("followUp");
+    this.followUps.push({ text, images });
+    this.onFollowUp?.();
+    await this.followUpWait;
+  }
+  getFollowUpMessages(): readonly string[] {
+    return this.followUps.map((f) => f.text);
+  }
   clearQueue(): { steering: string[]; followUp: string[] } {
     this.calls.push("clearQueue");
     this.clearQueueCalls += 1;
     const steering = [...this.steered];
     this.steered = [];
-    return { steering, followUp: [] };
+    const followUp = this.followUps.map((f) => f.text);
+    this.followUps = [];
+    return { steering, followUp };
   }
   async abort(): Promise<void> {
     this.calls.push("abort");
@@ -127,6 +155,7 @@ vi.mock("../src/agent/session-registry.ts", () => ({
   disposeSession: vi.fn(),
   pinSession: vi.fn(),
   unpinSession: vi.fn(),
+  setSessionObserver: vi.fn(),
 }));
 
 import { buildApp } from "../src/index.ts";
@@ -134,6 +163,8 @@ import { PROJECTS_ROOT } from "../src/config.ts";
 import { createProject } from "../src/projects.ts";
 import { recordRun } from "../src/cost/ledger.ts";
 import { runBroker } from "../src/agent/run-broker.ts";
+import { attachSessionObserver } from "../src/agent/session-observer.ts";
+import { resolvePaths } from "../src/projects.ts";
 
 const app = await buildApp();
 
@@ -477,5 +508,288 @@ describe("persistent run routes", () => {
       expect(runBroker.state("default", "s1").status).toBe("complete");
     });
     expect(session.aborted).toBe(false);
+  });
+});
+
+describe("system-initiated runs vs POST /sessions/:id/run", () => {
+  it("409s while an observer-owned system run is live, then admits a user run", async () => {
+    const s = new FakeSession();
+    s.isStreaming = false;
+    fakeSessions.set("s1", s);
+    const detach = attachSessionObserver({
+      projectId: "default",
+      paths: resolvePaths("default"),
+      session: s as never,
+      log: { warn: () => {}, error: () => {} },
+    });
+    try {
+      s.isStreaming = true;
+      s.emit({ type: "agent_start" });
+      expect(runBroker.state("default", "s1")).toMatchObject({
+        status: "running",
+        run: { origin: "system", kind: "turn" },
+      });
+      const systemRunId = runBroker.get("default", "s1")!.runId;
+      const blocked = await app.inject({
+        method: "POST",
+        url: "/sessions/s1/run",
+        headers: { "x-project-id": "default", "content-type": "application/json" },
+        payload: { message: "hi" },
+      });
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json()).toMatchObject({
+        reason: "run_already_active",
+        runId: systemRunId,
+      });
+
+      s.emit({ type: "agent_end" });
+      s.isStreaming = false;
+      s.emit({ type: "agent_settled" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(runBroker.state("default", "s1").status).toBe("complete");
+
+      const state = await app.inject({
+        method: "GET",
+        url: "/sessions/s1/run/state?frames=0",
+        headers: { "x-project-id": "default" },
+      });
+      expect(state.json()).toMatchObject({ status: "complete", run: { origin: "system", frames: [] } });
+
+      const started = await app.inject({
+        method: "POST",
+        url: "/sessions/s1/run",
+        headers: { "x-project-id": "default", "content-type": "application/json" },
+        payload: { message: "hi" },
+      });
+      expect(started.statusCode).toBe(200);
+      expect(s.promptCalls).toHaveLength(1);
+    } finally {
+      detach();
+    }
+  });
+});
+
+function followUp(id: string, body: unknown, projectId = "default") {
+  return app.inject({
+    method: "POST",
+    url: `/sessions/${id}/follow-up`,
+    headers: { "x-project-id": projectId, "content-type": "application/json" },
+    payload: body as Record<string, unknown>,
+  });
+}
+
+describe("POST /sessions/:id/follow-up", () => {
+  it("queues a follow-up with images into the live run and reports the pending list", async () => {
+    const s = new FakeSession();
+    fakeSessions.set("s1", s);
+    const image = { data: "aW1hZ2U=", mimeType: "image/png" };
+    const res = await followUp("s1", { message: "then plot it", images: [image] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, pending: ["then plot it"] });
+    expect(s.followUps).toHaveLength(1);
+    expect(s.followUps[0].images).toEqual([{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }]);
+  });
+
+  it("deduplicates a retried follow-up after its response is lost", async () => {
+    const s = new FakeSession();
+    fakeSessions.set("s1", s);
+    const body = { message: "then plot it", requestId: "client-message-1" };
+    expect((await followUp("s1", body)).statusCode).toBe(200);
+    s.isStreaming = false;
+    const retry = await followUp("s1", body);
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json()).toMatchObject({ ok: true, duplicate: true });
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("admits concurrent retries with the same requestId exactly once", async () => {
+    const s = new FakeSession();
+    s.holdFollowUp();
+    fakeSessions.set("s1", s);
+    const body = { message: "then plot it", requestId: "concurrent-follow-up-once" };
+    const first = followUp("s1", body);
+    // The leader is parked inside session.followUp; the retry must attach as
+    // a waiter rather than enqueueing a second copy.
+    await vi.waitFor(() => {
+      expect(s.followUps).toHaveLength(1);
+    });
+    const second = followUp("s1", body);
+    // Let the retry travel from inject dispatch to the reservation while the
+    // leader stays parked; then let the leader settle for both.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    s.releaseFollowUp();
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.statusCode).toBe(200);
+    expect(r2.statusCode).toBe(200);
+    const duplicates = [r1.json(), r2.json()].filter(
+      (json) => (json as { duplicate?: boolean }).duplicate === true,
+    );
+    expect(duplicates).toHaveLength(1);
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("mirrors a post-delivery rejection to a concurrent waiter instead of double-queueing", async () => {
+    const s = new FakeSession();
+    s.holdFollowUp();
+    s.onFollowUp = () => {
+      s.isStreaming = false;
+    };
+    fakeSessions.set("s1", s);
+    const body = { message: "late", requestId: "concurrent-follow-up-reject" };
+    const first = followUp("s1", body);
+    await vi.waitFor(() => {
+      expect(s.followUps).toHaveLength(1);
+    });
+    const second = followUp("s1", body);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    s.releaseFollowUp();
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.statusCode).toBe(409);
+    expect(r2.statusCode).toBe(409);
+    expect(r1.json()).toMatchObject({ reason: "not_streaming", restored: ["late"] });
+    expect(r2.json()).toMatchObject({ reason: "not_streaming" });
+    // The run-ended path pulls the message back; nothing stays queued.
+    expect(s.followUps).toHaveLength(0);
+  });
+
+  it("releases the reservation when no run is live so a later retry can be admitted", async () => {
+    const s = new FakeSession();
+    s.isStreaming = false;
+    fakeSessions.set("s1", s);
+    const body = { message: "later", requestId: "released-after-not-streaming" };
+    const rejected = await followUp("s1", body);
+    expect(rejected.statusCode).toBe(409);
+    s.isStreaming = true;
+    const retried = await followUp("s1", body);
+    expect(retried.statusCode).toBe(200);
+    // Exact match: a stale duplicate would carry `duplicate: true` and no queue write.
+    expect(retried.json()).toEqual({ ok: true, pending: ["later"] });
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("releases the reservation when the run ends during delivery so a later retry can be admitted", async () => {
+    const s = new FakeSession();
+    s.onFollowUp = () => {
+      s.isStreaming = false;
+    };
+    fakeSessions.set("s1", s);
+    const body = { message: "late", requestId: "released-after-delivery-race" };
+    const rejected = await followUp("s1", body);
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.json()).toMatchObject({ reason: "not_streaming", restored: ["late"] });
+    s.isStreaming = true;
+    s.onFollowUp = null;
+    const retried = await followUp("s1", body);
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json()).toEqual({ ok: true, pending: ["late"] });
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("409s with reason not_streaming when no run is live, and 400s on bad images", async () => {
+    const s = new FakeSession();
+    s.isStreaming = false;
+    fakeSessions.set("s1", s);
+    const idle = await followUp("s1", { message: "later" });
+    expect(idle.statusCode).toBe(409);
+    expect(idle.json()).toMatchObject({ reason: "not_streaming" });
+    s.isStreaming = true;
+    const bad = await followUp("s1", { message: "x", images: [{ data: "zz", mimeType: "text/plain" }] });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("pulls the follow-up back when the run ends before delivery", async () => {
+    const s = new FakeSession();
+    s.onFollowUp = () => {
+      s.isStreaming = false;
+    };
+    fakeSessions.set("s1", s);
+    const res = await followUp("s1", { message: "late" });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ reason: "not_streaming", restored: ["late"] });
+    expect(s.clearQueueCalls).toBe(1);
+  });
+
+  it("403s with reason budget when the project cap is reached", async () => {
+    const p = createProject({ name: "Capped2", spendLimitUsd: 0.01 });
+    const zero = { costUsd: 0, input: 0, output: 0, cacheRead: 0, total: 0 };
+    recordRun({ sessionId: "s1", projectId: p.id, model: "m", before: zero, after: { costUsd: 0.02, input: 10, output: 10, cacheRead: 0, total: 20 } });
+    fakeSessions.set("s1", new FakeSession());
+    const res = await followUp("s1", { message: "hi" }, p.id);
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ reason: "budget" });
+  });
+
+  it("abort returns queued follow-ups alongside steers", async () => {
+    const s = new FakeSession();
+    await s.steer("steer me");
+    await s.followUp("then this");
+    fakeSessions.set("s1", s);
+    const res = await app.inject({ method: "POST", url: "/sessions/s1/abort", headers: { "x-project-id": "default" } });
+    expect(res.json()).toEqual({ ok: true, restored: ["steer me", "then this"] });
+  });
+
+  it("does not acknowledge a stale receipt after abort discards its follow-up", async () => {
+    const s = new FakeSession();
+    fakeSessions.set("s1", s);
+    const body = { message: "do not lose this", requestId: "aborted-follow-up" };
+    expect((await followUp("s1", body)).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/sessions/s1/abort", headers: { "x-project-id": "default" } })).statusCode).toBe(200);
+    s.isStreaming = false;
+
+    const retry = await followUp("s1", body);
+    expect(retry.statusCode).toBe(409);
+    expect(retry.json()).toMatchObject({ reason: "not_streaming" });
+  });
+});
+
+describe("slash-command expansion on the way into Pi", () => {
+  it("expands /template on /run and disables Pi's own expansion; unknown commands pass through", async () => {
+    const paths = resolvePaths("default");
+    fs.mkdirSync(path.join(paths.sandbox, ".pi", "prompts"), { recursive: true });
+    fs.writeFileSync(path.join(paths.sandbox, ".pi", "prompts", "qc.md"), "---\ndescription: QC\n---\nRun QC on $1.\n");
+    const s = new FakeSession();
+    s.isStreaming = false;
+    fakeSessions.set("s1", s);
+    let res = await app.inject({
+      method: "POST",
+      url: "/sessions/s1/run",
+      headers: { "x-project-id": "default", "content-type": "application/json" },
+      payload: { message: "/qc user_data/a.csv\n/ref.md" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(s.promptCalls[0]).toEqual({
+      text: '<prompt-template name="qc">\nRun QC on user_data/a.csv.\n</prompt-template>\n\n/ref.md',
+      options: { expandPromptTemplates: false },
+    });
+    expect(runBroker.state("default", "s1").run?.prompt).toContain('<prompt-template name="qc">');
+
+    s.isStreaming = false;
+    res = await app.inject({
+      method: "POST",
+      url: "/sessions/s1/run",
+      headers: { "x-project-id": "default", "content-type": "application/json" },
+      payload: { message: "/nothing-here please" },
+    });
+    expect(res.statusCode).toBe(200);
+    // Unmatched: left for Pi to dispatch as an extension command (e.g.
+    // pi-subagents' `/subagents-watchdog status`), so Pi's expansion stays on.
+    expect(s.promptCalls[1]).toEqual({ text: "/nothing-here please", options: { expandPromptTemplates: true } });
+
+    // Plain text never asks Pi to expand.
+    s.isStreaming = false;
+    res = await app.inject({
+      method: "POST",
+      url: "/sessions/s1/run",
+      headers: { "x-project-id": "default", "content-type": "application/json" },
+      payload: { message: "hello there" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(s.promptCalls[2]).toEqual({ text: "hello there", options: { expandPromptTemplates: false } });
+
+    // Steering expands too.
+    s.isStreaming = true;
+    res = await steer("s1", { message: "/qc b.csv" });
+    expect(res.statusCode).toBe(200);
+    expect(s.steered.at(-1)).toBe('<prompt-template name="qc">\nRun QC on b.csv.\n</prompt-template>');
   });
 });

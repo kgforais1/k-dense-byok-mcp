@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { currentProjectId } from "../scope.ts";
 import { modalConfigured } from "../config.ts";
@@ -10,10 +11,9 @@ import { modalJobManager } from "../modal/manager.ts";
 import { ModalJobError, type ModalJobOwner, type ModalJobRequest } from "../modal/types.ts";
 
 function requestFromBody(body: Record<string, unknown>): ModalJobRequest {
-  const image =
-    body.image && typeof body.image === "object" && !Array.isArray(body.image)
-      ? (body.image as ModalJobRequest["image"])
-      : undefined;
+  // Passed through unchanged: `normalizeModalJobRequest` validates the shape
+  // and rejects a malformed image with 400 instead of silently dropping it.
+  const image = body.image as ModalJobRequest["image"];
   return {
     command: String(body.command ?? ""),
     instance: body.instance === undefined ? undefined : String(body.instance),
@@ -46,16 +46,25 @@ function ownerFromBody(body: Record<string, unknown>): ModalJobOwner {
     body.subagentRunId === undefined && body.subagent_run_id === undefined
       ? undefined
       : String(body.subagentRunId ?? body.subagent_run_id);
+  const rawSessionFile = body.subagentSessionFile ?? body.subagent_session_file;
+  // Normalised so it compares equal to the `results[].sessionFile` the parent
+  // receives from pi-subagents (modal-bridge.ts resolves that side too).
+  const subagentSessionFile =
+    typeof rawSessionFile === "string" && rawSessionFile.trim()
+      ? path.resolve(rawSessionFile.trim())
+      : undefined;
+  const fromSubagent = Boolean(subagentRunId || subagentSessionFile);
   const sessionId =
     body.sessionId === undefined && body.session_id === undefined
-      ? subagentRunId
-        ? `subagent-${subagentRunId}`
+      ? fromSubagent
+        ? `subagent-${subagentRunId ?? path.basename(subagentSessionFile ?? "", ".jsonl")}`
         : "modal-api"
       : String(body.sessionId ?? body.session_id);
   return {
     sessionId,
-    submittedBy: subagentRunId ? "subagent" : "api",
+    submittedBy: fromSubagent ? "subagent" : "api",
     ...(subagentRunId ? { subagentRunId } : {}),
+    ...(subagentSessionFile ? { subagentSessionFile } : {}),
     ...(body.runId || body.run_id ? { runId: String(body.runId ?? body.run_id) } : {}),
   };
 }
@@ -98,15 +107,18 @@ export async function registerModalRoutes(app: FastifyInstance): Promise<void> {
   }>("/modal/jobs", async (req) => {
     const projectId = currentProjectId();
     const limit = Math.min(Math.max(Number(req.query.limit ?? 100), 1), 500);
+    // The Compute tab polls this every 1.5 s while a job is active; read every
+    // record once and derive both views from the same array.
+    const all = modalJobManager.store.list(projectId);
     return {
       jobs: modalJobManager
-        .list(projectId, {
+        .filterJobs(all, {
           state: req.query.status ?? req.query.state,
           groupId: req.query.groupId,
           sessionId: req.query.sessionId,
         })
         .slice(0, Number.isFinite(limit) ? limit : 100),
-      groups: modalJobManager.groups(projectId),
+      groups: modalJobManager.groupsFrom(all),
     };
   });
 

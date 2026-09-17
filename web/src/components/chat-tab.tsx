@@ -52,6 +52,11 @@ import {
   ToolActivityList,
 } from "@/components/tool-activity";
 import { InterviewCard } from "@/components/interview-form";
+import { SystemCard } from "@/components/system-card";
+import { PermissionCard } from "@/components/permission-card";
+import { CommandBlockChip } from "@/components/command-block-chip";
+import { parseCommandBlock, slashMenuItems, type SlashMenuItem } from "@/lib/command-blocks";
+import { usePromptTemplates } from "@/lib/use-prompts";
 import { KadyFileIcon } from "@/components/file-icon";
 import { ScientificResultCard } from "@/components/scientific-result-card";
 import { hasDirectoryEntries, traverseDroppedEntries } from "@/lib/directory-upload";
@@ -73,6 +78,12 @@ import {
 import type { NotebookEntry } from "@/lib/notebook";
 import { routeSubmit, steerNotStreamingFallback, type SendIntent } from "@/lib/chat-routing";
 import {
+  moveQueuedMessage,
+  removeQueuedMessage,
+  updateQueuedMessageText,
+  type QueueDirection,
+} from "@/lib/message-queue";
+import {
   type ChatWorkspaceState,
   type WorkspaceQueuedMessage,
 } from "@/lib/workspace-persistence";
@@ -89,11 +100,14 @@ import {
 } from "@/components/ai-elements/speech-input";
 import {
   CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CopyIcon,
   DatabaseIcon,
   ImageIcon,
   ListOrderedIcon,
   PaperclipIcon,
+  PencilIcon,
   SparklesIcon,
   XIcon,
   ZapIcon,
@@ -102,6 +116,7 @@ import { cn, formatUsd } from "@/lib/utils";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -353,21 +368,99 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
   );
 }
 
+/** Inline editor for one queued message. Keyed by item id so state resets per item. */
+function QueuedMessageEditor({
+  initialText,
+  onSave,
+  onCancel,
+}: {
+  initialText: string;
+  onSave: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(initialText);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  const trimmed = draft.trim();
+  const canSave = trimmed.length > 0;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <textarea
+        ref={ref}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          // Keep composer shortcuts (Enter to send, ⌥⏎ to queue) out of here.
+          e.stopPropagation();
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (canSave) onSave(trimmed);
+          }
+        }}
+        rows={Math.min(8, Math.max(2, draft.split("\n").length))}
+        className="w-full resize-y rounded-md border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        aria-label="Edit queued message"
+      />
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onSave(trimmed)}
+          disabled={!canSave}
+          className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded px-2 py-0.5 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-muted"
+        >
+          Cancel
+        </button>
+        <span className="ml-auto text-[10px] text-muted-foreground">⌘⏎ save · Esc cancel</span>
+      </div>
+    </div>
+  );
+}
+
 function MessageQueueDisplay({
   queue,
   steering,
+  followUp = [],
   onRemove,
+  onMove,
+  onEdit,
+  editingId,
+  sendingId,
+  onEditingChange,
   paused = false,
   onResume,
 }: {
   queue: QueuedMessage[];
   steering: string[];
+  /** Pi follow-ups: delivered inside the live run once the agent is otherwise done. */
+  followUp?: string[];
   onRemove: (id: string) => void;
+  onMove: (id: string, direction: QueueDirection) => void;
+  onEdit: (id: string, text: string) => void;
+  /** Item currently open in the inline editor; auto-send holds while set. */
+  editingId: string | null;
+  /** Item awaiting server admission; its controls stay locked. */
+  sendingId?: string | null;
+  onEditingChange: (id: string | null) => void;
   /** True after Stop, while queued messages are held back. */
   paused?: boolean;
   onResume?: () => void;
 }) {
-  if (queue.length === 0 && steering.length === 0) return null;
+  if (queue.length === 0 && steering.length === 0 && followUp.length === 0) return null;
 
   return (
     <div className="absolute bottom-full left-0 right-0 z-10 mb-2">
@@ -395,12 +488,35 @@ function MessageQueueDisplay({
             </div>
           </>
         )}
+        {followUp.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 border-b px-3 py-1.5">
+              <ListOrderedIcon className="size-3.5 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                After this turn — Kady continues
+              </span>
+              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
+                {followUp.length}
+              </span>
+            </div>
+            <div className="max-h-32 overflow-y-auto border-b py-1" data-testid="follow-up-queue">
+              {followUp.map((text, i) => (
+                <div key={`${i}-${text}`} className="flex items-center gap-2.5 px-3 py-2 text-xs">
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1 truncate text-foreground">{text}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
         {queue.length > 0 && (
           <>
             <div className="flex items-center gap-2 border-b px-3 py-1.5">
               <ListOrderedIcon className="size-3.5 text-muted-foreground" />
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {paused ? "Paused — stopped" : "Run after"}
+                {editingId ? "Held while editing" : paused ? "Paused — stopped" : "Run after"}
               </span>
               {paused && onResume && (
                 <button
@@ -416,18 +532,33 @@ function MessageQueueDisplay({
               </span>
             </div>
             <div className="max-h-52 overflow-y-auto py-1">
-              {queue.map((item, i) => (
+              {queue.map((item, i) => {
+                const editing = editingId === item.id;
+                const sending = sendingId === item.id;
+                return (
                 <div
                   key={item.id}
-                  className="group flex items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-muted/50"
+                  className="group flex items-start gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-muted/50"
                 >
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
                     {i + 1}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-foreground">
-                      {item.rawText || item.text.split("\n")[0]}
-                    </div>
+                    {editing ? (
+                      <QueuedMessageEditor
+                        key={item.id}
+                        initialText={item.text}
+                        onSave={(text) => {
+                          onEdit(item.id, text);
+                          onEditingChange(null);
+                        }}
+                        onCancel={() => onEditingChange(null)}
+                      />
+                    ) : (
+                      <div className="truncate text-foreground">
+                        {item.rawText || item.text.split("\n")[0]}
+                      </div>
+                    )}
                     <div className="mt-0.5 flex flex-wrap gap-1">
                       <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                         {item.model.label}
@@ -458,16 +589,47 @@ function MessageQueueDisplay({
                       )}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(item.id)}
-                    className="shrink-0 rounded p-1 text-muted-foreground/40 opacity-0 transition-all group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
-                    aria-label={`Remove queued message ${i + 1}`}
-                  >
-                    <XIcon className="size-3" />
-                  </button>
+                  {!editing && !sending && (
+                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <button
+                        type="button"
+                        onClick={() => onMove(item.id, "up")}
+                        disabled={i === 0}
+                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                        aria-label={`Move queued message ${i + 1} up`}
+                      >
+                        <ChevronUpIcon className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onMove(item.id, "down")}
+                        disabled={i === queue.length - 1}
+                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                        aria-label={`Move queued message ${i + 1} down`}
+                      >
+                        <ChevronDownIcon className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onEditingChange(item.id)}
+                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+                        aria-label={`Edit queued message ${i + 1}`}
+                      >
+                        <PencilIcon className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onRemove(item.id)}
+                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`Remove queued message ${i + 1}`}
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
@@ -489,6 +651,7 @@ function ChatInput({
   onClearFiles,
   onSend,
   pendingSteers,
+  pendingFollowUps = [],
   composerRestoreRef,
   inlineError,
   isStreaming,
@@ -499,6 +662,7 @@ function ChatInput({
   selectedModel,
   onModelChange,
   contextUsage,
+  onCompact,
   selectedComputeTarget,
   onComputeTargetChange,
   thinkingLevel,
@@ -514,6 +678,11 @@ function ChatInput({
   onSkillsChange,
   queuedMessages,
   onRemoveFromQueue,
+  onMoveInQueue,
+  onEditQueued,
+  queueEditingId,
+  queueSendingId,
+  onQueueEditingChange,
   queuePaused = false,
   onResumeQueue,
   budgetState = "ok",
@@ -530,6 +699,8 @@ function ChatInput({
   /** Resolves false when the message was rejected; the composer keeps its contents. */
   onSend: (text: string, intent: SendIntent, images: PromptImage[]) => Promise<boolean>;
   pendingSteers: string[];
+  /** Pi follow-ups queued for the live run (⌥↵). */
+  pendingFollowUps?: string[];
   composerRestoreRef: MutableRefObject<((text: string) => void) | null>;
   inlineError: string | null;
   isStreaming: boolean;
@@ -540,6 +711,8 @@ function ChatInput({
   selectedModel: Model;
   onModelChange: (model: Model) => void;
   contextUsage: ContextUsage | null;
+  /** "Compact now" for the context gauge; undefined hides the action. */
+  onCompact?: () => void;
   selectedComputeTarget: ModalInstance | null;
   onComputeTargetChange: (instance: ModalInstance | null) => void;
   thinkingLevel: ThinkingLevel;
@@ -555,6 +728,11 @@ function ChatInput({
   onSkillsChange: (skills: Skill[]) => void;
   queuedMessages: QueuedMessage[];
   onRemoveFromQueue: (id: string) => void;
+  onMoveInQueue: (id: string, direction: QueueDirection) => void;
+  onEditQueued: (id: string, text: string) => void;
+  queueEditingId: string | null;
+  queueSendingId?: string | null;
+  onQueueEditingChange: (id: string | null) => void;
   queuePaused?: boolean;
   onResumeQueue?: () => void;
   budgetState?: "ok" | "warn" | "exceeded";
@@ -590,19 +768,25 @@ function ChatInput({
     };
   }, [composerRestoreRef]);
 
+  // User-invoked-only skills never activate on their own, so they are not
+  // offered as pinned context; the slash menu is their entry point.
+  const modelInvocableSkills = useMemo(
+    () => allSkills.filter((s) => !s.disableModelInvocation),
+    [allSkills],
+  );
   const handleFilesUpload = useCallback(async (files: FileList | File[], paths?: string[]) => {
     const uploaded = await onUploadFiles(files, paths);
     for (const p of uploaded) onAddFile(p);
     // Surface skills that match the uploaded data formats (e.g. .h5ad → anndata)
     // by auto-attaching them; they appear as removable chips, so it's a
     // suggestion the user can undo, not a hidden side-effect.
-    const suggested = suggestSkillsForFiles(uploaded, allSkills);
+    const suggested = suggestSkillsForFiles(uploaded, modelInvocableSkills);
     if (suggested.length > 0) {
       const existing = new Set(selectedSkills.map((s) => s.id));
       const additions = suggested.filter((s) => !existing.has(s.id));
       if (additions.length > 0) onSkillsChange([...selectedSkills, ...additions]);
     }
-  }, [onUploadFiles, onAddFile, allSkills, selectedSkills, onSkillsChange]);
+  }, [onUploadFiles, onAddFile, modelInvocableSkills, selectedSkills, onSkillsChange]);
 
   // Attachment problems (wrong type, too many, too big) and image-only
   // submissions surface here, next to the steer error banner.
@@ -659,6 +843,34 @@ function ChatInput({
   const [mentionAtIdx, setMentionAtIdx] = useState(0);
   const [mentionSelIdx, setMentionSelIdx] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  // `/` at the very start of the composer opens the slash menu: prompt
+  // templates plus user-invoked-only skills (`/skill:<name>`).
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const [slashSelIdx, setSlashSelIdx] = useState(0);
+  const slashListRef = useRef<HTMLDivElement>(null);
+  const { templates: promptTemplates } = usePromptTemplates();
+  const slashItems = useMemo<SlashMenuItem[]>(() => {
+    if (slashQuery === null) return [];
+    return slashMenuItems(
+      slashQuery,
+      promptTemplates,
+      allSkills.filter((s) => s.disableModelInvocation),
+    );
+  }, [slashQuery, promptTemplates, allSkills]);
+  const safeSlashSelIdx = slashItems.length === 0 ? 0 : Math.min(slashSelIdx, slashItems.length - 1);
+  useEffect(() => {
+    slashListRef.current?.children[safeSlashSelIdx]?.scrollIntoView({ block: "nearest" });
+  }, [safeSlashSelIdx]);
+  const applySlash = useCallback(
+    (item: SlashMenuItem) => {
+      const current = controller.textInput.value;
+      const rest = current.replace(/^\/[^\s]*/, "");
+      controller.textInput.setInput(`${item.command} ${rest.trimStart()}`);
+      setSlashQuery(null);
+      setSlashSelIdx(0);
+    },
+    [controller],
+  );
   // Alt is read from keydown, not the form submit event, which carries no
   // modifiers by the time the library's Enter handler calls requestSubmit().
   const queueIntentRef = useRef(false);
@@ -705,6 +917,14 @@ function ChatInput({
     const val = e.target.value;
     const cursor = e.target.selectionStart ?? val.length;
     const before = val.slice(0, cursor);
+    // Slash menu: only while the caret is still inside the leading command token.
+    const slash = before.match(/^\/([^\s/]*)$/);
+    if (slash) {
+      setSlashQuery(slash[1]);
+      setSlashSelIdx(0);
+    } else {
+      setSlashQuery(null);
+    }
     const m = before.match(/@([^\s@]*)$/);
     if (m && m.index !== undefined) {
       setMentionQuery(m[1]);
@@ -716,6 +936,29 @@ function ChatInput({
   }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const slashOpen = slashQuery !== null && slashItems.length > 0;
+    if (slashOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashSelIdx((i) => Math.min(i + 1, slashItems.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashSelIdx((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        applySlash(slashItems[safeSlashSelIdx]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashQuery(null);
+        return;
+      }
+    }
     const isOpen = mentionQuery !== null && filteredFiles.length > 0;
     // An Enter consumed by the mention overlay must not record queue intent —
     // the next submit may be a button click that can't overwrite the flag.
@@ -736,7 +979,7 @@ function ChatInput({
       e.preventDefault();
       closeMention();
     }
-  }, [mentionQuery, filteredFiles, safeMentionSelIdx, applyMention, closeMention]);
+  }, [mentionQuery, filteredFiles, safeMentionSelIdx, applyMention, closeMention, slashQuery, slashItems, safeSlashSelIdx, applySlash]);
 
   const handleTranscription = useCallback((text: string) => {
     appendToComposer(controller.textInput, text, " ");
@@ -764,12 +1007,51 @@ function ChatInput({
   }, []);
 
   const isMentionOpen = mentionQuery !== null && filteredFiles.length > 0;
+  const isSlashOpen = slashQuery !== null && slashItems.length > 0;
   const submitStatus = isStreaming ? "streaming" : agentStatus === "error" ? "error" : "ready";
 
   return (
     <PromptDropZone onFileDrop={onAddFile} onFilesUpload={handleFilesUpload}>
       <div className="relative">
-        {isMentionOpen && (
+        {isSlashOpen && (
+          <div
+            className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border bg-background shadow-lg"
+            onMouseDown={(e) => e.preventDefault()}
+            data-testid="slash-menu"
+          >
+            <div className="flex items-center gap-2 border-b px-3 py-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Commands</span>
+              {slashQuery && <span className="font-mono text-[11px] text-primary">/{slashQuery}</span>}
+              <span className="ml-auto text-[10px] text-muted-foreground">
+                {slashItems.length} match{slashItems.length !== 1 ? "es" : ""}
+              </span>
+              <kbd className="rounded border bg-muted px-1 py-0.5 text-[9px] font-mono text-muted-foreground">↑↓</kbd>
+              <kbd className="rounded border bg-muted px-1 py-0.5 text-[9px] font-mono text-muted-foreground">↵</kbd>
+            </div>
+            <div ref={slashListRef} className="max-h-52 overflow-y-auto py-1">
+              {slashItems.map((item, i) => (
+                <div
+                  key={item.command}
+                  onClick={() => applySlash(item)}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs transition-colors",
+                    i === safeSlashSelIdx ? "bg-muted" : "hover:bg-muted/50",
+                  )}
+                >
+                  <span className="min-w-0 truncate font-mono text-foreground">{item.label}</span>
+                  {item.argumentHint && (
+                    <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{item.argumentHint}</span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{item.description}</span>
+                  <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
+                    {item.kind}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {isMentionOpen && !isSlashOpen && (
           <div
             className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border bg-background shadow-lg"
             onMouseDown={(e) => e.preventDefault()}
@@ -824,7 +1106,13 @@ function ChatInput({
           <MessageQueueDisplay
             queue={queuedMessages}
             steering={pendingSteers}
+            followUp={pendingFollowUps}
             onRemove={onRemoveFromQueue}
+            onMove={onMoveInQueue}
+            onEdit={onEditQueued}
+            editingId={queueEditingId}
+            sendingId={queueSendingId}
+            onEditingChange={onQueueEditingChange}
             paused={queuePaused}
             onResume={onResumeQueue}
           />
@@ -868,7 +1156,7 @@ function ChatInput({
                   : "Image is too large (20MB max).",
             )
           }
-          className="rounded-xl border shadow-sm"
+          className="@container/composer rounded-xl border shadow-sm"
         >
           <ImageAttachmentsRow />
           <ContextChipsBar
@@ -882,9 +1170,9 @@ function ChatInput({
           <PromptInputTextarea
             placeholder={
               isStreaming
-                ? pendingSteers.length > 0
-                  ? `Steer the run… (${pendingSteers.length} pending · ⌥↵ to run after)`
-                  : "Steer the run… (⌥↵ to run after)"
+                ? pendingSteers.length + pendingFollowUps.length > 0
+                  ? `Steer the run… (${pendingSteers.length + pendingFollowUps.length} pending · ⌥↵ to run after this turn)`
+                  : "Steer the run… (⌥↵ to run after this turn)"
                 : queuedMessages.length >= MAX_QUEUE
                   ? `Queue full (${MAX_QUEUE}/${MAX_QUEUE})`
                   : "Ask Kady anything… (@ for files, + for data / compute / skills)"
@@ -892,12 +1180,16 @@ function ChatInput({
             onChange={handleChange}
             onKeyDown={handleKeyDown}
           />
-          <PromptInputFooter>
-            <div className="flex min-w-0 items-center gap-1.5">
+          {/* From ~30rem up the toolbar is one row: the model/compute chips
+              truncate instead of pushing dictate + send onto a second line.
+              Below that (the chat pane can shrink to 280px) wrapping is the
+              lesser evil, so the container query hands control back. */}
+          <PromptInputFooter className="@min-[30rem]/composer:flex-nowrap">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
               <AddContextMenu
                 selectedDbs={selectedDbs}
                 onDbsChange={onDbsChange}
-                allSkills={allSkills}
+                allSkills={modelInvocableSkills}
                 selectedSkills={selectedSkills}
                 onSkillsChange={onSkillsChange}
                 onUploadFiles={handleFilesUpload}
@@ -919,7 +1211,11 @@ function ChatInput({
                 error={modalCatalogError}
                 onRefresh={onRefreshModalCatalog}
               />
-              <ContextUsageIndicator usage={contextUsage} />
+              <ContextUsageIndicator
+                usage={contextUsage}
+                onCompact={onCompact}
+                compactDisabled={isStreaming}
+              />
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               <InfoTooltip
@@ -1013,7 +1309,7 @@ function ChatInput({
   );
 }
 
-export function AssistantMessageBody({
+export const AssistantMessageBody = memo(function AssistantMessageBody({
   message,
   isStreaming,
   isLast,
@@ -1063,6 +1359,11 @@ export function AssistantMessageBody({
           sessionId={sessionId}
           projectId={projectId}
         />,
+      );
+    } else if (a.toolName === "permission") {
+      flushChunk();
+      orderedBlocks.push(
+        <PermissionCard key={a.id} item={a} sessionId={sessionId} projectId={projectId} />,
       );
     } else if (a.toolName === "notebook") {
       flushChunk();
@@ -1136,7 +1437,122 @@ export function AssistantMessageBody({
       )}
     </>
   );
-}
+});
+
+/** Unchanged history rows keep their tool disclosures and skip token renders. */
+export const ChatMessageRow = memo(function ChatMessageRow({
+  message, isStreaming, isLast, sessionId, projectId,
+  onViewInNotebook, onViewCompute, onOpenFile, onCopy, copied,
+}: {
+  message: ChatMessage;
+  isStreaming: boolean;
+  isLast: boolean;
+  sessionId: string | null;
+  projectId: string;
+  onViewInNotebook?: (id: string) => void;
+  onViewCompute?: (id?: string) => void;
+  onOpenFile?: (path: string) => void;
+  onCopy: (id: string, content: string) => void;
+  copied: boolean;
+}) {
+  // Extension notices and compaction markers sit between the bubbles.
+  if (message.role === "system") return <SystemCard message={message} />;
+  return (
+    <Message from={message.role} key={message.id}>
+      <MessageContent>
+        {message.role === "assistant" ? (
+          <AssistantMessageBody
+            message={message}
+            isStreaming={isStreaming}
+            isLast={isLast}
+            sessionId={sessionId}
+            projectId={projectId}
+            onViewInNotebook={onViewInNotebook}
+            onViewCompute={onViewCompute}
+            onOpenFile={onOpenFile}
+          />
+        ) : (
+          <>
+            {message.images && message.images.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {message.images.map((img, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={i}
+                    src={`data:${img.mimeType};base64,${img.data}`}
+                    alt={`Attached image ${i + 1}`}
+                    className="max-h-56 max-w-64 rounded-lg border object-contain"
+                  />
+                ))}
+              </div>
+            )}
+            {(() => {
+              const block = parseCommandBlock(message.content);
+              return block ? <CommandBlockChip block={block} /> : <MessageResponse>{message.content}</MessageResponse>;
+            })()}
+          </>
+        )}
+        {message.role === "assistant" && message.modelVersion && (
+          <span className="text-xs text-muted-foreground mt-1">
+            {message.modelVersion}
+          </span>
+        )}
+      </MessageContent>
+      {message.role === "assistant" && message.content && (
+        <MessageToolbar>
+          <MessageActions>
+            <MessageAction
+              tooltip="Copy"
+              onClick={() => onCopy(message.id, message.content)}
+            >
+              {copied ? (
+                <CheckIcon className="size-4" />
+              ) : (
+                <CopyIcon className="size-4" />
+              )}
+            </MessageAction>
+          </MessageActions>
+          {((typeof message.runCostUsd === "number" &&
+            message.runCostUsd > 0) ||
+            (message.runBillingMode === "subscription" &&
+              (message.runTokens ?? 0) > 0)) && (
+              <InfoTooltip
+                content={
+                  <>
+                    <b>
+                      {message.runBillingMode === "subscription"
+                        ? "Subscription usage"
+                        : message.runBillingMode === "metered_oauth"
+                          ? "Metered extra usage"
+                          : "Cost of this reply"}
+                    </b>
+                    <br />
+                    {message.runBillingMode === "subscription"
+                      ? `${message.runProvider ?? "Provider"} manages billing and quota`
+                      : formatUsd(message.runCostUsd ?? 0)}
+                    {typeof message.runTokens === "number" &&
+                    message.runTokens > 0
+                      ? ` · ${message.runTokens.toLocaleString()} tokens`
+                      : ""}
+                    {message.runBillingMode === "subscription" &&
+                    typeof message.runListPriceUsd === "number"
+                      ? ` · ${formatUsd(message.runListPriceUsd)} list-price reference (not project spend)`
+                      : ""}
+                  </>
+                }
+              >
+                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  {message.runBillingMode === "subscription"
+                    ? `subscription · ${(message.runTokens ?? 0).toLocaleString()} tok`
+                    : formatUsd(message.runCostUsd ?? 0)}
+                </span>
+              </InfoTooltip>
+            )}
+        </MessageToolbar>
+      )}
+    </Message>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // ChatTab — full chat surface (Conversation + ChatInput + queue) for one tab.
@@ -1149,7 +1565,7 @@ export interface ChatTabMeta {
   status: "ready" | "submitted" | "streaming" | "error";
   runState: AgentRunState;
   isStreaming: boolean;
-  messages: ChatMessage[];
+  needsInput: boolean;
   userMessageCount: number;
   notebookEntries: NotebookEntry[];
   subagentCompletions: number;
@@ -1253,7 +1669,10 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     send,
     stop,
     steer,
+    followUp,
+    compact,
     pendingSteers,
+    pendingFollowUps,
     getSessionId,
     loadSession,
     notebookEntries,
@@ -1347,6 +1766,8 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   // Set by Stop: without it, cancelling a turn immediately started the next
   // queued message, so "Stop" only ever paused for a fraction of a second.
   const [queuePaused, setQueuePaused] = useState(false);
+  const queueFlushInFlightRef = useRef(false);
+  const [queueSendingId, setQueueSendingId] = useState<string | null>(null);
   const [steerError, setSteerError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1406,6 +1827,20 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   const removeFromQueue = useCallback((id: string) => {
     setMessageQueue((prev) => prev.filter((item) => item.id !== id));
   }, []);
+  const moveInQueue = useCallback((id: string, direction: QueueDirection) => {
+    setMessageQueue((prev) => moveQueuedMessage(prev, id, direction));
+  }, []);
+  const editQueuedMessage = useCallback((id: string, text: string) => {
+    setMessageQueue((prev) => updateQueuedMessageText(prev, id, text));
+  }, []);
+  // Which queued message has its inline editor open. Derived against the live
+  // queue (ids are never reused) so a removal or send while editing releases
+  // the hold without an effect.
+  const [editingQueueIdState, setEditingQueueIdState] = useState<string | null>(null);
+  const queueEditingId =
+    editingQueueIdState !== null && messageQueue.some((item) => item.id === editingQueueIdState)
+      ? editingQueueIdState
+      : null;
 
   const copyTimerRef = useRef<number | null>(null);
   useEffect(
@@ -1441,12 +1876,18 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   // Auto-send the next queued message when the agent becomes ready
   useEffect(() => {
     if (queuePaused) return; // Stop halts all work, not just the live turn
+    // Hold while an inline edit is open: otherwise the head of the queue can
+    // fire mid-edit with the old text and the editor vanishes under the user.
+    if (queueEditingId !== null) return;
     if (!initialSessionReady || status !== "ready" || messageQueue.length === 0) return;
-    const [next, ...rest] = messageQueue;
+    if (queueFlushInFlightRef.current) return;
+    const [next] = messageQueue;
     if (!isModelAvailable(next.model)) return;
     if (budgetState === "exceeded" && modelUsesBillableBudget(next.model)) return;
     const id = window.setTimeout(() => {
-      setMessageQueue(rest);
+      queueFlushInFlightRef.current = true;
+      setQueueSendingId(next.id);
+      let accepted = false;
       void send(
         next.text,
         next.model.id,
@@ -1460,7 +1901,20 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
         next.computeOptions,
         next.thinkingLevel ?? undefined,
         next.images.length > 0 ? next.images : undefined,
-      );
+        () => {
+          accepted = true;
+          setMessageQueue((current) => removeQueuedMessage(current, next.id));
+          setQueueSendingId(null);
+        },
+      ).then((acceptedId) => {
+        if (!accepted && !acceptedId) {
+          setQueuePaused(true);
+          toast.error("Queued message was not delivered. The queue has been paused.");
+        }
+      }).finally(() => {
+        queueFlushInFlightRef.current = false;
+        setQueueSendingId(null);
+      });
     }, 0);
     return () => window.clearTimeout(id);
   }, [
@@ -1468,6 +1922,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     initialSessionReady,
     isModelAvailable,
     messageQueue,
+    queueEditingId,
     queuePaused,
     send,
     status,
@@ -1523,13 +1978,19 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     () => messages.filter((m) => m.role === "user").length,
     [messages],
   );
+  const needsInput = isStreaming && messages.some((message) =>
+    message.activities?.some((activity) =>
+      (activity.toolName === "interview" || activity.toolName === "permission") &&
+      activity.status === "running",
+    ),
+  );
   useEffect(() => {
     onMetaChange(tabId, {
       sessionId,
       status,
       runState,
       isStreaming,
-      messages,
+      needsInput,
       userMessageCount,
       notebookEntries,
       subagentCompletions,
@@ -1540,7 +2001,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     status,
     runState,
     isStreaming,
-    messages,
+    needsInput,
     userMessageCount,
     notebookEntries,
     subagentCompletions,
@@ -1595,6 +2056,25 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
    * the composer keeps the user's text *and* file chips instead of clearing
    * them into the void.
    */
+  const handleCompact = useCallback(async () => {
+    const result = await compact();
+    if (result.ok) {
+      const after = result.estimatedTokensAfter;
+      toast.success(
+        `Context compacted: ${result.tokensBefore.toLocaleString()} tokens` +
+          (after !== null ? ` → about ${after.toLocaleString()}` : "") +
+          (result.costUsd > 0 ? ` · ${formatUsd(result.costUsd)}` : ""),
+      );
+      return;
+    }
+    if (result.reason === "streaming") toast.error("Wait for the current run to finish before compacting.");
+    else if (result.reason === "budget") toast.error(result.detail ?? "Project spend limit reached.");
+    else if (result.reason === "no_session") toast.info("Nothing to compact yet.");
+    else if (result.reason === "too_small")
+      toast.info(result.detail ?? "Nothing to compact yet: the conversation still fits in the recent-context window.");
+    else toast.error(result.detail ?? "Compaction failed.");
+  }, [compact]);
+
   const handleSend = useCallback(
     async (text: string, intent: SendIntent, images: PromptImage[] = []): Promise<boolean> => {
       if (!selectedModelAvailable) {
@@ -1623,13 +2103,20 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
           thinkingDisabled ? undefined : thinkingLevel,
           images.length > 0 ? images : undefined,
         );
-      // Steering is a text-only side channel; an image message sent during a
-      // live run waits its turn in the queue instead.
-      const route =
-        images.length > 0 && routeSubmit(isStreaming, intent) === "steer"
-          ? "queue"
-          : routeSubmit(isStreaming, intent);
-      if (route === "queue") {
+      const route = routeSubmit(isStreaming, intent, images.length > 0);
+      if (route === "followUp") {
+        // Pi delivers it inside the live run once the agent is otherwise done.
+        // If the run ends first, keep ordering behind any client-side queue.
+        const result = await followUp(trimmed, images.length > 0 ? images : undefined);
+        if (result === "ok") return true;
+        if (result === "not_streaming") {
+          if (steerNotStreamingFallback(messageQueueLengthRef.current) === "queue") {
+            return enqueue(trimmed, images);
+          }
+          void sendNow();
+          return true;
+        }
+        // Transport failure: hold it in the client-side queue rather than lose it.
         return enqueue(trimmed, images);
       }
       if (route === "steer") {
@@ -1660,6 +2147,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
       selectedModelAvailable,
       isStreaming,
       steer,
+      followUp,
       enqueue,
       send,
       selectedModel,
@@ -1787,96 +2275,19 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             />
           ) : (
             messages.map((message, i) => (
-              <Message from={message.role} key={message.id}>
-                <MessageContent>
-                  {message.role === "assistant" ? (
-                    <AssistantMessageBody
-                      message={message}
-                      isStreaming={isStreaming}
-                      isLast={i === messages.length - 1}
-                      sessionId={sessionId}
-                      projectId={projectId}
-                      onViewInNotebook={onViewInNotebook}
-                      onViewCompute={onViewCompute}
-                      onOpenFile={onOpenFile}
-                    />
-                  ) : (
-                    <>
-                      {message.images && message.images.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {message.images.map((img, i) => (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              key={i}
-                              src={`data:${img.mimeType};base64,${img.data}`}
-                              alt={`Attached image ${i + 1}`}
-                              className="max-h-56 max-w-64 rounded-lg border object-contain"
-                            />
-                          ))}
-                        </div>
-                      )}
-                      <MessageResponse>{message.content}</MessageResponse>
-                    </>
-                  )}
-                  {message.role === "assistant" && message.modelVersion && (
-                    <span className="text-xs text-muted-foreground mt-1">
-                      {message.modelVersion}
-                    </span>
-                  )}
-                </MessageContent>
-                {message.role === "assistant" && message.content && (
-                  <MessageToolbar>
-                    <MessageActions>
-                      <MessageAction
-                        tooltip="Copy"
-                        onClick={() => handleCopy(message.id, message.content)}
-                      >
-                        {copiedId === message.id ? (
-                          <CheckIcon className="size-4" />
-                        ) : (
-                          <CopyIcon className="size-4" />
-                        )}
-                      </MessageAction>
-                    </MessageActions>
-                    {((typeof message.runCostUsd === "number" &&
-                      message.runCostUsd > 0) ||
-                      (message.runBillingMode === "subscription" &&
-                        (message.runTokens ?? 0) > 0)) && (
-                        <InfoTooltip
-                          content={
-                            <>
-                              <b>
-                                {message.runBillingMode === "subscription"
-                                  ? "Subscription usage"
-                                  : message.runBillingMode === "metered_oauth"
-                                    ? "Metered extra usage"
-                                    : "Cost of this reply"}
-                              </b>
-                              <br />
-                              {message.runBillingMode === "subscription"
-                                ? `${message.runProvider ?? "Provider"} manages billing and quota`
-                                : formatUsd(message.runCostUsd ?? 0)}
-                              {typeof message.runTokens === "number" &&
-                              message.runTokens > 0
-                                ? ` · ${message.runTokens.toLocaleString()} tokens`
-                                : ""}
-                              {message.runBillingMode === "subscription" &&
-                              typeof message.runListPriceUsd === "number"
-                                ? ` · ${formatUsd(message.runListPriceUsd)} list-price reference (not project spend)`
-                                : ""}
-                            </>
-                          }
-                        >
-                          <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                            {message.runBillingMode === "subscription"
-                              ? `subscription · ${(message.runTokens ?? 0).toLocaleString()} tok`
-                              : formatUsd(message.runCostUsd ?? 0)}
-                          </span>
-                        </InfoTooltip>
-                      )}
-                  </MessageToolbar>
-                )}
-              </Message>
+              <ChatMessageRow
+                key={message.id}
+                message={message}
+                isStreaming={isStreaming && i === messages.length - 1}
+                isLast={i === messages.length - 1}
+                sessionId={sessionId}
+                projectId={projectId}
+                onViewInNotebook={onViewInNotebook}
+                onViewCompute={onViewCompute}
+                onOpenFile={onOpenFile}
+                onCopy={handleCopy}
+                copied={copiedId === message.id}
+              />
             ))
           )}
         </ConversationContent>
@@ -1898,6 +2309,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             onClearFiles={clearAttachedFiles}
             onSend={handleSend}
             pendingSteers={pendingSteers}
+            pendingFollowUps={pendingFollowUps}
             composerRestoreRef={composerRestoreRef}
             inlineError={steerError}
             isStreaming={isStreaming}
@@ -1908,6 +2320,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             selectedModel={selectedModel}
             onModelChange={setSelectedModel}
             contextUsage={contextUsage}
+            onCompact={handleCompact}
             selectedComputeTarget={selectedComputeTarget}
             onComputeTargetChange={setSelectedComputeTarget}
             thinkingLevel={thinkingLevel}
@@ -1923,6 +2336,11 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             onSkillsChange={setSelectedSkills}
             queuedMessages={messageQueue}
             onRemoveFromQueue={removeFromQueue}
+            onMoveInQueue={moveInQueue}
+            onEditQueued={editQueuedMessage}
+            queueEditingId={queueEditingId}
+            queueSendingId={queueSendingId}
+            onQueueEditingChange={setEditingQueueIdState}
             queuePaused={queuePaused && messageQueue.length > 0}
             onResumeQueue={resumeQueue}
             budgetState={budgetState}

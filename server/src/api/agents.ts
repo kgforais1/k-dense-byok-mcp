@@ -13,9 +13,13 @@
  */
 import type { FastifyInstance } from "fastify";
 import { activePaths } from "../projects.ts";
+import fs from "node:fs";
+import path from "node:path";
 import {
   AGENT_NAME_RE,
+  MEMORY_PATH_RE,
   THINKING_LEVELS,
+  agentMemoryFile,
   deleteProjectAgent,
   listAgents,
   restoreDefaultAgents,
@@ -23,7 +27,17 @@ import {
   setSpecialistEnabled,
   writeProjectAgent,
   type AgentFilePatch,
+  type AgentMemory,
 } from "../agent/agent-files.ts";
+import {
+  readWatchdogSettings,
+  seedWatchdogGuidance,
+  validateWatchdogPatch,
+  writeWatchdogSettings,
+  type WatchdogPatch,
+} from "../agent/watchdog-settings.ts";
+import { resolveModel } from "../agent/models.ts";
+import { getModelRegistry } from "../agent/session-registry.ts";
 
 function patchFromBody(body: Record<string, unknown>): AgentFilePatch | string {
   const description = String(body.description ?? "").trim();
@@ -46,9 +60,19 @@ function patchFromBody(body: Record<string, unknown>): AgentFilePatch | string {
     }
     if (Object.keys(extra).length === 0) extra = undefined;
   }
+  let memory: AgentMemory | undefined;
+  if (body.memory && typeof body.memory === "object" && !Array.isArray(body.memory)) {
+    const m = body.memory as Record<string, unknown>;
+    const scope = m.scope === "user" ? "user" : m.scope === "project" ? "project" : null;
+    const memoryPath = typeof m.path === "string" ? m.path.trim() : "";
+    if (!scope) return `memory.scope must be "project" or "user"`;
+    if (!MEMORY_PATH_RE.test(memoryPath)) return "memory.path must be a lowercase directory name";
+    memory = { scope, path: memoryPath };
+  }
   return {
     description,
     systemPrompt,
+    memory,
     model: body.model ? String(body.model).trim() : undefined,
     thinking,
     tools: body.tools ? String(body.tools).trim() : undefined,
@@ -109,6 +133,102 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
       return { detail: r.detail };
     }
     return { ok: true };
+  });
+
+  // Per-agent persistent memory (pi-subagents `memory:` frontmatter). The
+  // file is created by the agent's own write tool on first use; these routes
+  // let the user read, edit or clear it.
+  const MAX_MEMORY_BYTES = 64 * 1024;
+  const memoryTarget = (name: string): { memory: AgentMemory; file: string } | null => {
+    const paths = activePaths();
+    const agent = listAgents(paths).find((a) => a.name === name);
+    if (!agent?.memory) return null;
+    return { memory: agent.memory, file: agentMemoryFile(paths, agent.memory) };
+  };
+
+  app.get<{ Params: { name: string } }>("/agents/:name/memory", async (req, reply) => {
+    const target = memoryTarget(req.params.name);
+    if (!target) {
+      reply.code(404);
+      return { detail: "This agent has no persistent memory configured" };
+    }
+    let content = "";
+    let exists = false;
+    try {
+      content = fs.readFileSync(target.file, "utf-8");
+      exists = true;
+    } catch {
+      /* not created yet */
+    }
+    return { memory: target.memory, exists, content, limits: { lines: 200, bytes: 16 * 1024 } };
+  });
+
+  app.put<{ Params: { name: string }; Body: { content?: unknown } }>("/agents/:name/memory", async (req, reply) => {
+    const target = memoryTarget(req.params.name);
+    if (!target) {
+      reply.code(404);
+      return { detail: "This agent has no persistent memory configured" };
+    }
+    const content = req.body?.content;
+    if (typeof content !== "string" || Buffer.byteLength(content, "utf-8") > MAX_MEMORY_BYTES) {
+      reply.code(400);
+      return { detail: `content must be a string of at most ${MAX_MEMORY_BYTES / 1024} KiB` };
+    }
+    fs.mkdirSync(path.dirname(target.file), { recursive: true });
+    const tmp = `${target.file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, content, "utf-8");
+    fs.renameSync(tmp, target.file);
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { name: string } }>("/agents/:name/memory", async (req, reply) => {
+    const target = memoryTarget(req.params.name);
+    if (!target) {
+      reply.code(404);
+      return { detail: "This agent has no persistent memory configured" };
+    }
+    fs.rmSync(target.file, { force: true });
+    return { ok: true };
+  });
+
+  // pi-subagents watchdog (Settings → Specialists → Watchdog). Stored in
+  // sandbox/.pi/settings.json under subagents.watchdog; applies to new tabs.
+  app.get("/watchdog", async () => {
+    const paths = activePaths();
+    seedWatchdogGuidance(paths);
+    return { ...readWatchdogSettings(paths), metered: false };
+  });
+
+  app.put<{ Body: WatchdogPatch }>("/watchdog", async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const error = validateWatchdogPatch(body);
+    if (error) {
+      reply.code(400);
+      return { detail: error };
+    }
+    if (typeof body.model === "string" && body.model.trim()) {
+      try {
+        resolveModel(body.model.trim(), getModelRegistry());
+      } catch (err) {
+        reply.code(400);
+        return { detail: `Unknown watchdog model: ${(err as Error).message}` };
+      }
+    }
+    const patch: WatchdogPatch = {};
+    for (const key of ["enabled", "children", "watchdogMd"] as const) {
+      if (typeof body[key] === "boolean") patch[key] = body[key] as boolean;
+    }
+    if (typeof body.model === "string") patch.model = body.model.trim();
+    if (typeof body.thinking === "string") patch.thinking = body.thinking;
+    if ("cadenceEveryNTools" in body) patch.cadenceEveryNTools = body.cadenceEveryNTools as number | null;
+    if (body.severityThreshold === "concern" || body.severityThreshold === "blocker") patch.severityThreshold = body.severityThreshold;
+    if (typeof body.stalemateRepeats === "number") patch.stalemateRepeats = body.stalemateRepeats;
+    const written = writeWatchdogSettings(activePaths(), patch);
+    if (!written) {
+      reply.code(409);
+      return { detail: "sandbox/.pi/settings.json is not valid JSON; fix it before changing watchdog settings" };
+    }
+    return { ...written, metered: false };
   });
 
   app.post<{ Params: { name: string } }>("/agents/:name/disable", async (req, reply) => {

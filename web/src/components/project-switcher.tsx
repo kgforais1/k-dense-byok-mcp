@@ -32,10 +32,24 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { DEFAULT_PROJECT_ID, type Project } from "@/lib/projects";
+import {
+  DEFAULT_PROJECT_ID,
+  getProjectCompaction,
+  getProjectGuardPolicy,
+  getProjectInstructionsStatus,
+  putProjectCompaction,
+  putProjectGuardPolicy,
+  restoreProjectInstructions,
+  type InstructionsStatus,
+  type CompactionSettings,
+  type GuardPolicy,
+  type Project,
+} from "@/lib/projects";
 import { useProjects } from "@/lib/use-projects";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +63,27 @@ interface ProjectFormState {
   // Empty string = no limit (unlimited). Stored as a string so the input
   // behaves naturally while the user is typing "0." / "1." etc.
   spendLimit: string;
+  /** Context-compaction knobs (edit mode only; null until loaded). */
+  compaction: CompactionFormState | null;
+  /** Raw-data guard policy (edit mode only; null until loaded). */
+  guard: GuardFormState | null;
+  /** Sandbox AGENTS.md status (edit mode only; null until loaded). */
+  instructions: InstructionsStatus | null;
+}
+
+interface GuardFormState {
+  /** One glob per line. */
+  protectedPaths: string;
+  destructiveConfirm: boolean;
+  initial: GuardPolicy;
+}
+
+interface CompactionFormState {
+  enabled: boolean;
+  reserveTokens: string;
+  keepRecentTokens: string;
+  /** Snapshot as loaded, to skip the PUT when nothing changed. */
+  initial: CompactionSettings;
 }
 
 const EMPTY_FORM: ProjectFormState = {
@@ -59,6 +94,9 @@ const EMPTY_FORM: ProjectFormState = {
   description: "",
   tags: "",
   spendLimit: "",
+  compaction: null,
+  guard: null,
+  instructions: null,
 };
 
 /** Display a project ID in Title Case when we haven't loaded the project
@@ -87,6 +125,7 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
     remove,
   } = useProjects();
 
+  const { confirm, dialog } = useConfirm();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<ProjectFormState>(EMPTY_FORM);
@@ -120,9 +159,55 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
         project.spendLimitUsd === null || project.spendLimitUsd === undefined
           ? ""
           : String(project.spendLimitUsd),
+      compaction: null,
+      guard: null,
+      instructions: null,
     });
     setFormError(null);
     setPopoverOpen(false);
+    void getProjectInstructionsStatus(project.id)
+      .then((status) => {
+        setForm((f) => (f.open && f.mode === "edit" && f.id === project.id ? { ...f, instructions: status } : f));
+      })
+      .catch(() => {});
+    void getProjectGuardPolicy(project.id)
+      .then((policy) => {
+        setForm((f) =>
+          f.open && f.mode === "edit" && f.id === project.id
+            ? {
+                ...f,
+                guard: {
+                  protectedPaths: policy.protectedPaths.join("\n"),
+                  destructiveConfirm: policy.destructiveConfirm,
+                  initial: policy,
+                },
+              }
+            : f,
+        );
+      })
+      .catch(() => {
+        /* section stays hidden */
+      });
+    // Loaded separately: it lives in the sandbox's Pi settings, not project.json.
+    void getProjectCompaction(project.id)
+      .then((settings) => {
+        setForm((f) =>
+          f.open && f.mode === "edit" && f.id === project.id
+            ? {
+                ...f,
+                compaction: {
+                  enabled: settings.enabled,
+                  reserveTokens: String(settings.reserveTokens),
+                  keepRecentTokens: String(settings.keepRecentTokens),
+                  initial: settings,
+                },
+              }
+            : f,
+        );
+      })
+      .catch(() => {
+        /* the section simply stays hidden */
+      });
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -164,6 +249,41 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
           tags,
           spendLimitUsd,
         });
+        const compaction = form.compaction;
+        if (compaction) {
+          const reserveTokens = Number(compaction.reserveTokens);
+          const keepRecentTokens = Number(compaction.keepRecentTokens);
+          if (!Number.isInteger(reserveTokens) || !Number.isInteger(keepRecentTokens)) {
+            throw new Error("Compaction token counts must be whole numbers");
+          }
+          const changed =
+            compaction.enabled !== compaction.initial.enabled ||
+            reserveTokens !== compaction.initial.reserveTokens ||
+            keepRecentTokens !== compaction.initial.keepRecentTokens;
+          if (changed) {
+            await putProjectCompaction(form.id, {
+              enabled: compaction.enabled,
+              reserveTokens,
+              keepRecentTokens,
+            });
+          }
+        }
+        const guard = form.guard;
+        if (guard) {
+          const protectedPaths = guard.protectedPaths
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean);
+          const changed =
+            guard.destructiveConfirm !== guard.initial.destructiveConfirm ||
+            protectedPaths.join("\n") !== guard.initial.protectedPaths.join("\n");
+          if (changed) {
+            await putProjectGuardPolicy(form.id, {
+              protectedPaths,
+              destructiveConfirm: guard.destructiveConfirm,
+            });
+          }
+        }
       }
       setForm(EMPTY_FORM);
     } catch (exc) {
@@ -187,9 +307,13 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
   const handleDelete = useCallback(
     async (project: Project) => {
       if (project.id === DEFAULT_PROJECT_ID) return;
-      const confirmed = window.confirm(
-        `Delete project "${project.name}"? Its sandbox and chats will be permanently removed. This cannot be undone.`
-      );
+      const confirmed = await confirm({
+        title: `Delete "${project.name}"?`,
+        description:
+          "Its sandbox files and chats will be permanently removed. This cannot be undone.",
+        confirmLabel: "Delete project",
+        destructive: true,
+      });
       if (!confirmed) return;
       try {
         await remove(project.id);
@@ -197,7 +321,7 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
         // swallow
       }
     },
-    [remove]
+    [confirm, remove]
   );
 
   useEffect(() => {
@@ -209,6 +333,7 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
 
   return (
     <>
+      {dialog}
       <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
         <InfoTooltip
           disabled={popoverOpen}
@@ -329,7 +454,7 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
         open={form.open}
         onOpenChange={(open) => (open ? null : setForm(EMPTY_FORM))}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {form.mode === "create" ? "New project" : "Edit project"}
@@ -397,6 +522,131 @@ export function ProjectSwitcher({ onOpenProjectView }: ProjectSwitcherProps) {
                 the total reaches this cap; a warning shows at 80%.
               </p>
             </div>
+            {form.mode === "edit" && form.instructions && form.instructions !== "current" && (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3" data-testid="instructions-outdated">
+                <p className="text-[11px] text-muted-foreground">
+                  {form.instructions === "missing"
+                    ? "This project has no AGENTS.md (the agent's sandbox instructions)."
+                    : "This project's AGENTS.md was edited, so newer guidance (raw-data guard, specialist questions) was not applied automatically."}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0 text-[11px]"
+                  onClick={() =>
+                    void restoreProjectInstructions(form.id!)
+                      .then((status) => setForm((f) => ({ ...f, instructions: status })))
+                      .catch((exc) => setFormError(exc instanceof Error ? exc.message : "Restore failed"))
+                  }
+                >
+                  Restore default instructions
+                </Button>
+              </div>
+            )}
+            {form.mode === "edit" && form.guard && (
+              <fieldset className="rounded-md border p-3" data-testid="guard-settings">
+                <legend className="px-1 text-xs font-medium text-muted-foreground">
+                  Raw-data guard
+                </legend>
+                <label className="text-[11px] text-muted-foreground">
+                  Protected paths (one glob per line; the agent can read but never modify them)
+                  <Textarea
+                    rows={3}
+                    value={form.guard.protectedPaths}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f.guard ? { ...f, guard: { ...f.guard, protectedPaths: e.target.value } } : f,
+                      )
+                    }
+                    placeholder={"user_data/**\nraw/*.csv"}
+                    aria-label="Protected paths"
+                    className="mt-1 font-mono text-xs"
+                  />
+                </label>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span className="text-xs">Ask before destructive shell commands elsewhere</span>
+                  <Switch
+                    checked={form.guard.destructiveConfirm}
+                    onCheckedChange={(destructiveConfirm) =>
+                      setForm((f) =>
+                        f.guard ? { ...f, guard: { ...f.guard, destructiveConfirm } } : f,
+                      )
+                    }
+                    aria-label="Confirm destructive commands"
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Applies to Kady and to background specialists, in live chats too. A
+                  heuristic guard, not a security boundary: see the docs.
+                </p>
+              </fieldset>
+            )}
+            {form.mode === "edit" && form.compaction && (
+              <fieldset className="rounded-md border p-3" data-testid="compaction-settings">
+                <legend className="px-1 text-xs font-medium text-muted-foreground">
+                  Context compaction
+                </legend>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs">Compact automatically near the context limit</span>
+                  <Switch
+                    checked={form.compaction.enabled}
+                    onCheckedChange={(enabled) =>
+                      setForm((f) =>
+                        f.compaction ? { ...f, compaction: { ...f.compaction, enabled } } : f,
+                      )
+                    }
+                    aria-label="Automatic compaction"
+                  />
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="text-[11px] text-muted-foreground">
+                    Reserve for the reply (tokens)
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={4000}
+                      max={64000}
+                      step={1000}
+                      value={form.compaction.reserveTokens}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f.compaction
+                            ? { ...f, compaction: { ...f.compaction, reserveTokens: e.target.value } }
+                            : f,
+                        )
+                      }
+                      aria-label="Reserve tokens"
+                    />
+                  </label>
+                  <label className="text-[11px] text-muted-foreground">
+                    Keep recent verbatim (tokens)
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={5000}
+                      max={200000}
+                      step={1000}
+                      value={form.compaction.keepRecentTokens}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f.compaction
+                            ? { ...f, compaction: { ...f.compaction, keepRecentTokens: e.target.value } }
+                            : f,
+                        )
+                      }
+                      aria-label="Keep recent tokens"
+                    />
+                  </label>
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Compaction summarizes older messages when the conversation nears the
+                  model&apos;s window. Kady puts its own state block (plan, notebook,
+                  results, environment) ahead of the summary. Applies to every chat in
+                  this project.
+                </p>
+              </fieldset>
+            )}
             {formError && (
               <p className="text-xs text-destructive">{formError}</p>
             )}

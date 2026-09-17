@@ -85,7 +85,7 @@ export function assertMcpLoopbackHost(host = HOST, enabled = MCP_ENABLED): void 
 export const DEFAULT_MODEL_PROVIDER =
   process.env.DEFAULT_MODEL_PROVIDER ?? "openrouter";
 export const DEFAULT_MODEL_ID =
-  process.env.DEFAULT_MODEL_ID ?? "anthropic/claude-opus-5";
+  process.env.DEFAULT_MODEL_ID ?? "openai/gpt-6-astra";
 
 export const OLLAMA_BASE_URL =
   process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";

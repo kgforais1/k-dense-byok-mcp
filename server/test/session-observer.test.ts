@@ -168,6 +168,45 @@ describe("session observer", () => {
     claim.release();
   });
 
+  it("stays passive while a legacy route-owned broker run exists", async () => {
+    const session = new FakeSession();
+    attach(session);
+    const handle = runBroker.start(projectId, session.sessionId, {
+      runId: "user-route-run",
+      prompt: "hello",
+      images: [],
+      baseline: { messages: [], contextUsage: null },
+      origin: "user",
+      kind: "turn",
+    });
+    session.turn([{ type: "turn_end", message: { usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 } } }]);
+    await flush();
+    expect(runBroker.get(projectId, session.sessionId)).toBe(handle);
+    expect(handle.state().status).toBe("running");
+    expect(isRunClaimed(projectId, session.sessionId)).toBe(false);
+    expect(costRows(projectId, session.sessionId)).toHaveLength(0);
+    expect(log.error).not.toHaveBeenCalled();
+    handle.complete();
+  });
+
+  it("releases a notice claim when opening the broker run fails", () => {
+    const session = new FakeSession();
+    attach(session);
+    const start = vi.spyOn(runBroker, "start").mockImplementationOnce(() => {
+      throw new Error("synthetic broker collision");
+    });
+    try {
+      session.emit({
+        type: "message_start",
+        message: { role: "custom", customType: "subagent_watchdog_warning", content: "Stalemate", display: true },
+      });
+      expect(isRunClaimed(projectId, session.sessionId)).toBe(false);
+      expect(log.warn).toHaveBeenCalled();
+    } finally {
+      start.mockRestore();
+    }
+  });
+
   it("treats several agent_start/agent_end pairs before agent_settled as one run", async () => {
     const session = new FakeSession();
     attach(session);

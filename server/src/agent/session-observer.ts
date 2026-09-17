@@ -21,6 +21,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { ProjectPaths } from "../projects.ts";
 import { billingForModel, type BillingContext } from "../cost/billing.ts";
 import { contextUsageForClient, toClientFrame } from "./events.ts";
+import { runBroker } from "./run-broker.ts";
 import {
   claimRun,
   executeRun,
@@ -79,6 +80,7 @@ export function attachSessionObserver({
         session,
       });
     } catch (err) {
+      claim.release();
       log.warn({ err }, "could not publish idle custom message");
       return;
     }
@@ -151,8 +153,11 @@ export function attachSessionObserver({
       }
       return;
     }
-    // A route-owned run: its own pump publishes; stay passive.
-    if (isRunClaimed(projectId, sessionId)) return;
+    // A route-owned run: its own pump publishes; stay passive. User HTTP runs
+    // still use the legacy route claim, so the broker is the common ownership
+    // signal shared by both run pipelines.
+    const brokerRun = runBroker.get(projectId, sessionId);
+    if (isRunClaimed(projectId, sessionId) || (brokerRun && !brokerRun.isComplete)) return;
     if (ev.type === "message_start") {
       const message = ev.message as { role?: string };
       if (message.role === "custom" && !session.isStreaming) {

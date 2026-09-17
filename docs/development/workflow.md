@@ -23,6 +23,10 @@ The closing checklist is **part of the implementing PR**, not a follow-up. The
 PR is not "done" while its plan still lives in `dev-docs/plans/`, the matching
 TODO entry is still open, the changelog/maintenance-log entries are still
 missing, or `npm run verify -- docs` still fails on a pointer the PR created.
+Completing a plan requires at least one durable completion record in that same
+PR: `CHANGELOG.md` for user-facing behavior, `dev-docs/maintenance-log.md` for
+internal/operational work, or both. A completed plan may not mark both records
+N/A.
 All four records are distinct — do not merge them. The table in
 [`release-policy.md#changelogmd-versus-maintenance-logmd`](release-policy.md#changelogmd-versus-maintenance-logmd)
 is the reference.
@@ -228,6 +232,8 @@ exact checks.
   - [ ] `dev-docs/maintenance-log.md` appended when security, dependency,
         CI, or operational work applies (or N/A — scaffold via
         `npm run work:maintenance -- --pr <this PR>`).
+  - [ ] If a plan is completed, at least one of the preceding changelog or
+        maintenance-log items is populated; both may not be N/A.
   - [ ] `dev-docs/todo.md` entry for this work **deleted** (not checked
         off) on completion. A checked-off box is a bug — the entry has
         shipped, so it no longer belongs on the roadmap (or N/A — no
@@ -269,6 +275,10 @@ pre-completion state.
   when the category applies — the entry ships with the code in the same
   PR so the archive, the distilled decision, and the running code do not
   drift.
+- **Completed-plan invariant:** closing a plan, recording the shipped result,
+  moving it to `plans/completed/`, and removing its active handoff are one
+  atomic PR-closing operation. Do not merge first and repair lifecycle records
+  later.
 - **Artifacts to keep linked:** the archived plan links the PR, the PR
   links the archived plan and (when applicable) the removed handoff, and
   the maintenance log entry links the PR. No mutable coordination file

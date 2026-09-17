@@ -1,5 +1,17 @@
 # Maintenance Log
 
+### 2026-09-17 — Plan-close lifecycle clarified (PR #33)
+
+- **Category:** Repository workflow
+- **Summary:** Made plan completion an explicit same-PR operation: finalize
+  status, create at least one durable changelog or maintenance record, archive
+  the plan, and remove its active handoff before merge. Clarified that the
+  existing changelog and maintenance log are fork-owned; upstream release
+  notes are linked rather than duplicated into parallel records.
+- **Evidence:** `npm run docs:check` validates completed-plan placement,
+  handoff removal, release-record structure, and manifest coverage.
+- **Follow-up:** None.
+
 ### 2026-09-17 — Upstream v0.10.0 merge (PR #31)
 
 - **Category:** Upstream sync

@@ -221,7 +221,7 @@ interface RunLifecycle {
  */
 export interface RunStartRejection {
   statusCode: number;
-  body: { detail: string; reason?: string };
+  body: { detail: string; reason?: string; runId?: string | null };
 }
 
 interface RunPreparationFailure {
@@ -253,6 +253,9 @@ async function prepareRun(
         body: {
           detail: "Session is already streaming a response",
           reason: "run_already_active",
+          // FORK: preserve upstream's live-run adoption contract while the
+          // shared MCP path keeps the fork's typed rejection vocabulary.
+          runId: retained && !retained.isComplete ? retained.runId : null,
         },
       },
     };

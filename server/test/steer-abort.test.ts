@@ -515,6 +515,7 @@ describe("system-initiated runs vs POST /sessions/:id/run", () => {
         status: "running",
         run: { origin: "system", kind: "turn" },
       });
+      const systemRunId = runBroker.get("default", "s1")!.runId;
       const blocked = await app.inject({
         method: "POST",
         url: "/sessions/s1/run",
@@ -522,6 +523,10 @@ describe("system-initiated runs vs POST /sessions/:id/run", () => {
         payload: { message: "hi" },
       });
       expect(blocked.statusCode).toBe(409);
+      expect(blocked.json()).toMatchObject({
+        reason: "run_already_active",
+        runId: systemRunId,
+      });
 
       s.emit({ type: "agent_end" });
       s.isStreaming = false;

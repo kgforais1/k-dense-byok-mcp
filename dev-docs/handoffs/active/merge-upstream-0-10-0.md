@@ -55,6 +55,11 @@ fork. Base 2026-08-27; fork 213 ahead, upstream 38 ahead. 11 conflicted files.
   package preparation; account for its bytes conservatively and keep it removable.
 - Run lifecycle: consolidate the legacy HTTP user-run path with `run-pipeline`; retain broker-based
   ownership and regression coverage until both paths share one lifecycle.
+- Follow-up delivery: make request-id admission atomic and message-aware, then cover the
+  lost-response retry path in the frontend.
+- Guard portability: improve shell-quote/substitution parsing and Git-Bash Windows path handling
+  while preserving byte parity with the child-agent guard.
+- Modal recovery: expose and safely clean retained rollback backups once recovery is confirmed.
 
 ## Next action
 

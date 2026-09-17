@@ -18,6 +18,11 @@ import {
 } from "../agent/events.ts";
 import { setFusionConfig } from "../agent/fusion-bridge.ts";
 import {
+  clearFollowUpReceipts,
+  hasFollowUpReceipt,
+  rememberFollowUpReceipt,
+} from "../agent/follow-up-receipts.ts";
+import {
   cancelInterviewsForSession,
   pendingInterviewFor,
   resolveInterview,
@@ -85,16 +90,6 @@ import {
   unpinSession,
 } from "../agent/session-registry.ts";
 
-const FOLLOW_UP_RECEIPT_LIMIT = 2_000;
-const followUpReceipts = new Map<string, true>();
-function rememberFollowUpReceipt(key: string): void {
-  followUpReceipts.set(key, true);
-  while (followUpReceipts.size > FOLLOW_UP_RECEIPT_LIMIT) {
-    const oldest = followUpReceipts.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    followUpReceipts.delete(oldest);
-  }
-}
 import { parseThinkingLevel } from "../agent/thinking.ts";
 import {
   addTurnUsage,
@@ -965,6 +960,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     // Clear BEFORE abort so a pending steer can't be delivered into the
     // dying loop; the texts go back to the composer client-side.
     const cleared = session.clearQueue();
+    clearFollowUpReceipts(projectId, req.params.id);
     await session.abort();
     return { ok: true, restored: [...cleared.steering, ...cleared.followUp] };
   });
@@ -1012,6 +1008,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       // behind would silently deliver into the NEXT run, so pull it back out.
       if (!session.isStreaming) {
         const cleared = session.clearQueue();
+        clearFollowUpReceipts(projectId, req.params.id);
         reply.code(409);
         return {
           detail: "Run ended before the message was delivered",
@@ -1096,6 +1093,8 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
+  // FORK: idempotent receipts make lost-response retries safe without losing
+  // messages that an abort or another queue reset discarded.
   // Follow-up side-channel: queue a message that Pi delivers once the live
   // run has no more tool calls or steering messages, still inside the same
   // run (same SSE stream, same ledger row). Unlike steering it may carry
@@ -1124,8 +1123,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         reply.code(400);
         return { detail: "requestId must be a non-empty string of at most 128 characters" };
       }
-      const receiptKey = requestId ? `${projectId}\0${req.params.id}\0${requestId}` : null;
-      if (receiptKey && followUpReceipts.has(receiptKey)) {
+      if (requestId && hasFollowUpReceipt(projectId, req.params.id, requestId)) {
         return { ok: true, pending: [...session.getFollowUpMessages()], duplicate: true };
       }
       if (!session.isStreaming) {
@@ -1151,6 +1149,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       );
       if (!session.isStreaming) {
         const cleared = session.clearQueue();
+        clearFollowUpReceipts(projectId, req.params.id);
         reply.code(409);
         return {
           detail: "Run ended before the message was delivered",
@@ -1158,7 +1157,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
           restored: [...cleared.steering, ...cleared.followUp],
         };
       }
-      if (receiptKey) rememberFollowUpReceipt(receiptKey);
+      if (requestId) rememberFollowUpReceipt(projectId, req.params.id, requestId);
       return { ok: true, pending: [...session.getFollowUpMessages()] };
     },
   );

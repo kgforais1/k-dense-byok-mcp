@@ -42,6 +42,7 @@ import {
   subagentsExtensionPath,
 } from "./subagent-bridge.ts";
 import { makeFusionRequestExtension } from "./fusion-bridge.ts";
+import { clearFollowUpReceipts } from "./follow-up-receipts.ts";
 import { makeScientificCompactionExtension } from "./compaction-bridge.ts";
 import { makeDataGuardExtension } from "./data-guard.ts";
 import { readSchedulerState } from "./scheduler-state.ts";
@@ -274,6 +275,8 @@ function evictOverCap(projectId: string): void {
 
 /** Dispose one live session and drop everything keyed off it. */
 function release(projectId: string, key: string, session: AgentSession): void {
+  // FORK: session disposal invalidates Kady's follow-up admission receipts.
+  clearFollowUpReceipts(projectId, session.sessionId);
   // Detach before dispose so an in-flight system run can finalize its handle
   // while the session is still queryable.
   const detach = observers.get(key);
@@ -731,6 +734,7 @@ export async function abortProjectSessions(projectId: string): Promise<void> {
   await Promise.all(
     sessions.map(async ([, session]) => {
       session.clearQueue();
+      clearFollowUpReceipts(projectId, session.sessionId);
       await session.abort();
     }),
   );

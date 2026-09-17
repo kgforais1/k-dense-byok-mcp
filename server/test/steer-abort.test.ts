@@ -625,6 +625,19 @@ describe("POST /sessions/:id/follow-up", () => {
     const res = await app.inject({ method: "POST", url: "/sessions/s1/abort", headers: { "x-project-id": "default" } });
     expect(res.json()).toEqual({ ok: true, restored: ["steer me", "then this"] });
   });
+
+  it("does not acknowledge a stale receipt after abort discards its follow-up", async () => {
+    const s = new FakeSession();
+    fakeSessions.set("s1", s);
+    const body = { message: "do not lose this", requestId: "aborted-follow-up" };
+    expect((await followUp("s1", body)).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/sessions/s1/abort", headers: { "x-project-id": "default" } })).statusCode).toBe(200);
+    s.isStreaming = false;
+
+    const retry = await followUp("s1", body);
+    expect(retry.statusCode).toBe(409);
+    expect(retry.json()).toMatchObject({ reason: "not_streaming" });
+  });
 });
 
 describe("slash-command expansion on the way into Pi", () => {

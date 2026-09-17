@@ -234,6 +234,10 @@ mechanical:
     user-facing change.
   - Append [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md) for
     security, dependency, CI, or operational work.
+  - Every completed plan must leave at least one durable completion record:
+    a changelog entry for user-facing behavior, a maintenance-log entry for
+    internal/operational work, or both. "N/A" for both is invalid when a plan
+    is being completed.
 - `npm run verify -- docs` is the gate: a red docs ladder means the
   closing checklist is incomplete.
 

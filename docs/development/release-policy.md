@@ -47,7 +47,11 @@ If in doubt: PATCH when the changelog would be `Fixed`/`Security`; MINOR when it
 
 ## CHANGELOG.md versus maintenance-log.md
 
-The repository keeps two distinct records; do not merge them.
+The repository keeps two distinct, **fork-owned** records; do not merge them
+or create parallel "fork" copies. Upstream release notes remain upstream.
+When this fork imports upstream commits, summarize their effect on the fork
+here and link the upstream release or commit range instead of copying its
+changelog wholesale.
 
 | Record | File | Purpose & timing | Required content | Not for |
 |---|---|---|---|---|
@@ -58,6 +62,9 @@ The repository keeps two distinct records; do not merge them.
 
 An issue may be linked from the plan or handoff body, but it is **not** a
 substitute for the required local plan reference in the handoff frontmatter.
+Every completed plan must produce at least one durable record in its
+implementing PR: changelog for user-facing behavior, maintenance log for
+internal/operational work, or both.
 
 ### Changelog shape
 

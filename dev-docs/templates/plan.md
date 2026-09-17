@@ -12,7 +12,8 @@ branch: [branch-name]
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
 > final status and moves this file to `dev-docs/plans/completed/` in
-> its closing checklist — never after merge. See
+> its closing checklist — never after merge. That same PR must record the
+> result in `CHANGELOG.md`, `dev-docs/maintenance-log.md`, or both. See
 > `docs/development/workflow.md#archive-lifecycle`.
 
 **Goal:** [One or two sentences describing what this change achieves.]

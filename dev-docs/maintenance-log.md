@@ -1,5 +1,35 @@
 # Maintenance Log
 
+### 2026-09-17 — Plan-close lifecycle clarified (PR #33)
+
+- **Category:** operational
+- **Summary:** Made plan completion an explicit same-PR operation: finalize
+  status, create at least one durable changelog or maintenance record, archive
+  the plan, and remove its active handoff before merge. Clarified that the
+  existing changelog and maintenance log are fork-owned; upstream release
+  notes are linked rather than duplicated into parallel records. Improved
+  subprocess-backed repository tests so CI failures include exit status,
+  spawn errors, stdout, and stderr without weakening their assertions.
+- **Evidence:** `npm run docs:check` validates completed-plan placement,
+  handoff removal, release-record structure, and manifest coverage. Focused
+  backend tests (49), lint, and typecheck pass for the diagnostic harness.
+- **Follow-up:** None.
+
+### 2026-09-17 — Upstream v0.10.0 merge (PR #31)
+
+- **Category:** operational
+- **Summary:** Merged upstream releases v0.9.13 through
+  [v0.10.0](https://github.com/K-Dense-AI/k-dense-byok/releases/tag/v0.10.0) while
+  preserving the fork's billing, security, Modal, provenance, and session
+  overlays. Added the standing fork-overlay policy and triaged all automated
+  review findings before merge.
+- **Evidence:** Required GitHub checks were green at merge; CodeQL and
+  DeepSource passed, and focused regression tests covered the reviewed
+  session, follow-up, scheduler, Modal, and path-safety changes.
+- **Follow-up:** The completed plan retains the explicitly deferred hardening
+  items; the weekly `upstream-sync-check` workflow reports future upstream
+  drift through the `upstream-sync` issue label.
+
 This document records ongoing maintenance, security triaging, dependency lifecycle, refactoring, and infrastructure tasks performed on the fork (`kgforais1/k-dense-byok-mcp`).
 
 ---

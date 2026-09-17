@@ -97,10 +97,24 @@ class FakeSession {
   }
   followUps: { text: string; images?: unknown }[] = [];
   onFollowUp: (() => void) | null = null;
+  private followUpWait: Promise<void> | null = null;
+  private releaseFollowUpWait: (() => void) | null = null;
+  /** Park the follow-up inside session.followUp so concurrent requests overlap. */
+  holdFollowUp(): void {
+    this.followUpWait = new Promise<void>((resolve) => {
+      this.releaseFollowUpWait = resolve;
+    });
+  }
+  releaseFollowUp(): void {
+    this.releaseFollowUpWait?.();
+    this.releaseFollowUpWait = null;
+    this.followUpWait = null;
+  }
   async followUp(text: string, images?: unknown): Promise<void> {
     this.calls.push("followUp");
     this.followUps.push({ text, images });
     this.onFollowUp?.();
+    await this.followUpWait;
   }
   getFollowUpMessages(): readonly string[] {
     return this.followUps.map((f) => f.text);
@@ -585,6 +599,89 @@ describe("POST /sessions/:id/follow-up", () => {
     const retry = await followUp("s1", body);
     expect(retry.statusCode).toBe(200);
     expect(retry.json()).toMatchObject({ ok: true, duplicate: true });
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("admits concurrent retries with the same requestId exactly once", async () => {
+    const s = new FakeSession();
+    s.holdFollowUp();
+    fakeSessions.set("s1", s);
+    const body = { message: "then plot it", requestId: "concurrent-follow-up-once" };
+    const first = followUp("s1", body);
+    // The leader is parked inside session.followUp; the retry must attach as
+    // a waiter rather than enqueueing a second copy.
+    await vi.waitFor(() => {
+      expect(s.followUps).toHaveLength(1);
+    });
+    const second = followUp("s1", body);
+    // Let the retry travel from inject dispatch to the reservation while the
+    // leader stays parked; then let the leader settle for both.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    s.releaseFollowUp();
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.statusCode).toBe(200);
+    expect(r2.statusCode).toBe(200);
+    const duplicates = [r1.json(), r2.json()].filter(
+      (json) => (json as { duplicate?: boolean }).duplicate === true,
+    );
+    expect(duplicates).toHaveLength(1);
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("mirrors a post-delivery rejection to a concurrent waiter instead of double-queueing", async () => {
+    const s = new FakeSession();
+    s.holdFollowUp();
+    s.onFollowUp = () => {
+      s.isStreaming = false;
+    };
+    fakeSessions.set("s1", s);
+    const body = { message: "late", requestId: "concurrent-follow-up-reject" };
+    const first = followUp("s1", body);
+    await vi.waitFor(() => {
+      expect(s.followUps).toHaveLength(1);
+    });
+    const second = followUp("s1", body);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    s.releaseFollowUp();
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1.statusCode).toBe(409);
+    expect(r2.statusCode).toBe(409);
+    expect(r1.json()).toMatchObject({ reason: "not_streaming", restored: ["late"] });
+    expect(r2.json()).toMatchObject({ reason: "not_streaming" });
+    // The run-ended path pulls the message back; nothing stays queued.
+    expect(s.followUps).toHaveLength(0);
+  });
+
+  it("releases the reservation when no run is live so a later retry can be admitted", async () => {
+    const s = new FakeSession();
+    s.isStreaming = false;
+    fakeSessions.set("s1", s);
+    const body = { message: "later", requestId: "released-after-not-streaming" };
+    const rejected = await followUp("s1", body);
+    expect(rejected.statusCode).toBe(409);
+    s.isStreaming = true;
+    const retried = await followUp("s1", body);
+    expect(retried.statusCode).toBe(200);
+    // Exact match: a stale duplicate would carry `duplicate: true` and no queue write.
+    expect(retried.json()).toEqual({ ok: true, pending: ["later"] });
+    expect(s.followUps).toHaveLength(1);
+  });
+
+  it("releases the reservation when the run ends during delivery so a later retry can be admitted", async () => {
+    const s = new FakeSession();
+    s.onFollowUp = () => {
+      s.isStreaming = false;
+    };
+    fakeSessions.set("s1", s);
+    const body = { message: "late", requestId: "released-after-delivery-race" };
+    const rejected = await followUp("s1", body);
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.json()).toMatchObject({ reason: "not_streaming", restored: ["late"] });
+    s.isStreaming = true;
+    s.onFollowUp = null;
+    const retried = await followUp("s1", body);
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json()).toEqual({ ok: true, pending: ["late"] });
     expect(s.followUps).toHaveLength(1);
   });
 

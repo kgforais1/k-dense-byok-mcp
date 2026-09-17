@@ -87,9 +87,8 @@ M (merge resolution, ~30 overlap files — hot: session-registry.ts, skills-inst
 - [ ] Consolidate the legacy HTTP user-run lifecycle with the shared `run-pipeline` lifecycle.
   Preserve `runBroker` as the common ownership signal and add parity tests before removing the
   observer's legacy-broker compatibility check.
-- [ ] Strengthen follow-up idempotency beyond session-wide receipt invalidation: reserve request
-  IDs atomically, distinguish delivered from discarded messages, and add a frontend test for the
-  lost-response retry path.
+- [ ] Strengthen follow-up idempotency beyond atomic request-ID admission: distinguish delivered
+  from discarded messages and add a frontend test for the lost-response retry path.
 - [ ] Tighten the protected-data shell classifier for quoted command substitutions, process
   substitution, parameter expansion, and Git-Bash `/c/...` paths on Windows; keep the vendored
   guard copy byte-identical and add parity cases.

@@ -19,8 +19,9 @@ import {
 import { setFusionConfig } from "../agent/fusion-bridge.ts";
 import {
   clearFollowUpReceipts,
-  hasFollowUpReceipt,
-  rememberFollowUpReceipt,
+  settleFollowUpReceipt,
+  tryReserveFollowUpReceipt,
+  type FollowUpAdmission,
 } from "../agent/follow-up-receipts.ts";
 import {
   cancelInterviewsForSession,
@@ -1126,42 +1127,78 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         reply.code(400);
         return { detail: "requestId must be a non-empty string of at most 128 characters" };
       }
-      if (requestId && hasFollowUpReceipt(projectId, req.params.id, requestId)) {
-        return { ok: true, pending: [...session.getFollowUpMessages()], duplicate: true };
+      // FORK: reserve the idempotency key synchronously, before the first
+      // await, so concurrent retries cannot both pass the receipt check and
+      // enqueue duplicate billable work. A waiter mirrors the leader's
+      // outcome instead of enqueueing a second copy.
+      if (requestId) {
+        const reservation = tryReserveFollowUpReceipt(projectId, req.params.id, requestId);
+        if (reservation.kind === "duplicate") {
+          return { ok: true, pending: [...session.getFollowUpMessages()], duplicate: true };
+        }
+        if (reservation.kind === "pending") {
+          const outcome = await reservation.wait;
+          if (outcome.admitted) {
+            return { ok: true, pending: [...session.getFollowUpMessages()], duplicate: true };
+          }
+          reply.code(outcome.statusCode);
+          return outcome.body;
+        }
       }
-      if (!session.isStreaming) {
-        reply.code(409);
-        return { detail: "No run in flight", reason: "not_streaming" };
+      const settle = (admission: FollowUpAdmission): void => {
+        if (requestId) settleFollowUpReceipt(projectId, req.params.id, requestId, admission);
+      };
+      try {
+        if (!session.isStreaming) {
+          const body = { detail: "No run in flight", reason: "not_streaming" };
+          settle({ admitted: false, statusCode: 409, body });
+          reply.code(409);
+          return body;
+        }
+        const budget = isBudgetExceeded(projectId);
+        const followUpBilling = session.model
+          ? await billingForModel(session.model, getModelRuntime())
+          : { provider: "unknown", authType: "none" as const, billingMode: "payg" as const };
+        if (billingCountsTowardBudget(followUpBilling) && budget.exceeded) {
+          const body = {
+            detail:
+              `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
+              `$${(budget.limitUsd ?? 0).toFixed(2)}).`,
+            reason: "budget",
+          };
+          settle({ admitted: false, statusCode: 403, body });
+          reply.code(403);
+          return body;
+        }
+        await session.followUp(
+          expandChatCommand(activePaths(), message),
+          parsedImages.images.length > 0 ? parsedImages.images : undefined,
+        );
+        if (!session.isStreaming) {
+          const cleared = session.clearQueue();
+          clearFollowUpReceipts(projectId, req.params.id);
+          const body = {
+            detail: "Run ended before the message was delivered",
+            reason: "not_streaming",
+            restored: [...cleared.steering, ...cleared.followUp],
+          };
+          settle({ admitted: false, statusCode: 409, body });
+          reply.code(409);
+          return body;
+        }
+        settle({ admitted: true, statusCode: 200 });
+        return { ok: true, pending: [...session.getFollowUpMessages()] };
+      } finally {
+        // Backstop: an unexpected throw (e.g. session.followUp rejecting)
+        // must release the reservation so waiters fail fast and a later retry
+        // can re-attempt instead of hanging or reading a stale duplicate.
+        // First-wins settle makes this a no-op on paths that already settled.
+        settle({
+          admitted: false,
+          statusCode: 500,
+          body: { detail: "Follow-up failed before admission" },
+        });
       }
-      const budget = isBudgetExceeded(projectId);
-      const followUpBilling = session.model
-        ? await billingForModel(session.model, getModelRuntime())
-        : { provider: "unknown", authType: "none" as const, billingMode: "payg" as const };
-      if (billingCountsTowardBudget(followUpBilling) && budget.exceeded) {
-        reply.code(403);
-        return {
-          detail:
-            `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
-            `$${(budget.limitUsd ?? 0).toFixed(2)}).`,
-          reason: "budget",
-        };
-      }
-      await session.followUp(
-        expandChatCommand(activePaths(), message),
-        parsedImages.images.length > 0 ? parsedImages.images : undefined,
-      );
-      if (!session.isStreaming) {
-        const cleared = session.clearQueue();
-        clearFollowUpReceipts(projectId, req.params.id);
-        reply.code(409);
-        return {
-          detail: "Run ended before the message was delivered",
-          reason: "not_streaming",
-          restored: [...cleared.steering, ...cleared.followUp],
-        };
-      }
-      if (requestId) rememberFollowUpReceipt(projectId, req.params.id, requestId);
-      return { ok: true, pending: [...session.getFollowUpMessages()] };
     },
   );
 

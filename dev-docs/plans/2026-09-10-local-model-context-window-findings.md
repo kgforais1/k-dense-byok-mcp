@@ -285,9 +285,16 @@ to `default: return null`. A case was added since, at
 `server/src/agent/events.ts:412`, rendering successful compaction as a system
 card. Its first line is `if (ev.aborted || !ev.result) return null;`, and every
 failure emit sets `result: undefined` alongside `errorMessage`
-(`pi-coding-agent/dist/core/agent-session.js:1672`, `:1812`, `:1874`; the field
-is declared at `dist/core/agent-session.d.ts:65`). That early return, not a
-missing case, is what swallows the overflow message today.
+(`pi-coding-agent/dist/core/agent-session.js:1580`, `:1672`, `:1874`; the field
+is declared at `dist/core/agent-session.d.ts:65`). Those are the manual
+failure, the overflow-recovery failure, and the auto-compaction `catch`
+respectively. The fourth `result: undefined` emit, the abort branch at `:1812`,
+carries no `errorMessage` — it sets `aborted: true` instead, which is why the
+`aborted` bail has to stay ahead of the new guard. An earlier version of this
+section cited `:1812` in place of `:1580`; caught in review 2026-09-18.
+
+That early return, not a missing case, is what swallows the overflow message
+today.
 
 `server/src/agent/compaction-bridge.ts:249` also listens to
 `session_compact_failed` and logs the same `errorMessage` server-side. Useful

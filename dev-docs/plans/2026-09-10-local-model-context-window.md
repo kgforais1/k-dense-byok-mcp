@@ -287,9 +287,12 @@ window surfaces an actionable error, and today it does not.
       currently reads `if (ev.aborted || !ev.result) return null;` and then
       renders a compaction system card. Pi sets `result: undefined` and
       populates `errorMessage` on every failure emit
-      (`agent-session.js:1672`, `:1812`, `:1874`; the field is on the event
+      (`agent-session.js:1580`, `:1672`, `:1874`; the field is on the event
       type at `agent-session.d.ts:65`), so that early return is what swallows
-      the overflow message today. Before it, return
+      the overflow message today. Note which emits those are: the manual
+      failure at `:1580`, the overflow-recovery failure at `:1672`, and the
+      auto-compaction `catch` at `:1874`. The abort branch at `:1812` carries
+      no `errorMessage` at all, which is why the `aborted` bail stays first. Before it, return
       `{ type: "error", message: ev.errorMessage }` when `errorMessage` is
       present and `ev.aborted` is false. Keep the `aborted` bail ahead of it:
       a user-cancelled compaction is not an error.

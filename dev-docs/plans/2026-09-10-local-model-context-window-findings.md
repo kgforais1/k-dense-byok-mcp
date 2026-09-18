@@ -377,7 +377,16 @@ must not be applied to `openai-compatible`.
 An earlier version of this file said the Ollama divergence "was *induced* — so
 it takes an operator action rather than arriving by default". That is wrong,
 and the `all-minilm` probe above shows it: with no options sent at all,
-`/api/tags` reports 512 and `/api/ps` reports 256. Ollama picked the smaller
+`/api/tags` reports 512 and `/api/ps` reports 256. Reproduced twice on
+2026-09-18, the second time deliberately from a cold load after the keep-alive
+had expired, because a reviewer could not reach `/api/ps` while nothing was
+resident and flagged the figure as unverified:
+
+```console
+$ curl -s .../api/embed -d '{"model":"all-minilm","input":"x"}'   # no options
+$ curl -s .../api/ps      → [('all-minilm:latest', 256)]
+$ curl -s .../api/tags    → [('all-minilm:latest', 512), ('qwen3:0.6b', 40960)]
+``` Ollama picked the smaller
 figure itself. Setting `options.num_ctx: 8192` on `qwen3:0.6b` widens the gap
 to 40,960 against 8,192 — reproduced again on 2026-09-18 — but the divergence
 exists without it. Both servers diverge by default; preferring the loaded

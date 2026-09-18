@@ -343,9 +343,24 @@ overflow text instead of an empty assistant bubble.
 
       The picker path is safe by construction: `GET /ollama/models` builds
       `id: ollama/${m.name}` straight from `/api/tags` (`api/system.ts:74`), so
-      a ref that came from the picker already carries the tag. The exposure is
-      any ref from elsewhere — `DEFAULT_MODEL_ID`, a hand-typed ref, a
-      workspace entry persisted before a re-pull.
+      a ref that came from the picker already carries the tag. Every other ref
+      source is exposed, and review found four concrete ones rather than the
+      hypothetical "a hand-typed ref" an earlier draft of this section offered:
+
+      - `configuredDefaultRef` prepends `ollama/` to a verbatim
+        `DEFAULT_MODEL_ID` (`models.ts:361`), so
+        `DEFAULT_MODEL_PROVIDER=ollama DEFAULT_MODEL_ID=all-minilm` resolves to
+        `ollama/all-minilm` and reaches the builder untagged.
+      - The MCP `send_research_run` tool takes a free-form `model` string
+        (`mcp-server/server.ts:178-181`).
+      - `generateNextExperiments` takes `raw.model` as any string and hands it
+        to `resolveModel` (`next-experiments.ts:90`, `:118`).
+      - `methods-draft` does the same with `opts.model`
+        (`methods-draft.ts:184`, `:206`).
+
+      None of these validate the tag, and all of them work at runtime, because
+      Ollama resolves the missing tag itself. That is what makes the miss
+      silent.
 
 **Normalise in `cacheKey`, for Ollama only.** Append `:latest` when the id
 carries no tag, and decide "no tag" on the segment after the last `/`, not on

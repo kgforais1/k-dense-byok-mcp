@@ -1,5 +1,7 @@
 # Prompt templates
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 A prompt template is a Markdown file that expands into a full instruction when
 you type `/name` in the chat. Kady ships a few scientific ones and you can add
 your own, per project or for every project.

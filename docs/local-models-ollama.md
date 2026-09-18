@@ -1,5 +1,7 @@
 # Local models (Ollama and OpenAI-compatible servers)
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 You can run Kady entirely against local models - no OpenRouter key required for those models. This is useful if you want to keep everything on your machine or experiment without spending on API calls.
 
 Two kinds of local server are supported, and they appear as separate sections in the model picker:

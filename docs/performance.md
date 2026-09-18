@@ -1,5 +1,7 @@
 # UI performance boundaries
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 These optimizations remove redundant work; they do not drop model events or
 truncate the user's underlying data.
 

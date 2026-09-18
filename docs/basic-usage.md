@@ -1,5 +1,7 @@
 # Basic usage
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 This guide covers everything you need for day-to-day work with Kady, your AI research assistant. It assumes you've already [installed the app](./installation.md) and have it open at [http://localhost:3000](http://localhost:3000).
 
 ## Your first session

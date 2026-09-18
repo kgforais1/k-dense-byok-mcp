@@ -1,5 +1,7 @@
 # Living Lab Notebook
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Kady's Living Lab Notebook is a real-time record of its work on your project. As Kady runs analyses, writes code, and makes decisions, it automatically logs structured entries to a center-panel "Lab Notebook" tab in the chat interface. You can watch entries appear as they're authored, thread hypotheses to the evidence that tests them, pin and comment on entries, add your own notes, review past sessions, export the full log (with artifacts), print it as a PDF, or generate a Methods-section draft from it.
 
 ## What gets logged

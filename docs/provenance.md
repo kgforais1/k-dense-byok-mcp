@@ -1,5 +1,7 @@
 # Provenance
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Provenance answers one question about any result Kady produces: **where did this
 come from, and could I get it again?**
 

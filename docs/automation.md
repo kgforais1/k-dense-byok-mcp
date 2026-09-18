@@ -1,5 +1,7 @@
 # Automation: schedules and missions
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Kady's specialists can run on a timer and remember long-running work across
 restarts. Both come from the pi-subagents extension Kady embeds; Kady adds the
 server-side host that makes them fire when no chat is open, the spend-cap

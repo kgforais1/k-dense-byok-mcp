@@ -1,5 +1,7 @@
 # K-Dense BYOK: Codebase Summary
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 ## What it is
 
 K-Dense BYOK is a free, open-source, local-first AI research workspace for scientists. It provides **Kady**, an agent that can move beyond answering questions to carrying out research tasks: inspecting files, writing and running analysis code, searching and reading sources, creating figures and reports, and recording its work in a living lab notebook.

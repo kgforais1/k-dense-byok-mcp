@@ -1,5 +1,7 @@
 # Using Kady from another AI tool (Kady as an MCP server)
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Kady can act as an **MCP server**, so another AI tool — Claude Code, OpenCode,
 Codex, or anything else that speaks MCP — can run research inside a Kady
 project and read the results back. The other tool drives; Kady does the work,

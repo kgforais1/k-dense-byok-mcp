@@ -1,5 +1,7 @@
 # Sub-agents: Kady's team of specialists
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 When you give Kady a big task, it doesn't have to do everything itself. It can hand parts of the work to **sub-agents** - independent helpers that run in the background, do one focused job, and report back. Think of Kady as the lead scientist and sub-agents as the lab members it delegates to.
 
 You don't need to do anything to make this happen. Kady decides on its own when delegating makes sense - for example, reviewing code while continuing the analysis, checking every citation in a manuscript, or running three independent analyses at the same time.

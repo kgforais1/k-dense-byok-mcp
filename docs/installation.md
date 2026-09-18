@@ -1,5 +1,7 @@
 # Installation guide
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 This guide walks you through installing K-Dense BYOK from scratch. No coding experience is needed — if you can copy and paste commands into a terminal, you can do this.
 
 ## 1. Check your computer

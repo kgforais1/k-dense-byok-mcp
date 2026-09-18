@@ -1,5 +1,7 @@
 # Watchdog
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 The watchdog is an optional second model that looks at what Kady (or a
 background specialist) just did and pushes findings back into the chat. It is
 provided by the pi-subagents extension Kady embeds; Kady adds scientific

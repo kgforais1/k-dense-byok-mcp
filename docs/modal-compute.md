@@ -1,5 +1,7 @@
 # Durable Modal compute
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 K-Dense BYOK can offload expensive commands to isolated
 [Modal](https://modal.com) CPU and GPU sandboxes while the local project
 sandbox remains the source of truth. Modal jobs are project-scoped, persisted

@@ -1,5 +1,7 @@
 # Model Selection
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Each chat tab picks **one model** for Kady. There is a single flat agent — no separate "expert" or orchestrator model. Subagents spawned with the `subagent` tool inherit the chat's model unless their agent file (`sandbox/.pi/agents/*.md`) pins one, a project-level override names one, or Kady passes a per-run override.
 
 The choice is stored per tab, so different chats in the same project can use different models, and you can switch models between messages within a tab.

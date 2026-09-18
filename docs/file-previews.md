@@ -1,5 +1,7 @@
 # File previews
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Click any file in the project browser to open it in a built-in viewer — no download, no external app. Kady recognizes a wide range of scientific formats and renders each one appropriately: tables as tables, structures in 3D, spectra as plots, images as slice browsers.
 
 Everything renders **locally**. Text-based formats load instantly; binary/scientific formats are decoded by a bundled Python helper environment that installs automatically on first run. Large files are summarized or streamed slice-by-slice rather than loaded whole, so a multi-hundred-MB volume still previews quickly.

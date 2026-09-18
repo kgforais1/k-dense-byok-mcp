@@ -1,5 +1,7 @@
 # Reviewer evidence packages
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 **Evidence package** creates a local, frozen research-object ZIP for reviewer
 inspection. It is Stage 5 of the [notebook roadmap](./notebook-roadmap.md), distinct
 from the existing lightweight notebook ZIP export.

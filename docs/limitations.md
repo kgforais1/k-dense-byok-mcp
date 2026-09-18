@@ -1,5 +1,7 @@
 # Known Limitations
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 K-Dense BYOK is in beta. Kady is a single flat agent on the [Pi coding-agent SDK](https://pi.dev) with file/shell tools and a `subagent` delegation tool (pi-subagents). The limitations worth knowing are below.
 
 ## Skills depend on model quality

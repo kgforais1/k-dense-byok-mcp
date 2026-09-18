@@ -95,9 +95,12 @@ Three results drive the design:
   `loaded_context_length: 64000` against a `max_context_length` of `128000` on
   a default install. Ollama does it too, and an earlier draft was wrong to call
   its divergence operator-induced: loading `all-minilm` with no options at all
-  left `/api/tags` reporting 512 while `/api/ps` reported 256 (2026-09-18).
-  Setting `options.num_ctx` widens the gap — 40,960 against 8,192 — but does
-  not create it. Preferring the loaded figure is load-bearing on both.
+  left `/api/tags` reporting 512 while `/api/ps` reported 256 (2026-09-18). The
+  mechanism is the model's own Modelfile, which pins `num_ctx 256` — so the
+  divergence is publisher-controlled and ships with the model, which is worse
+  than operator-controlled because nobody involved has to do anything wrong to
+  get it. Setting `options.num_ctx` widens the gap — 40,960 against 8,192 — but
+  does not create it. Preferring the loaded figure is load-bearing on both.
 
 The symptom this is *hypothesised* to fix — a `done` run with an empty
 assistant message and no error frame — is not a verified consequence of the

@@ -386,7 +386,28 @@ resident and flagged the figure as unverified:
 $ curl -s .../api/embed -d '{"model":"all-minilm","input":"x"}'   # no options
 $ curl -s .../api/ps      → [('all-minilm:latest', 256)]
 $ curl -s .../api/tags    → [('all-minilm:latest', 512), ('qwen3:0.6b', 40960)]
-``` Ollama picked the smaller
+```
+
+**And the mechanism is the model's own Modelfile**, which review surfaced and
+is worth recording because it generalises. `/api/show` reports the pinned
+parameter next to the architectural figure:
+
+```console
+$ curl -s .../api/show -d '{"name":"all-minilm"}'
+parameters:   'num_ctx                        256'
+model_info:   {'bert.context_length': 512}
+
+$ curl -s .../api/show -d '{"name":"qwen3:0.6b"}'
+parameters:   'repeat_penalty 1 / stop … / temperature 0.6 / top_k 20 / top_p 0.95'
+model_info:   {'qwen3.context_length': 40960}
+```
+
+`all-minilm` pins `num_ctx 256`; `qwen3:0.6b` pins no `num_ctx` at all, which
+is why its two figures agreed until an explicit `options.num_ctx` was sent. So
+the divergence is *publisher*-controlled and arrives with the pull. That is
+worse than operator-controlled: nobody involved has to do anything wrong to end
+up with a declared window twice the real one, and an architectural-only probe
+over-declares on any model whose Modelfile pins a smaller `num_ctx`. Ollama picked the smaller
 figure itself. Setting `options.num_ctx: 8192` on `qwen3:0.6b` widens the gap
 to 40,960 against 8,192 — reproduced again on 2026-09-18 — but the divergence
 exists without it. Both servers diverge by default; preferring the loaded

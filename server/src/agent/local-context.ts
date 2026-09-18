@@ -1,0 +1,268 @@
+/**
+ * Canonical-key cache for local-model context windows, plus the probes that
+ * fill it. Phase 2 of `dev-docs/plans/2026-09-10-local-model-context-window.md`.
+ *
+ * The discovery routes (`GET /ollama/models`, `GET /openai-compatible/models`)
+ * write into this cache; the model builders (`buildOllamaModel`,
+ * `buildOpenAICompatibleModel`) read it back synchronously. Nothing on the run
+ * path probes — see the plan's "Probe from the discovery routes" decision.
+ *
+ * KEY FORM — SERVER ROOT, not the model endpoint. The builders register the
+ * model `baseUrl` as `<root>/v1`, but every probe endpoint lives on the root
+ * (`/api/tags`, `/api/ps`, `/api/v0/models`). The cache key therefore uses the
+ * root form, and `normalizeBaseUrl` strips a trailing `/v1` (after trailing
+ * slashes) so that a caller holding either form lands on the same key. Both
+ * the routes and the builders pass their root constants (`OLLAMA_BASE_URL`,
+ * `OPENAI_COMPATIBLE_BASE_URL`); the `/v1` strip is belt-and-braces so a
+ * future caller holding the model's `baseUrl` field still hits the entry the
+ * route wrote instead of silently falling back.
+ *
+ * That strip assumes the configured base URL is the server root, which is
+ * this repo's existing convention — the discovery routes and the builders all
+ * append `/v1` themselves — so a trailing `/v1` can only be the model
+ * endpoint. A base URL that genuinely ends in `/v1` is already broken for the
+ * `/v1/models` route today, so nothing here regresses it.
+ *
+ * Entries never expire — they live until overwritten. Expiry would turn a
+ * stale-but-loud value into the fallback, which is exactly the silent
+ * under-declaration this module exists to remove (see the plan's "Do not
+ * expire entries" decision).
+ */
+const PROBE_TIMEOUT_MS = 2000;
+
+interface ContextEntry {
+  architectural?: number;
+  loaded?: number;
+}
+
+const cache = new Map<string, ContextEntry>();
+const pending = new Map<string, Promise<void>>();
+
+function isPositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/** Root form: trailing slashes stripped (as the builders/routes already do),
+ * then one trailing `/v1` segment so the model endpoint and the server root
+ * share a key. */
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+/**
+ * Ollama-only `:latest` normalisation. "No tag" is decided on the segment
+ * after the last `/`, not on the whole string: an id may be
+ * registry-qualified (`hf.co/user/model:Q4_K_M`, already tagged) or carry a
+ * registry port (`localhost:5000/foo`, untagged despite the colon).
+ * OpenAI-compatible ids are never normalised — LM Studio ids routinely carry
+ * no colon at all, so the same rule would tag every id and break every key.
+ */
+function normalizeModelId(providerId: string, modelId: string): string {
+  if (providerId !== "ollama") return modelId;
+  const tail = modelId.slice(modelId.lastIndexOf("/") + 1);
+  return tail.includes(":") ? modelId : `${modelId}:latest`;
+}
+
+/** Canonical cache key: `(providerId, normalizedBaseUrl, bareModelId)`. The
+ * model id is the bare id the builders see (the `ollama/` /
+ * `openai-compatible/` ref prefix is stripped by `resolveModel` before the
+ * builders run), so a ref-keyed entry would miss on every read. */
+export function cacheKey(
+  providerId: string,
+  baseUrl: string,
+  modelId: string,
+): string {
+  return `${providerId}\n${normalizeBaseUrl(baseUrl)}\n${normalizeModelId(providerId, modelId)}`;
+}
+
+/** `loaded ?? architectural`, recomputed on every read. The two figures are
+ * stored in separate slots and merged here — never a merged stored number —
+ * because the loaded figure is the transient of the pair. */
+export function getContextWindow(
+  providerId: string,
+  baseUrl: string,
+  modelId: string,
+): number | undefined {
+  const entry = cache.get(cacheKey(providerId, baseUrl, modelId));
+  return entry?.loaded ?? entry?.architectural;
+}
+
+/** Writes only a positive integer; anything else (including `undefined`) is a
+ * no-op that leaves an existing entry alone. A failed refresh is therefore a
+ * no-op, never a downgrade. */
+export function recordArchitectural(
+  key: string,
+  value: number | undefined,
+): void {
+  if (!isPositiveInt(value)) return;
+  let entry = cache.get(key);
+  if (!entry) {
+    entry = {};
+    cache.set(key, entry);
+  }
+  entry.architectural = value;
+}
+
+/**
+ * Same positive-integer rule as `recordArchitectural`, except `undefined`
+ * clears the loaded slot instead of no-op'ing. That is how an unloaded model
+ * reverts to its architectural figure.
+ */
+export function recordLoaded(key: string, value: number | undefined): void {
+  if (value === undefined) {
+    const entry = cache.get(key);
+    if (entry) delete entry.loaded;
+    return;
+  }
+  if (!isPositiveInt(value)) return;
+  let entry = cache.get(key);
+  if (!entry) {
+    entry = {};
+    cache.set(key, entry);
+  }
+  entry.loaded = value;
+}
+
+/**
+ * Best-effort probe of the loaded context figures for one server. Never
+ * rejects: a timeout, dead daemon, 404 or malformed body resolves normally
+ * with no cache write. Its product is the cache write, not a return value.
+ *
+ * Concurrent callers for the same `(providerId, baseUrl)` join the in-flight
+ * promise instead of starting a rival — which also closes the write-
+ * reordering window. The pending entry is cleared on settle (success or
+ * failure) so one failed probe cannot block every later retry.
+ */
+export function probeLoaded(providerId: string, baseUrl: string): Promise<void> {
+  const root = normalizeBaseUrl(baseUrl);
+  const dedupKey = `${providerId}\n${root}`;
+  const inFlight = pending.get(dedupKey);
+  if (inFlight) return inFlight;
+  const task = runProbe(providerId, root).finally(() => {
+    if (pending.get(dedupKey) === task) pending.delete(dedupKey);
+  });
+  pending.set(dedupKey, task);
+  return task;
+}
+
+/** `runProbe` cannot reject (every fetch is failure-contained in `getJson`),
+ * but the `try/catch` stays as a second layer so the `Promise<void>`
+ * never-rejects contract does not depend on auditing every line below. */
+async function runProbe(providerId: string, root: string): Promise<void> {
+  try {
+    if (providerId === "ollama") {
+      await probeOllama(root);
+    } else if (providerId === "openai-compatible") {
+      await probeOpenAICompatible(root);
+    }
+  } catch {
+    // Never rejects — a failed probe is a no-op, not an error.
+  }
+}
+
+/** One fetch with its own `AbortController` and timeout, matching the
+ * discovery routes. Returns `undefined` on any failure (network error,
+ * abort, non-2xx, malformed body); callers treat that as "leave the cache
+ * alone". */
+async function getJson(url: string): Promise<unknown> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { signal: ctrl.signal });
+    if (!resp.ok) return undefined;
+    return (await resp.json()) as unknown;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function arrayField(body: unknown, field: string): unknown[] | undefined {
+  if (body !== null && typeof body === "object") {
+    const value = (body as Record<string, unknown>)[field];
+    if (Array.isArray(value)) return value;
+  }
+  return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+/**
+ * Clears the loaded slot of every cached model on this server that `reported`
+ * does not contain. Called only after a *successful* loaded-probe: absence
+ * from a good answer is what unloading looks like, while a failed probe
+ * clears nothing (every transient blip would otherwise wipe a good figure).
+ */
+function clearUnreportedLoaded(
+  providerId: string,
+  root: string,
+  reported: Set<string>,
+): void {
+  const prefix = `${providerId}\n${root}\n`;
+  for (const [key, entry] of cache) {
+    if (key.startsWith(prefix) && !reported.has(key) && entry.loaded !== undefined) {
+      delete entry.loaded;
+    }
+  }
+}
+
+async function probeOllama(root: string): Promise<void> {
+  // `/api/ps` only. The architectural figure comes from `/api/tags`, which the
+  // discovery route has already fetched to build its response, so it records
+  // that inline with `recordArchitectural` rather than paying for a second
+  // fetch here. That keeps a picker open at the budgeted two calls — the
+  // route's `/api/tags` plus this one — and is why the Ollama badge is right
+  // on the *first* open while LM Studio's takes two.
+  //
+  // `/api/ps` returns every running model at once, so one call covers all of
+  // them. It lists running models only, so a cached model missing from a good
+  // answer has unloaded.
+  const ps = await getJson(`${root}/api/ps`);
+  const psModels = arrayField(ps, "models");
+  if (!psModels) return;
+  const reported = new Set<string>();
+  for (const model of psModels) {
+    const row = asRecord(model);
+    const name = row?.["name"];
+    if (typeof name !== "string" || !name) continue;
+    const key = cacheKey("ollama", root, name);
+    reported.add(key);
+    const contextLength = asNumber(row?.["context_length"]);
+    if (contextLength !== undefined) recordLoaded(key, contextLength);
+  }
+  clearUnreportedLoaded("ollama", root, reported);
+}
+
+async function probeOpenAICompatible(root: string): Promise<void> {
+  // LM Studio's own endpoint carries both figures per model. Every listed
+  // entry gets its architectural figure recorded regardless of load state —
+  // never skip an entry because it is not loaded. A listed entry without a
+  // loaded figure is not loaded, so its loaded slot is cleared (revert to
+  // architectural); entries missing from a good answer are cleared the same
+  // way. `loaded_context_length` wins wherever present: it is what the next
+  // request is measured against, and it can be lower.
+  const body = await getJson(`${root}/api/v0/models`);
+  const rows =
+    arrayField(body, "data") ?? (Array.isArray(body) ? body : undefined);
+  if (!rows) return;
+  const reported = new Set<string>();
+  for (const row of rows) {
+    const entry = asRecord(row);
+    const id = entry?.["id"];
+    if (typeof id !== "string" || !id) continue;
+    const key = cacheKey("openai-compatible", root, id);
+    reported.add(key);
+    recordArchitectural(key, asNumber(entry?.["max_context_length"]));
+    recordLoaded(key, asNumber(entry?.["loaded_context_length"]));
+  }
+  clearUnreportedLoaded("openai-compatible", root, reported);
+}

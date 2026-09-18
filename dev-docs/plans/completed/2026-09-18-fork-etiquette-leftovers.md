@@ -18,7 +18,7 @@ branch: fork-etiquette-leftovers
 
 **Goal:** Finish the deliberately-deferred fork-etiquette items in todo §6, so every reader-facing surface either names this fork or stops presenting upstream's channels and unverifiable counts as this fork's own.
 
-Recorded as [todo "Make this repo read as a fork"](../todo.md) (section 6, deleted on shipment in PR #34).
+Recorded as [todo "Make this repo read as a fork"](../../todo.md) (section 6, deleted on shipment in PR #34).
 
 ## What is actually there
 

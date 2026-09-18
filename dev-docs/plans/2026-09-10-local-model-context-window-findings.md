@@ -219,7 +219,11 @@ case.**
 
 On Ollama, one `POST /api/generate` carrying `options.num_ctx: 8192` left
 `/api/tags` still reporting `40960` while `/api/ps` reported `8192`. A
-tags-only probe would over-declare by 5x on this exact machine.
+tags-only probe would over-declare by 5x on this exact machine. (**Corrected
+2026-09-18:** this section went on to say the Ollama divergence "takes an
+operator action rather than arriving by default". It does not — see
+[Ollama's loaded/architectural divergence is not operator-induced](#ollamas-loadedarchitectural-divergence-is-not-operator-induced)
+below. `num_ctx` widens the gap; it does not create it.)
 
 On LM Studio the divergence needs no user action at all. Loading
 `allenai/olmocr-2-7b` with a single chat completion and re-probing returned
@@ -319,9 +323,65 @@ keys: ['arch', 'capabilities', 'compatibility_type', 'id',
        'state', 'type']
 ```
 
-The Ollama half — whether `/api/tags` reports `llama3:latest` where the ref
-carries `llama3` — is still open. No daemon was running on this machine on
-2026-09-18.
+### Ollama's model-name round trip needs normalisation
+
+The other half of Phase 1's open item, closed the same day by starting the
+daemon (0.33.2) and pulling a model that lands untagged.
+
+`all-minilm` was pulled with no tag. Ollama stored it as `all-minilm:latest`,
+and **every** listing endpoint reports only that canonical form:
+
+```console
+$ curl -s http://localhost:11434/api/tags     # (name, details.context_length)
+[('all-minilm:latest', 512), ('qwen3:0.6b', 40960)]
+
+$ curl -s http://localhost:11434/v1/models    # ids
+['all-minilm:latest', 'qwen3:0.6b']
+
+$ curl -s http://localhost:11434/api/ps       # (name, context_length)
+[('all-minilm:latest', 256), ('qwen3:0.6b', 8192)]
+```
+
+But a *request* accepts either form — Ollama normalises the missing tag:
+
+```console
+$ curl -s http://localhost:11434/api/embed -d '{"model":"all-minilm","input":"hi"}'
+{"model":"all-minilm","embeddings":[[-0.09047712, …
+
+$ curl -s http://localhost:11434/api/embed -d '{"model":"all-minilm:latest","input":"hi"}'
+{"model":"all-minilm:latest","embeddings":[[-0.09047712, …
+```
+
+Identical embeddings, so they are one model under two names. That is exactly
+the failure the plan feared: the probe always writes `all-minilm:latest`, a
+bare `all-minilm` ref looks up `all-minilm`, the run works, and the cache
+misses forever on the fallback.
+
+A name with no such model at all is rejected outright, on both APIs — so this
+is specifically the missing-tag case, not a general aliasing one:
+
+```console
+$ curl -s http://localhost:11434/v1/chat/completions -d '{"model":"qwen3", …}'
+{"error":{"message":"model 'qwen3' not found","type":"not_found_error", …}}
+```
+
+The picker path is safe by construction: `GET /ollama/models` builds
+`id: ollama/${m.name}` straight from `/api/tags` (`server/src/api/system.ts:74`),
+so a picker-sourced ref already carries the tag. The exposure is refs from
+elsewhere — `DEFAULT_MODEL_ID`, a hand-typed ref, a workspace entry persisted
+before a re-pull. The plan's Phase 1 records the normalisation rule and why it
+must not be applied to `openai-compatible`.
+
+### Ollama's loaded/architectural divergence is not operator-induced
+
+An earlier version of this file said the Ollama divergence "was *induced* — so
+it takes an operator action rather than arriving by default". That is wrong,
+and the `all-minilm` probe above shows it: with no options sent at all,
+`/api/tags` reports 512 and `/api/ps` reports 256. Ollama picked the smaller
+figure itself. Setting `options.num_ctx: 8192` on `qwen3:0.6b` widens the gap
+to 40,960 against 8,192 — reproduced again on 2026-09-18 — but the divergence
+exists without it. Both servers diverge by default; preferring the loaded
+figure is load-bearing on both for the same reason.
 
 ### Custom model servers already provide the escape hatch
 

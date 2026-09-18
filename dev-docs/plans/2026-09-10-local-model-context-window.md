@@ -90,11 +90,14 @@ Three results drive the design:
   carries `details.context_length`. The standard `/v1/models` carries neither,
   which is why the original 32,768 guess was reasonable for the endpoint it
   was looking at.
-- **The loaded figure diverges from the architectural one on both servers.** On
-  LM Studio this happens with no user action: a default install loaded
-  `allenai/olmocr-2-7b` at `loaded_context_length: 64000` against a
-  `max_context_length` of `128000`. On Ollama the divergence is *induced* by an
-  `options.num_ctx`. Preferring the loaded figure is load-bearing on both.
+- **The loaded figure diverges from the architectural one on both servers, by
+  default on both.** LM Studio loaded `allenai/olmocr-2-7b` at
+  `loaded_context_length: 64000` against a `max_context_length` of `128000` on
+  a default install. Ollama does it too, and an earlier draft was wrong to call
+  its divergence operator-induced: loading `all-minilm` with no options at all
+  left `/api/tags` reporting 512 while `/api/ps` reported 256 (2026-09-18).
+  Setting `options.num_ctx` widens the gap — 40,960 against 8,192 — but does
+  not create it. Preferring the loaded figure is load-bearing on both.
 
 The symptom this is *hypothesised* to fix — a `done` run with an empty
 assistant message and no error frame — is not a verified consequence of the
@@ -329,25 +332,44 @@ overflow text instead of an empty assistant bubble.
       from `/v1/models` are byte-identical to those from `/api/v0/models`, so
       the route's list and the probe's writes share a key. See the findings
       file for the captured ids.
-- [ ] **Ollama's model-name round trip is still open, and still blocks Phase 2.**
-      `/api/tags` returns names that usually carry a tag (`llama3:latest`),
-      while the bare id `resolveModel` hands the builder comes from the user's
-      ref (`models.ts:486`), which may omit it. If `llama3` and `llama3:latest`
-      can denote one model they are two cache keys and every lookup misses —
-      silently, because the probe succeeds and the entry is written. Settle
-      which form each side uses and normalise in `cacheKey` if they differ,
-      **before** writing `local-context.ts`. No daemon was running on
-      2026-09-18, so this could not be closed with the rest.
+- [x] **Ollama's model-name round trip, verified 2026-09-18. The hazard is
+      real and needs normalisation.** Ollama accepts an untagged `all-minilm`
+      and a tagged `all-minilm:latest` as the same model, but every listing
+      endpoint — `/api/tags`, `/api/ps` and `/v1/models` — reports only the
+      canonical `all-minilm:latest`. So a probe always writes the tagged key,
+      while a ref that omits the tag resolves to a bare id and looks up an
+      untagged one. That run works and misses the cache forever, silently, on
+      the fallback. Evidence is in the findings file.
+
+      The picker path is safe by construction: `GET /ollama/models` builds
+      `id: ollama/${m.name}` straight from `/api/tags` (`api/system.ts:74`), so
+      a ref that came from the picker already carries the tag. The exposure is
+      any ref from elsewhere — `DEFAULT_MODEL_ID`, a hand-typed ref, a
+      workspace entry persisted before a re-pull.
+
+**Normalise in `cacheKey`, for Ollama only.** Append `:latest` when the id
+carries no tag, and decide "no tag" on the segment after the last `/`, not on
+the whole string: an Ollama id may be registry-qualified
+(`hf.co/user/model:Q4_K_M`) and a registry host may carry a port, so a bare
+"contains a colon" test would treat `localhost:5000/foo` as already tagged.
+
+Do **not** apply this to `openai-compatible`. LM Studio ids are not tagged and
+routinely contain no colon at all (`qwen/qwen3.8-27b-mlx-6bit-xhigh`), so the
+same rule there would append `:latest` to every id and break every key. This is
+the one place the two providers' key handling legitimately differs, and it is
+another reason the builders stay on parallel paths.
 
 **Exit criteria:** both field names quoted from live output, and the Ollama
-round trip resolved.
+round trip resolved. Both are now done; Phase 1 is complete.
 
 ### Phase 2 — Cache and probe
 
 - [ ] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
       `(providerId, normalizedBaseUrl, bareModelId)`, no TTL. Export five
       things so the callers do not each invent a shape:
-      `cacheKey(providerId, baseUrl, modelId): string`;
+      `cacheKey(providerId, baseUrl, modelId): string`, normalising the base
+      URL and — for `ollama` only — appending `:latest` to an untagged model
+      id, per the Phase 1 rule above;
       `getContextWindow(providerId, baseUrl, modelId): number | undefined`
       returning `loaded ?? architectural`; `recordArchitectural(key, value)`
       and `recordLoaded(key, value | undefined)`; and

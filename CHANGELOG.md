@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added fork policies and architecture guidelines in `AGENTS.md` and `dev-docs/`.
 
 ### Changed
+- **Fork attribution cleanup** ([#34](https://github.com/kgforais1/k-dense-byok-mcp/pull/34)): README no longer shows the K-Dense social badges (MIT license badge kept), the unverifiable "149 skills" figure is replaced by the catalogue source in four prose sites, all 28 user docs carry a one-line fork notice, and `docs:check` now asserts the workflows (326) / databases (229) counts match the data files.
 - **Single run-start path** ([#18](https://github.com/kgforais1/k-dense-byok-mcp/pull/18)): `prepareRun` no longer writes status codes onto a `FastifyReply`; it returns a typed rejection, and the new `beginRun` is shared by `POST /sessions/:id/run` and the MCP adapter. The SSE route attaches its stream as an observer of the already-detached run rather than owning it.
 - Standardized `npm ci` across both backend and frontend GitHub Actions jobs for deterministic dependency installation.
 - Standardized `"typecheck": "tsc --noEmit"` script in `web/package.json`.

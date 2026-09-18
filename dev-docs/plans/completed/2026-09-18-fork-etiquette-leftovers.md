@@ -1,13 +1,13 @@
 ---
 title: "Fork etiquette leftovers — attribution cleanup"
-status: accepted
+status: completed
 created: 2026-09-18
 branch: fork-etiquette-leftovers
 ---
 
 # Fork etiquette leftovers — attribution cleanup Implementation Plan
 
-**Status:** Accepted — implementation underway on branch `fork-etiquette-leftovers`
+**Status:** Completed and merged in PR #34
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -18,7 +18,7 @@ branch: fork-etiquette-leftovers
 
 **Goal:** Finish the deliberately-deferred fork-etiquette items in todo §6, so every reader-facing surface either names this fork or stops presenting upstream's channels and unverifiable counts as this fork's own.
 
-Recorded as [todo "Make this repo read as a fork"](../todo.md#6-fork-etiquette).
+Recorded as [todo "Make this repo read as a fork"](../todo.md) (section 6, deleted on shipment in PR #34).
 
 ## What is actually there
 

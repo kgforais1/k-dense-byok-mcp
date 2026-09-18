@@ -479,27 +479,31 @@ function checkPlans() {
 // Catalogue count assertions
 // ---------------------------------------------------------------------------
 
-/** Catalogue data files whose entry counts prose must assert. */
+/** Catalogue data files whose entry counts prose must assert, with the
+ * claim keywords the count must appear next to. */
 const DATA_COUNT_ASSERTIONS = [
   {
     data: "web/src/data/workflows.json",
     prose: ["README.md", "docs/basic-usage.md", "docs/codebase-summary.md"],
+    near: ["workflow"],
   },
   {
     data: "web/src/data/databases.json",
     prose: ["README.md", "docs/basic-usage.md", "docs/codebase-summary.md"],
+    near: ["database", "data resource"],
   },
 ];
 
 /**
- * Assert the entry counts of web/src/data/*.json appear in prose, so the
- * documented figures cannot drift from the data silently. Minimal fixture
- * trees carry no catalogue data, so the check only enforces when the data
- * file exists.
+ * Assert the entry counts of web/src/data/*.json appear in prose next to
+ * their catalogue claim, so the documented figures cannot drift from the
+ * data silently — a bare matching number elsewhere in the file does not
+ * count. Minimal fixture trees carry no catalogue data, so the check only
+ * enforces when the data file exists.
  */
 function checkDataCounts() {
   const failures = [];
-  for (const { data, prose } of DATA_COUNT_ASSERTIONS) {
+  for (const { data, prose, near } of DATA_COUNT_ASSERTIONS) {
     const dataPath = path.join(REPO_ROOT, data);
     if (!exists(dataPath)) continue;
     let entries;
@@ -513,13 +517,16 @@ function checkDataCounts() {
       failures.push(`${data}: must be a JSON array of catalogue entries`);
       continue;
     }
-    const count = new RegExp(`\\b${entries.length}\\b`);
+    const claim = new RegExp(
+      `\\b${entries.length}\\b.{0,60}(?:${near.join("|")})|(?:${near.join("|")}).{0,60}\\b${entries.length}\\b`,
+      "i",
+    );
     for (const proseRel of prose) {
       const prosePath = path.join(REPO_ROOT, proseRel);
       if (!exists(prosePath)) continue; // minimal fixture trees carry no prose
-      if (!count.test(readText(prosePath))) {
+      if (!claim.test(readText(prosePath))) {
         failures.push(
-          `${proseRel}: does not mention the ${data} entry count (${entries.length}) — update the prose or the data together`,
+          `${proseRel}: does not mention the ${data} entry count (${entries.length}) near a catalogue claim — update the prose or the data together`,
         );
       }
     }

@@ -365,7 +365,17 @@ describe("scripts/docs-check.mjs", () => {
       const result = runInTmp();
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "README.md: does not mention the web/src/data/workflows.json entry count (3)",
+        "README.md: does not mention the web/src/data/workflows.json entry count (3) near a catalogue claim",
+      );
+    });
+
+    it("flags a catalogue count detached from its claim", () => {
+      writeMinimalLayout("# README\n\n3 blind mice, 3 cheeses.\n");
+      writeFile("web/src/data/workflows.json", JSON.stringify([1, 2, 3]));
+      const result = runInTmp();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "README.md: does not mention the web/src/data/workflows.json entry count (3) near a catalogue claim",
       );
     });
 

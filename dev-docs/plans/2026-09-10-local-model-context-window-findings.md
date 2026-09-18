@@ -107,6 +107,19 @@ hypothesis rather than a finding. Phase 4 exists to test it, and if the symptom
 survives the fix then the cause is elsewhere and this plan has not addressed
 it.
 
+**Resolved 2026-09-18, and the hypothesis was wrong.** Phase 4 ran the whole
+feature against live servers and compaction never fired in any configuration,
+including `reserveTokens` at its 64,000 maximum against a declared 65,536. The
+symptom is separately accounted for: it was seen through the *MCP client*, and
+`e2022ea` (2026-09-09, "feat(mcp): tell a client when a finished run produced
+nothing") added `producedOutput` precisely because a run that finished with
+nothing was indistinguishable from success on that surface. The error-frame
+path was never missing on the HTTP API — `session.state.errorMessage` was
+already published before 2026-09-08. Read this whole subsection as the
+reasoning that motivated the work, not as an explanation of the symptom. The
+hardcoded 32,768 was a real defect independently of it. Full detail is in the
+plan's "Phase 4 results".
+
 Two consequences for this plan. The fix is a correctness fix rather than a
 tuning nicety, and any fallback we choose has to clear 44,409 *plus*
 `reserveTokens`, not merely 44,409.

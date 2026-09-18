@@ -497,7 +497,9 @@ returns the probed figure with a warm cache and 128,000 with a cold one.
       calling for a bigger number.
 
 **Exit criteria:** the Phase 2 external-client symptom does not reproduce, or is
-recorded as unexplained with the compaction hypothesis ruled out.
+recorded as unexplained with the compaction hypothesis ruled out. **Met**: it
+does not reproduce, the compaction hypothesis is ruled out by measurement, and
+the symptom is separately accounted for by `e2022ea` — see below.
 
 ### Phase 4 results, 2026-09-18
 
@@ -545,6 +547,38 @@ the symptom itself did not reproduce in any configuration. Whatever produced
 that empty bubble on 2026-09-08, this plan has not demonstrated it was
 compaction. What it has demonstrated is that the declared window is now
 truthful and that both failure directions are visible.
+
+**3. The symptom had already been addressed, on a different surface, the day
+after it was observed.** This is why it could not be reproduced here, and it
+closes the question rather than leaving it open.
+
+The empty assistant message was seen on 2026-09-08 during the MCP Phase 2
+external-client check — through the **MCP client**, not the chat UI. On
+2026-09-09, `e2022ea` ("feat(mcp): tell a client when a finished run produced
+nothing") added `producedOutput` to the MCP run-status tools. Its own comment
+in `server/src/mcp-server/server.ts:69-71` states the symptom almost verbatim:
+
+> `status: "done"` alone cannot say this: a human watching a chat UI sees an
+> empty bubble and retries, while an MCP client reads `done` as success.
+
+So the "no error frame, run still `done`" half was an MCP **reporting** gap: a
+run that finished with nothing was indistinguishable from one that succeeded.
+The tool description now tells clients that `done` with `producedOutput: false`
+is a run to retry, not an answer.
+
+The error-frame path itself was never missing. `session.state.errorMessage` was
+already published from `sessions.ts` before 2026-09-08 (it sits at `:772` in
+the pre-`562f9f1` file), which is why driving the HTTP API directly always
+produced a visible error here.
+
+The conclusion for this plan is that the two problems were never causally
+linked. The hardcoded 32,768 was a real defect on its own terms — the declared
+floor exceeded the declared ceiling — and it is fixed and measured. The empty
+bubble was a separate reporting defect on the MCP surface, fixed separately.
+This plan's Phase 0 and its compaction story were built to explain a symptom
+that belonged to neither. Phase 0 is still worth keeping as defensive
+hardening; the compaction narrative should not be repeated as though it were
+established.
 
 Two smaller notes. Kady's prompt measured **39,582 tokens** here, against the
 44,409 recorded on 2026-09-08 — re-measure rather than quoting either as a

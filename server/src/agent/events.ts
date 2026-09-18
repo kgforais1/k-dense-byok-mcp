@@ -410,7 +410,14 @@ export function toClientFrame(
       return { type: "message_start", role };
     }
     case "compaction_end": {
-      if (ev.aborted || !ev.result) return null;
+      // A failed compaction carries `result: undefined` and an `errorMessage`,
+      // so bailing on the missing result alone swallowed context-overflow and
+      // left the run ending in an empty assistant bubble. Abort is checked
+      // first because a user-cancelled compaction is not an error. No `kind`:
+      // an overflow is not a spend-cap block, so the client renders it plain.
+      if (ev.aborted) return null;
+      if (ev.errorMessage) return { type: "error", message: ev.errorMessage };
+      if (!ev.result) return null;
       // One code path client-side: a compaction renders as a system card.
       return customMessageFrame(
         {

@@ -12,6 +12,9 @@
  *  4. Active handoffs in dev-docs/handoffs/active/ match the schema.
  *  5. Plan placement: active plans live under dev-docs/plans/ and
  *     completed plans live under dev-docs/plans/completed/.
+ *  6. Catalogue entry counts in web/src/data/*.json are asserted in
+ *     prose (README.md, docs/basic-usage.md, docs/codebase-summary.md),
+ *     so the documented figures cannot drift from the data.
  *
  * No network access. Dependency-free. Exit code 0 on success, 1 on
  * failure with clear descriptions to stderr.
@@ -473,6 +476,58 @@ function checkPlans() {
 }
 
 // ---------------------------------------------------------------------------
+// Catalogue count assertions
+// ---------------------------------------------------------------------------
+
+/** Catalogue data files whose entry counts prose must assert. */
+const DATA_COUNT_ASSERTIONS = [
+  {
+    data: "web/src/data/workflows.json",
+    prose: ["README.md", "docs/basic-usage.md", "docs/codebase-summary.md"],
+  },
+  {
+    data: "web/src/data/databases.json",
+    prose: ["README.md", "docs/basic-usage.md", "docs/codebase-summary.md"],
+  },
+];
+
+/**
+ * Assert the entry counts of web/src/data/*.json appear in prose, so the
+ * documented figures cannot drift from the data silently. Minimal fixture
+ * trees carry no catalogue data, so the check only enforces when the data
+ * file exists.
+ */
+function checkDataCounts() {
+  const failures = [];
+  for (const { data, prose } of DATA_COUNT_ASSERTIONS) {
+    const dataPath = path.join(REPO_ROOT, data);
+    if (!exists(dataPath)) continue;
+    let entries;
+    try {
+      entries = JSON.parse(readText(dataPath));
+    } catch (err) {
+      failures.push(`${data}: invalid JSON: ${err.message}`);
+      continue;
+    }
+    if (!Array.isArray(entries)) {
+      failures.push(`${data}: must be a JSON array of catalogue entries`);
+      continue;
+    }
+    const count = new RegExp(`\\b${entries.length}\\b`);
+    for (const proseRel of prose) {
+      const prosePath = path.join(REPO_ROOT, proseRel);
+      if (!exists(prosePath)) continue; // minimal fixture trees carry no prose
+      if (!count.test(readText(prosePath))) {
+        failures.push(
+          `${proseRel}: does not mention the ${data} entry count (${entries.length}) — update the prose or the data together`,
+        );
+      }
+    }
+  }
+  return failures;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -482,6 +537,7 @@ const allFailures = [
   ...checkManifest(),
   ...checkHandoffs(),
   ...checkPlans(),
+  ...checkDataCounts(),
 ];
 
 if (allFailures.length > 0) {

@@ -321,6 +321,61 @@ describe("scripts/docs-check.mjs", () => {
       expect(result.status, commandDiagnostics(result)).toBe(0);
       expect(result.stdout).toContain("docs:check: ok");
     });
+
+    const MINIMAL_MANIFEST = {
+      categories: {
+        "entry-point": "Entry points",
+        "runtime-service": "Runtime services",
+        "persistence-boundary": "Persistence boundaries",
+        policy: "Policy files",
+        verification: "Verification files",
+        "developer-documentation": "Developer docs",
+        "product-documentation": "Product docs",
+        "release-record": "Release records",
+      },
+      entries: [
+        {
+          id: "agents",
+          category: "policy",
+          path: "AGENTS.md",
+          name: "Root policy",
+          description: "x",
+        },
+      ],
+    };
+
+    const POINTER_FOOTER = [
+      "",
+      "Do not add policy, commands, or invariants to this file. Update",
+      "`AGENTS.md` (and the scoped file, if any) instead.",
+    ].join("\n");
+
+    function writeMinimalLayout(readme: string) {
+      writeFile("AGENTS.md", "# AGENTS.md\n");
+      writeFile("CLAUDE.md", ["# CLAUDE.md", "[`AGENTS.md`](AGENTS.md)", POINTER_FOOTER, ""].join("\n"));
+      writeFile("GEMINI.md", ["# GEMINI.md", "[`AGENTS.md`](AGENTS.md)", POINTER_FOOTER, ""].join("\n"));
+      writeFile("README.md", readme);
+      writeFile("docs/valid.md", "# Valid\n[link](../AGENTS.md)\n");
+      writeFile("scripts/repo-manifest.json", JSON.stringify(MINIMAL_MANIFEST));
+    }
+
+    it("flags a catalogue count missing from prose", () => {
+      writeMinimalLayout("# README\n");
+      writeFile("web/src/data/workflows.json", JSON.stringify([1, 2, 3]));
+      const result = runInTmp();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "README.md: does not mention the web/src/data/workflows.json entry count (3)",
+      );
+    });
+
+    it("passes when prose asserts the catalogue count", () => {
+      writeMinimalLayout("# README\n\n3 workflows listed.\n");
+      writeFile("web/src/data/workflows.json", JSON.stringify([1, 2, 3]));
+      const result = runInTmp();
+      expect(result.status, commandDiagnostics(result)).toBe(0);
+      expect(result.stdout).toContain("docs:check: ok");
+    });
   });
 
   describe("node CLI entry", () => {

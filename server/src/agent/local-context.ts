@@ -201,12 +201,22 @@ function asNumber(value: unknown): number | undefined {
  * does not contain. Called only after a *successful* loaded-probe: absence
  * from a good answer is what unloading looks like, while a failed probe
  * clears nothing (every transient blip would otherwise wipe a good figure).
+ *
+ * `rowCount` is how many rows the answer contained, `reported` how many of
+ * them parsed. Rows that all fail to parse are a malformed answer wearing a
+ * 200, not an empty one: clearing on that would drop every loaded figure and
+ * revert to the *higher* architectural number, which over-declares — the
+ * exact failure this module exists to prevent. An answer with genuinely zero
+ * rows is different and does clear, because that is what "nothing is loaded"
+ * looks like on `/api/ps`.
  */
 function clearUnreportedLoaded(
   providerId: string,
   root: string,
   reported: Set<string>,
+  rowCount: number,
 ): void {
+  if (rowCount > 0 && reported.size === 0) return;
   const prefix = `${providerId}\n${root}\n`;
   for (const [key, entry] of cache) {
     if (key.startsWith(prefix) && !reported.has(key) && entry.loaded !== undefined) {
@@ -239,7 +249,7 @@ async function probeOllama(root: string): Promise<void> {
     const contextLength = asNumber(row?.["context_length"]);
     if (contextLength !== undefined) recordLoaded(key, contextLength);
   }
-  clearUnreportedLoaded("ollama", root, reported);
+  clearUnreportedLoaded("ollama", root, reported, psModels.length);
 }
 
 async function probeOpenAICompatible(root: string): Promise<void> {
@@ -264,5 +274,5 @@ async function probeOpenAICompatible(root: string): Promise<void> {
     recordArchitectural(key, asNumber(entry?.["max_context_length"]));
     recordLoaded(key, asNumber(entry?.["loaded_context_length"]));
   }
-  clearUnreportedLoaded("openai-compatible", root, reported);
+  clearUnreportedLoaded("openai-compatible", root, reported, rows.length);
 }

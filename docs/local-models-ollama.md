@@ -70,7 +70,48 @@ Notes:
 
 - **One server at a time.** There is a single base URL, as with Ollama. If you run both LM Studio and Ollama, both sections appear — but not two OpenAI-compatible servers.
 - **Local servers only.** These models are treated as free and are never counted against a project spend cap. Pointing the base URL at a paid hosted gateway would leave that spend untracked and uncapped. For hosted gateways that mirror OpenRouter's model ids, use `OPENROUTER_BASE_URL` instead — those keep catalogue pricing and stay inside the cap.
-- **Only the model id is read** from `/v1/models`. Servers disagree on every other field, so context length and pricing use the same defaults as Ollama (32K, $0), and thinking levels are disabled.
+- **Only the model id is read** from `/v1/models`. Servers disagree on every other field, so pricing is $0 (as with Ollama) and thinking levels are disabled. The context length is discovered separately — see below.
+
+## Context length
+
+Kady asks your server what the model's context window actually is, rather than
+assuming one. The standard `/v1/models` endpoint carries no context length, so
+each server's own API is read when the model picker opens:
+
+| Server | Architectural maximum | Currently loaded |
+|---|---|---|
+| Ollama | `/api/tags` → `details.context_length` | `/api/ps` → `context_length` |
+| LM Studio | `/api/v0/models` → `max_context_length` | `loaded_context_length` |
+
+The **loaded** figure wins when both are known, because that is what your
+request is measured against and it is often smaller than the maximum. Both
+servers do this by default: LM Studio loads a model at half its maximum on a
+default install, and an Ollama model whose Modelfile pins `num_ctx` (Ollama's
+own `all-minilm` pins 256 against an architectural 512) serves the smaller
+number without anyone configuring anything.
+
+Practical consequences:
+
+- **Opening the model picker is what refreshes this.** If you load a model at
+  a different context length, reopen the picker so Kady sees the new figure.
+  Until then it uses the previous one.
+- **Ollama shows the right number on the first open; LM Studio takes two.**
+  Ollama's list call carries the figure already, while LM Studio's lives on a
+  second endpoint that is read in the background. A model with no figure yet
+  simply shows no context badge.
+- **If nothing answers, Kady assumes 128,000.** That is a deliberate floor
+  rather than a guess at your hardware: Kady's own system prompt is roughly
+  44,000 tokens and the compaction reserve adds about 16,000 on top, so a
+  smaller assumption cannot fit the prompt before you have typed anything.
+- **A genuinely small model will now say so.** A model whose real window is
+  below roughly 61,000 tokens cannot hold Kady's prompt and will fail with a
+  context-overflow message naming the problem, instead of returning an empty
+  reply.
+- **To override a figure**, add the server as a custom model server
+  (Settings → **Model providers** → **Custom model servers**) and declare
+  `contextWindow` per model. See [Custom model servers](./custom-model-servers.md).
+  That is per-model, so it is the right tool when one model's reported figure
+  is wrong.
 
 ## Caveats
 

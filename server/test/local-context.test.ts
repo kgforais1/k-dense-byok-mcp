@@ -228,6 +228,31 @@ describe("probeLoaded (ollama)", () => {
     expect(getContextWindow("ollama", base, "b")).toBe(2048);
   });
 
+  it("a 200 whose rows all fail to parse clears nothing", async () => {
+    // A malformed answer wearing a 200 must not look like "nothing loaded".
+    // Clearing here would revert to the higher architectural figure and
+    // over-declare, which is the failure direction this module exists to stop.
+    const base = freshBase();
+    seedArchitectural(base, "all-minilm", 512);
+    stubOllama();
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+    stubFetch(() => okJson({ models: [{ no: "name" }] }));
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+  });
+
+  it("a genuinely empty /api/ps still clears, because nothing is loaded", async () => {
+    const base = freshBase();
+    seedArchitectural(base, "all-minilm", 512);
+    stubOllama();
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+    stubFetch(() => okJson({ models: [] }));
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(512);
+  });
+
   it("a failed loaded-probe clears nothing", async () => {
     const base = freshBase();
     seedArchitectural(base, "all-minilm", 512);
@@ -270,6 +295,19 @@ describe("probeLoaded (openai-compatible)", () => {
       undefined,
     );
     expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(128000);
+  });
+
+  it("a 200 whose rows all fail to parse clears nothing", async () => {
+    // Same invariant as the ollama side: a malformed 200 must not be read as
+    // "nothing loaded", because reverting to the architectural figure
+    // over-declares.
+    const base = freshBase();
+    stubFetch(() => okJson(v0Payload));
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+    stubFetch(() => okJson({ data: [{}] }));
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
   });
 
   it("a listed-but-unloaded entry reverts a stale loaded slot", async () => {

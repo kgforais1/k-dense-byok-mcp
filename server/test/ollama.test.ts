@@ -190,6 +190,52 @@ describe("GET /ollama/models", () => {
     await app.close();
   });
 
+  // The wire that matters: the route writes a cache entry and the *builder*
+  // reads it back. Both sides construct the key from their own constants, so
+  // a base-URL or id-form mismatch between them would leave every builder on
+  // the fallback while every route test still passed. Exercised through one
+  // module graph so the route and the builder share a local-context instance.
+  it("hands the route's cached figure to the model builder", async () => {
+    respondTags = (res) =>
+      okJson(res, { models: [{ name: "wire-test:latest", details: { context_length: 40_960 } }] });
+    vi.resetModules();
+    vi.stubEnv("OLLAMA_BASE_URL", baseUrl);
+    const { registerSystemRoutes } = await import("../src/api/system.ts");
+    const { resolveModel } = await import("../src/agent/models.ts");
+    const registry = { find: () => undefined } as never;
+    const app = Fastify();
+    await registerSystemRoutes(app);
+
+    // Cold: nothing probed yet, so the builder declares the fallback.
+    expect(resolveModel("ollama/wire-test:latest", registry).contextWindow).toBe(128_000);
+
+    await app.inject({ url: "/ollama/models" });
+
+    // Warm: the figure the route parsed inline reaches the builder, and an
+    // untagged ref finds the same entry.
+    expect(resolveModel("ollama/wire-test:latest", registry).contextWindow).toBe(40_960);
+    expect(resolveModel("ollama/wire-test", registry).contextWindow).toBe(40_960);
+    await app.close();
+  });
+
+  it("keeps the list when a row has no name at all", async () => {
+    // cacheKey normalises by slicing the id, so an unguarded nameless row
+    // throws into the route's catch and costs the entire local section.
+    // Losing context metadata is acceptable; losing the models is not.
+    respondTags = (res) =>
+      okJson(res, {
+        models: [{ model: "no-name-field" }, { name: "ok:latest", details: { context_length: 4096 } }],
+      });
+    const app = await buildRoutes(baseUrl);
+
+    const body = (await app.inject({ url: "/ollama/models" })).json();
+
+    expect(body.available).toBe(true);
+    expect(body.models).toHaveLength(2);
+    expect(body.models[1].context_length).toBe(4096);
+    await app.close();
+  });
+
   // A failing /api/ps must never change the response: the rows keep their
   // architectural figures and nothing goes missing.
   it("still returns every row with architectural figures when /api/ps fails", async () => {

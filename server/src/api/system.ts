@@ -86,17 +86,25 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           typeof m.details?.context_length === "number"
             ? m.details.context_length
             : undefined;
-        recordArchitectural(
-          cacheKey("ollama", OLLAMA_BASE_URL, m.name),
-          architectural,
-        );
+        // Only key off a real name. `cacheKey` normalises the id by slicing
+        // it, so a nameless row would throw into the route's catch and cost
+        // the whole list — and losing the models is never an acceptable price
+        // for losing context metadata.
+        if (typeof m.name === "string" && m.name) {
+          recordArchitectural(
+            cacheKey("ollama", OLLAMA_BASE_URL, m.name),
+            architectural,
+          );
+        }
         return {
           id: `ollama/${m.name}`,
           label: m.name,
           provider: "Ollama",
           tier: "budget",
           context_length:
-            getContextWindow("ollama", OLLAMA_BASE_URL, m.name) ?? 0,
+            typeof m.name === "string" && m.name
+              ? (getContextWindow("ollama", OLLAMA_BASE_URL, m.name) ?? 0)
+              : 0,
           pricing: { prompt: 0, completion: 0 },
           modality: "text->text",
           description: `Local Ollama model: ${m.name}`,

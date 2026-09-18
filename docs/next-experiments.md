@@ -1,5 +1,7 @@
 # Decision-oriented next investigations
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 **What next?** on a saved hypothesis card helps answer “What could distinguish the competing explanations, and which result would change our decision?” It is a planning surface, not a new Conclusions view or an execution agent.
 
 ## Scientist workflow

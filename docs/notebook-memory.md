@@ -1,5 +1,7 @@
 # Source-linked project research memory
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 **Research memory** searches the project's saved notebook records across chats,
 including past decisions, failures, null/inconclusive findings, user notes and
 formal analysis-plan/deviation records. It recalls original text and source

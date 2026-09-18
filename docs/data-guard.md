@@ -1,5 +1,7 @@
 # Raw-data guard
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Kady runs the agent's tools as your own user, so nothing stops a badly worded
 `rm -rf` from deleting the very data you uploaded. The raw-data guard adds a
 policy layer in front of the file and shell tools, for Kady itself and for the

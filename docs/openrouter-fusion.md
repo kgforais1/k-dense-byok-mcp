@@ -1,5 +1,7 @@
 # OpenRouter Fusion
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 **OpenRouter Fusion** presets in the model picker let a *panel* of models deliberate on your prompt in parallel while a *judge* model synthesizes a single answer, instead of one model answering. It's [OpenRouter's Fusion router](https://openrouter.ai/blog/announcements/fusion-beats-frontier/) wired into Kady's single-agent run loop, with combined pricing and benchmark scores shown right in the picker.
 
 ## What you get

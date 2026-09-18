@@ -1,5 +1,7 @@
 # Evidence-aware notebook: feature map
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 The [Living Lab Notebook](./lab-notebook.md) grew from a running log into a
 structured research record through six features. All six are implemented; this
 page is the one-place map of what each does, where it is documented, and the

@@ -1,5 +1,7 @@
 # Connecting external tools (MCP servers)
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Out of the box, Kady can read and write files, run code, search the web, and delegate to [sub-agents](./sub-agents.md). **MCP servers** let you give it more abilities - querying a database, reading your reference manager, controlling lab software, and so on.
 
 MCP ([Model Context Protocol](https://modelcontextprotocol.io)) is an open standard for connecting AI assistants to external tools. Many services publish an MCP server, and there are hundreds of community-built ones. When you connect one, every tool it provides shows up in Kady's toolbox automatically.

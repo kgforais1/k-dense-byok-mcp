@@ -1,5 +1,7 @@
 # Skill management
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Skills are markdown instruction sets (`SKILL.md` + optional supporting files)
 that the agent activates when a task matches their description. Kady ships the
 [K-Dense scientific catalogue](https://github.com/K-Dense-AI/scientific-agent-skills)

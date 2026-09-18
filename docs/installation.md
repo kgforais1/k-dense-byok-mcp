@@ -1,5 +1,7 @@
 # Installation guide
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 This guide walks you through installing K-Dense BYOK from scratch. No coding experience is needed — if you can copy and paste commands into a terminal, you can do this.
 
 ## 1. Check your computer
@@ -95,7 +97,7 @@ The first run takes a few minutes. The script automatically:
 
 - checks for and installs anything missing (Node.js on a Mac, the [uv](https://docs.astral.sh/uv/) Python manager that Kady uses to run analyses — on every platform),
 - installs the backend and frontend packages,
-- downloads the catalogue of 149 scientific skills,
+- downloads the scientific-skills catalogue (default `K-Dense-AI/scientific-agent-skills`, override with `KADY_SKILLS_REPO`),
 - creates your `.env` file if you haven't, and warns when it cannot immediately detect an OpenRouter key, a direct provider key (Anthropic, OpenAI, NVIDIA, …), stored subscription login, or local Ollama (the UI still opens for provider setup).
 
 When it finishes, your browser opens to **[http://localhost:3000](http://localhost:3000)** — that's the app. Future starts take only a few seconds.

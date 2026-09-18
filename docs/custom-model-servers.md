@@ -1,5 +1,7 @@
 # Custom model servers
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Point Kady at any OpenAI- or Anthropic-compatible endpoint that is not in the
 built-in provider list — a lab's vLLM box, an institutional gateway, a
 self-hosted proxy — with real pricing and context metadata, so the picker,

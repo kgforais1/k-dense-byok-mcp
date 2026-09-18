@@ -1,5 +1,7 @@
 # Notebook robustness workflows
 
+> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
+
 Use **Stress-test finding** on a saved, active hypothesis to run a reviewed set of
 scientific sensitivity analyses. This is Stage 3 of the [notebook roadmap](./notebook-roadmap.md).
 It uses the existing durable Modal manager, not a separate compute service.

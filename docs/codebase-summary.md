@@ -9,7 +9,7 @@ Users choose how Kady reaches AI models. It supports prepaid OpenRouter API acce
 ## Core capabilities
 
 - **End-to-end scientific work:** Clean and analyze datasets, run statistical methods, compare evidence, review manuscripts, generate publication-ready figures, and produce reusable scripts and reports.
-- **Broad scientific knowledge:** 149 scientific skills, 326 guided workflows across 22 disciplines, and guidance for 229 scientific and financial data resources support fields including genomics, chemistry, drug discovery, materials science, clinical research, earth science, and finance.
+- **Broad scientific knowledge:** scientific skills from the default catalogue, 326 guided workflows across 22 disciplines, and guidance for 229 scientific and financial data resources support fields including genomics, chemistry, drug discovery, materials science, clinical research, earth science, and finance.
 - **Specialist collaboration:** Kady can delegate focused or parallel tasks to 21 scientific specialists for statistical review, citation checking, peer review, analysis, and literature synthesis.
 - **Research traceability:** The Living Lab Notebook captures hypotheses, methods, observations, decisions, confidence, code, and linked artifacts. Users can annotate, search, export, and turn the record into a draft Methods section.
 - **Scientific file workspace:** The app previews more than 60 scientific formats, including molecular and protein structures, spectra, sequence data, arrays, medical images, PDFs, notebooks, tables, and LaTeX.

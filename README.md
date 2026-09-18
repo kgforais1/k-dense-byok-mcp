@@ -1,10 +1,6 @@
 # K-Dense BYOK (MCP fork)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![X](https://img.shields.io/badge/Follow_on_X-%40k__dense__ai-000000?logo=x)](https://x.com/k_dense_ai)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-K--Dense_Inc.-0A66C2?logo=linkedin)](https://www.linkedin.com/company/k-dense-inc)
-[![YouTube](https://img.shields.io/badge/YouTube-K--Dense_Inc.-FF0000?logo=youtube)](https://www.youtube.com/@K-Dense-Inc)
-[![Reddit](https://img.shields.io/badge/Reddit-u%2F--k--dense---FF4500?logo=reddit)](https://www.reddit.com/user/-k-dense-/)
 
 > **This is a fork.** The upstream project is
 > **[K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok)**, and
@@ -13,7 +9,7 @@
 > tool](./docs/kady-as-mcp-server.md) — Kady acting as an MCP *server*, which is
 > the opposite direction from the [external-tool
 > connector](./docs/mcp-servers.md) upstream already provides — plus related
-> changes. The social links, videos and star history on this page refer to the
+> changes. The K-Dense channel links and videos on this page refer to the
 > upstream project and its authors, not to this fork. The MIT License badge is
 > not in that group: that licence covers this repository too.
 >
@@ -86,7 +82,7 @@ Kady is designed to carry out research work, not only answer questions. You rema
 
 ### A scientific toolkit built in
 
-- **149 scientific skills** cover genomics, proteomics, bioinformatics, drug discovery, chemistry, materials science, clinical research, and more. Kady activates the relevant procedures automatically, and you can browse or disable them in Settings.
+- **Scientific skills** from the default catalogue cover genomics, proteomics, bioinformatics, drug discovery, chemistry, materials science, clinical research, and more (`K-Dense-AI/scientific-agent-skills` unless `KADY_SKILLS_REPO` overrides it). Kady activates the relevant procedures automatically, and you can browse or disable them in Settings.
 - **326 guided workflow templates across 22 disciplines** turn common analyses into fill-in-the-blank starting points. Choose a workflow, supply the study details, and launch it into the active chat.
 - **229 scientific and financial data resources across 18 categories** give Kady guidance for finding information in biomedical, chemical, scholarly, market, earth-science, climate, and space databases. Some resources require their own free key.
 - **21 scientific specialists** can take focused assignments such as statistical review, citation checking, peer review, data analysis, or literature synthesis. Kady can delegate independent work in parallel and combine the findings, or you can call a specialist by name. [Learn more](./docs/sub-agents.md).

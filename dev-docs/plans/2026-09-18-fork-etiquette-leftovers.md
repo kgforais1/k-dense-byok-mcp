@@ -7,7 +7,7 @@ branch: fork-etiquette-leftovers
 
 # Fork etiquette leftovers — attribution cleanup Implementation Plan
 
-**Status:** Proposed
+**Status:** Accepted — implementation underway on branch `fork-etiquette-leftovers`
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the

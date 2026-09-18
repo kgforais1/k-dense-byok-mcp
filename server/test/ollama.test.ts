@@ -71,7 +71,7 @@ describe("GET /ollama/models", () => {
   async function waitForModels(
     app: Pick<Awaited<ReturnType<typeof buildRoutes>>, "inject">,
     predicate: (models: { context_length: number }[]) => boolean,
-  ): Promise<any> {
+  ): Promise<{ models: { context_length: number }[] }> {
     const deadline = Date.now() + 5000;
     for (;;) {
       const body = (await app.inject({ url: "/ollama/models" })).json();

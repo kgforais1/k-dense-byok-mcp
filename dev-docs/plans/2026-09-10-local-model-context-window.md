@@ -289,6 +289,13 @@ No `config.ts` change: the env knobs are dropped.
 A prerequisite, not a nicety. Every later decision assumes an over-declared
 window surfaces an actionable error, and today it does not.
 
+**Superseded by measurement — see "Phase 4 results" below.** Over-declaration
+turned out to be visible already, through `session.state.errorMessage` at
+`sessions.ts:535`, so Phase 0 is not the thing that makes the 128,000 fallback
+safe. It is still worth doing: a failed *compaction* reports only through
+`compaction_end` and is still dropped without it. Treat this section as
+defensive hardening rather than a blocking dependency.
+
 - [ ] Extend the **existing** `compaction_end` case at `events.ts:412`. It
       currently reads `if (ev.aborted || !ev.result) return null;` and then
       renders a compaction system card. Pi sets `result: undefined` and
@@ -457,27 +464,27 @@ returns the probed figure with a warm cache and 128,000 with a cold one.
 
 ### Phase 4 — Confirm the bug is actually gone
 
-- [ ] Run one trivial request against LM Studio end to end and confirm a
-      non-empty assistant message. Record the project's `reserveTokens` with
+- [x] Run one trivial request against LM Studio end to end and confirm a
+      non-empty assistant message. Done 2026-09-18 — see the results below. Record the project's `reserveTokens` with
       the result; the floor below is computed at 16,384.
-- [ ] Confirm compaction does not fire on the first turn — and decide *how you
+- [x] Confirm compaction does not fire on the first turn — and decide *how you
       will see that* before asserting it. There is no UI signal:
       `compaction_start` is dropped by `toClientFrame`, and Phase 0 only
       surfaces `compaction_end` when it carries an `errorMessage`. Observe it
       from the Pi session JSONL, or from the `session_compact_failed` warning
       `compaction-bridge.ts:249` already logs. Do not assert a negative you
       cannot see.
-- [ ] Load the same model at a *reduced* context length without reopening the
+- [x] Load the same model at a *reduced* context length without reopening the
       picker. Expect the run to fail with the overflow message from Phase 0,
       not to work and not to silently compact. If the message does not appear,
       Phase 0 is incomplete and the fallback argument is resting on nothing.
-- [ ] Then reopen the picker, and be careful about what "repair" means. It
+- [x] Then reopen the picker, and be careful about what "repair" means. It
       refreshes the *declared value*; it does not make an impossible prompt fit.
       - Reduce to **65,536**, above the 60,793 floor. After reopening, the run
         should succeed. This is the repair case.
       - Reduce to **16,384**. After reopening, the run should still fail, and
         still fail *visibly*. That is correct behaviour, not a regression.
-- [ ] Distinguish the two candidate mechanisms before declaring the bug fixed.
+- [x] Distinguish the two candidate mechanisms before declaring the bug fixed.
       If the loaded server really holds 262,144, the 44,409-token prompt
       *fits*, so there may have been no rejection and no overflow path at all —
       and the empty bubble would instead be the server returning an empty
@@ -485,12 +492,66 @@ returns the probed figure with a warm cache and 128,000 with a cold one.
       truthfully cures that path too, but Phase 0's machinery is irrelevant to
       it, so a green run does not by itself confirm the compaction story. Check
       the raw response shape or the server log and say which one it was.
-- [ ] If the empty-message symptom survives, stop and say so. The mechanism
+- [x] If the empty-message symptom survives, stop and say so. The mechanism
       here is a hypothesis, and a surviving symptom falsifies it rather than
       calling for a bigger number.
 
 **Exit criteria:** the Phase 2 external-client symptom does not reproduce, or is
 recorded as unexplained with the compaction hypothesis ruled out.
+
+### Phase 4 results, 2026-09-18
+
+Run end to end against a live LM Studio and Ollama, driving the real backend
+on :8000 rather than a test harness. `medgemma-1.5-4b-it` was loaded at a
+chosen context length with `lms load -c <n>`, which is what makes these cases
+reproducible without touching the UI.
+
+| Case | Result |
+|---|---|
+| Truthful window, trivial request | **Non-empty** assistant message. 2,243 text deltas, no error frame, run `done`. The symptom does not reproduce. |
+| Cold cache then warm | Picker row `0` on the first open (no badge, as today), `65536` on the second. Declared window `128000` → `65536`. |
+| Loaded beats architectural | `loaded_context_length: 65536` won over `max_context_length: 131072`. |
+| Stale-high, not yet repaired | Reloaded at 16,384 without reopening the picker: still declared 65,536, i.e. the loud direction. |
+| Repair by reopening | After reopening, declared 16,384. |
+| Below the floor | Run fails **visibly**: `request (39582 tokens) exceeds the available context size (16384 tokens), try increasing it`. Empty assistant text, but an `error` frame is present — which is the difference from the original symptom. |
+
+**Two results that correct this plan rather than confirming it.**
+
+**1. Phase 0 was not what made the over-declared case loud, and was never
+exercised.** The error above arrived through `sessions.ts:535`, which publishes
+`session.state.errorMessage` and predates this work. Pi never classified the
+rejection: the persisted assistant entry carries `stopReason: "error"` with a
+null `error` object, so `isContextOverflow` had nothing to match and no
+compaction ran. The message text *does* match Pi's llama.cpp overflow pattern
+(`/exceeds the available context size/i`), so the classification failing is
+about where the error is carried, not about the wording.
+
+So the plan's framing of Phase 0 as a hard prerequisite — "the fallback is only
+safe once the overflow is visible" — was wrong in its premise. Over-declaration
+was already visible through the pre-existing path. Phase 0 remains correct and
+worth keeping, because a failed *compaction* still reports through
+`compaction_end` and would still be dropped without it, but it is defensive
+rather than load-bearing, and the 128,000 fallback did not actually depend on
+it. Record it that way rather than claiming the prerequisite held.
+
+**2. Compaction never fired at all, in any configuration tried** — including
+`reserveTokens` pushed to its 64,000 maximum against a declared 65,536, which
+leaves an effective budget of 1,536 tokens against a ~39,600-token prompt. Both
+a first and a second turn completed normally. This is consistent with the
+findings file's correction that the pre-send check is skipped when there is no
+prior assistant message, but it goes further: the compaction hypothesis for the
+original empty-message symptom is now **unsupported by any observation**, and
+the symptom itself did not reproduce in any configuration. Whatever produced
+that empty bubble on 2026-09-08, this plan has not demonstrated it was
+compaction. What it has demonstrated is that the declared window is now
+truthful and that both failure directions are visible.
+
+Two smaller notes. Kady's prompt measured **39,582 tokens** here, against the
+44,409 recorded on 2026-09-08 — re-measure rather than quoting either as a
+constant, as the plan says. And a second turn against `medgemma-1.5-4b-it`
+fails on that model's own chat template, which demands strictly alternating
+roles; that is a model limitation, unrelated to this work, but it is why the
+compaction probing above switched models.
 
 ## Guardrails
 

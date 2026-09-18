@@ -9,6 +9,12 @@ import {
   OPENAI_COMPATIBLE_BASE_URL,
   OPENAI_COMPATIBLE_CONFIGURED,
 } from "../config.ts";
+import {
+  cacheKey,
+  getContextWindow,
+  probeLoaded,
+  recordArchitectural,
+} from "../agent/local-context.ts";
 import { getSystemStats } from "../system-stats.ts";
 
 const GITHUB_REPO = "kgforais1/k-dense-byok-mcp";
@@ -69,17 +75,37 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       });
       clearTimeout(t);
       if (!resp.ok) return { available: false, models: [] };
-      const data = (await resp.json()) as { models?: { name: string }[] };
-      const models = (data.models ?? []).map((m) => ({
-        id: `ollama/${m.name}`,
-        label: m.name,
-        provider: "Ollama",
-        tier: "budget",
-        context_length: 0,
-        pricing: { prompt: 0, completion: 0 },
-        modality: "text->text",
-        description: `Local Ollama model: ${m.name}`,
-      }));
+      const data = (await resp.json()) as {
+        models?: { name: string; details?: { context_length?: unknown } }[];
+      };
+      const models = (data.models ?? []).map((m) => {
+        // Architectural figure, parsed inline from the payload already in
+        // hand — no extra call. Lenient like the rest of this route: a
+        // missing or malformed value records nothing (absent, not zero).
+        const architectural =
+          typeof m.details?.context_length === "number"
+            ? m.details.context_length
+            : undefined;
+        recordArchitectural(
+          cacheKey("ollama", OLLAMA_BASE_URL, m.name),
+          architectural,
+        );
+        return {
+          id: `ollama/${m.name}`,
+          label: m.name,
+          provider: "Ollama",
+          tier: "budget",
+          context_length:
+            getContextWindow("ollama", OLLAMA_BASE_URL, m.name) ?? 0,
+          pricing: { prompt: 0, completion: 0 },
+          modality: "text->text",
+          description: `Local Ollama model: ${m.name}`,
+        };
+      });
+      // Loaded figures, unawaited with the probe's own timeout inside. It
+      // never rejects, so no .catch() — and awaiting it would stall the
+      // picker on a hung daemon behind a list it already has.
+      void probeLoaded("ollama", OLLAMA_BASE_URL);
       return { available: true, models };
     } catch {
       return { available: false, models: [] };
@@ -120,12 +146,25 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           label: id,
           provider: "OpenAI-Compatible",
           tier: "budget",
-          context_length: 0,
+          // Cached figure when the probe has landed, 0 on a cold cache —
+          // which the picker renders as no badge, exactly as before. Never
+          // awaited into correctness here: see below.
+          context_length:
+            getContextWindow("openai-compatible", OPENAI_COMPATIBLE_BASE_URL, id) ??
+            0,
           pricing: { prompt: 0, completion: 0 },
           modality: "text->text",
           description: `Local OpenAI-compatible model: ${id}`,
         });
       }
+      // Second, independent call for both context figures. Deliberately
+      // unawaited with its own timeout inside the probe: awaiting would make
+      // the picker wait the full 2 s for a hung probe before rendering a
+      // list it already has, and sharing this route's AbortController would
+      // abort the /v1/models call that had already succeeded. A 404 here
+      // (vLLM and others have no such endpoint) means "no context metadata",
+      // never "no models" — the rows above are already built.
+      void probeLoaded("openai-compatible", OPENAI_COMPATIBLE_BASE_URL);
       return { available: true, configured, models };
     } catch {
       return { available: false, configured, models: [] };

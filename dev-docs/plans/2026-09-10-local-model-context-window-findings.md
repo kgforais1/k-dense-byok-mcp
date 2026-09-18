@@ -18,10 +18,15 @@ content changed in the split. Every claim here was verified on the dates
 given; re-confirm against your own server versions before relying on it, as
 the plan's Phase 1 instructs.
 
+Re-checked against `main` on 2026-09-18. Four premises had moved since the
+first draft; the evidence is in
+[Re-verification, 2026-09-18](#re-verification-2026-09-18) at the end, and the
+corrections are marked inline where they change a claim above.
+
 ## Why this work
 
-`server/src/agent/models.ts:233` and `:257` both hardcode
-`contextWindow: 32_768`. The comment at `:243` is honest about the reason — the
+`server/src/agent/models.ts:237` and `:261` both hardcode
+`contextWindow: 32_768`. The comment at `:247` is honest about the reason — the
 standard OpenAI `/v1/models` endpoint carries no context length — and that part
 is still true, verified 2026-09-10 against a live LM Studio:
 
@@ -52,8 +57,17 @@ block would be citing dead code. The real chain is:
   the builders this plan changes to the trigger below.
 - Settings come from `settingsManager.getCompactionSettings()`
   (`dist/core/settings-manager.js:565`), which resolves
-  `this.settings.compaction?.reserveTokens ?? 16384` (`:560`). Kady sets no
-  `compaction` settings anywhere in `server/src`, so the default applies.
+  `this.settings.compaction?.reserveTokens ?? 16384` (`:560`). **Corrected
+  2026-09-18:** an earlier version of this file said Kady sets no `compaction`
+  settings anywhere in `server/src`. It does now.
+  `server/src/agent/compaction-settings.ts` writes
+  `compaction.{enabled,reserveTokens,keepRecentTokens}` into
+  `sandbox/.pi/settings.json`, which is where Pi reads them. The default still
+  matches Pi's 16,384 (`:22`), but the value is user-tunable per project from
+  4,000 to 64,000 (`:27`) through Settings → project
+  (`web/src/components/project-switcher.tsx:586`). So the arithmetic below
+  holds at the default and is a function of a project setting otherwise —
+  record which reserve a measurement was taken at.
 - The trigger fires at `agent-session.js:1650` —
   `if (shouldCompact(contextTokens, contextWindow, settings))` — and
   `shouldCompact` (`dist/core/compaction/compaction.js`) is
@@ -218,3 +232,117 @@ So "prefer the loaded figure" is load-bearing on both sides, not a refinement.
 Note also that Pi never sends `num_ctx` itself — the string appears nowhere in
 `pi-ai/dist` — so any divergence is the operator's or the server's, which is
 exactly the case an architectural-only probe gets wrong.
+
+## Re-verification, 2026-09-18
+
+The plan was written against a tree roughly ninety commits behind `main`. Every
+premise was re-checked on 2026-09-18; four had moved. This section is the
+evidence for the revision recorded at the top of the plan.
+
+### Local models are never in Pi's registry, so no restored session can hold one
+
+The plan's largest mechanism — a run-path `probeAll`, a scope component in the
+dedup key, and an asymmetric superset-join rule — existed to serve a restored
+chat whose `session.model` holds a local model. That case cannot occur.
+
+`restoredSessionModel` and `latestProjectModel` both resolve through
+`runtime.getModel(provider, modelId)` (`server/src/agent/session-registry.ts:486`,
+`:472`), which is `getModels(provider).find(m => m.id === id)`
+(`pi-ai/dist/models.js:78-80`). Kady creates the runtime with
+`allowModelNetwork: false` (`session-registry.ts:97`) and registers both local
+providers with `registerProvider` and no model list (`models.ts:303-318`), so
+neither provider ever has models to find.
+
+Reproduced with the real `ModelRuntime`, constructed exactly as
+`session-registry.ts` does and with `setupModelRuntime`'s two
+`registerProvider` calls:
+
+```console
+ollama models: []
+getModel(ollama, qwen3:0.6b) = undefined
+getModel(openai-compatible, qwen/qwen3.8-27b) = undefined
+hasConfiguredAuth(ollama) = true
+hasConfiguredAuth(openai-compatible) = true
+```
+
+So a local model reaches a run only as an explicit `body.model` ref, which goes
+through `resolveModel` → `buildOllamaModel` / `buildOpenAICompatibleModel`
+(`models.ts:485`, `:490`). Those are the builders this plan changes, and they
+read the cache the discovery routes fill. One probe covers everything.
+
+Two consequences beyond deleting the mechanism. Pi defaults a compat-provider
+model to `contextWindow: 128000`
+(`pi-coding-agent/dist/core/provider-composer.js:72`), which is independent
+corroboration of the fallback figure this plan picks. And a session restored
+without a client-supplied ref silently switches a local chat to the configured
+default model — a separate defect, recorded in the plan under "Adjacent bug
+found during verification".
+
+### `toClientFrame` already handles `compaction_end`
+
+The plan said no `compaction_end` handler existed anywhere and the event fell
+to `default: return null`. A case was added since, at
+`server/src/agent/events.ts:412`, rendering successful compaction as a system
+card. Its first line is `if (ev.aborted || !ev.result) return null;`, and every
+failure emit sets `result: undefined` alongside `errorMessage`
+(`pi-coding-agent/dist/core/agent-session.js:1672`, `:1812`, `:1874`; the field
+is declared at `dist/core/agent-session.d.ts:65`). That early return, not a
+missing case, is what swallows the overflow message today.
+
+`server/src/agent/compaction-bridge.ts:249` also listens to
+`session_compact_failed` and logs the same `errorMessage` server-side. Useful
+as a cross-check while testing; it never reaches the client.
+
+### LM Studio's model-name round trip is clean
+
+Phase 1's open item, for the LM Studio half. Both endpoints on a live server
+(2026-09-18) return byte-identical ids, so the route's list and the probe's
+writes share a cache key:
+
+```console
+$ curl -s http://localhost:1234/v1/models        # ids only
+['qwen/qwen3.8-27b-mlx-6bit-xhigh', 'qwen/qwen3.8-27b-mlx-6bit-medium',
+ 'qwen/qwen3.8-27b', 'qwen/qwen3.8-27b-mlx-4bit-xhigh',
+ 'qwen/qwen3.8-27b-mlx-4bit-medium', 'qwen3.8-27b-mlx-new']
+keys: ['id', 'object', 'owned_by']
+
+$ curl -s http://localhost:1234/api/v0/models    # same ids, same order
+keys: ['arch', 'capabilities', 'compatibility_type', 'id',
+       'max_context_length', 'object', 'publisher', 'quantization',
+       'state', 'type']
+```
+
+The Ollama half — whether `/api/tags` reports `llama3:latest` where the ref
+carries `llama3` — is still open. No daemon was running on this machine on
+2026-09-18.
+
+### Custom model servers already provide the escape hatch
+
+`docs/custom-model-servers.md` (shipped 2026-09-08, before the first draft of
+this plan) lets a user point a custom provider at any OpenAI-compatible
+endpoint — LM Studio is named explicitly — and declare a per-model
+`contextWindow` from Settings → Model providers. The route already serves that
+figure as a real `context_length` (`server/src/agent/custom-models.ts:287`).
+That is per-model rather than per-provider, which is the granularity this
+plan's own reasoning argues for, so the two env knobs the first draft proposed
+are dropped in favour of it.
+
+### Line references that moved
+
+| First draft | Actual, 2026-09-18 |
+|---|---|
+| `models.ts:233`, `:257` (the 32K hardcodes) | `:237`, `:261` |
+| `models.ts:238` (parallel-paths comment) | `:241` |
+| `models.ts:243` (the `/v1/models` comment) | `:247` |
+| `models.ts:412` (`resolveModel`) | `:466` |
+| `models.ts:432`, `:441` (the prefix slices) | `:486`, `:491` |
+| `sessions.ts:254-255` (`resolveModel` call) | `:285-287` |
+| `sessions.ts:272`, `:274` (`catch` close, `mintRunId`) | `:304`, `:306` |
+| `events.ts:283` (`toClientFrame`) | `:385` |
+| `events.ts:313-324` (`message_update` error) | `:433-444` |
+| `events.ts:349` (`default: return null`) | `:466` |
+| `model-selector.tsx:250` (the badge guard) | `:282` |
+| `use-agent.ts:579` (`frame.kind`) | `:766` |
+
+`server/test/openai-compatible.test.ts:229` and `:239` still assert
+`context_length: 0`, as the first draft said.

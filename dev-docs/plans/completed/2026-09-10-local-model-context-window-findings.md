@@ -1,6 +1,6 @@
 ---
 title: "Local-model context window: what the servers actually report"
-status: proposed
+status: completed
 created: 2026-09-12
 branch: local-context-window
 ---

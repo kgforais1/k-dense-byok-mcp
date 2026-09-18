@@ -1,6 +1,6 @@
 ---
 title: "Local-model context window: probe it instead of guessing 32K"
-status: proposed
+status: completed
 created: 2026-09-10
 revised: 2026-09-18
 branch: local-context-window
@@ -8,8 +8,8 @@ branch: local-context-window
 
 # Local-Model Context Window Implementation Plan
 
-**Status:** Proposed — revised 2026-09-18 after re-verifying every premise
-against `main`.
+**Status:** Completed and merged in PR #35. Revised 2026-09-18 after
+re-verifying every premise against `main`, then implemented on the same branch.
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the

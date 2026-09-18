@@ -4,8 +4,7 @@
 
 - [ ] **Finish MCP server work** → [3. Finish MCP server work](#3-finish-mcp-server-work)
 - [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
-- [ ] **Fix the local-model context window** → [5. Local-model context window is hardcoded to 32K](#5-local-model-context-window-is-hardcoded-to-32k)
-- [ ] **Check the restored-session model fallback** → [6. A restored session silently switches away from a local model](#6-a-restored-session-silently-switches-away-from-a-local-model)
+- [ ] **Check the restored-session model fallback** → [5. A restored session silently switches away from a local model](#5-a-restored-session-silently-switches-away-from-a-local-model)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
 
 ---
@@ -137,26 +136,7 @@ project scoping, cancellation, tool policy, and accounting.
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
 
-## 5. Local-model context window is hardcoded to 32K
-
-`buildOllamaModel` and `buildOpenAICompatibleModel` (`server/src/agent/models.ts:237`, `:261`) both hardcode `contextWindow: 32_768`. The comment explains the choice honestly — the OpenAI-compatible `/v1/models` endpoint carries no context length — but the default is now wrong in a way that breaks the local path outright.
-
-Measured on 2026-09-08 while running the MCP Phase 2 external-client check against LM Studio:
-
-- Kady's own prompt for one trivial request was **44,409 tokens** (system prompt + seeded `AGENTS.md` + the full tool surface). That is already **above** the declared 32,768 window, so no local model can run Kady within its declared budget — the floor exceeds the ceiling.
-- The model actually loaded (`qwen/qwen3.8-27b`) reports `max_context_length: 262144`, loaded at the full 262,144. The declared value is 8× too low.
-- Observed effect: the model returned an empty assistant message and the run still completed as `done`, with no error frame and nothing logged. See the Phase 3 follow-up in the [Phase 2 plan](plans/completed/2026-09-06-mcp-server-phase-2-server.md).
-
-It does not need to be this low, and the value is discoverable rather than merely configurable. The approach is settled in the plan linked below: probe the local server from the two discovery routes, cache the result, and fall back to 128,000 when nothing answers. `resolveModel` stays synchronous. The two builders are deliberately parallel rather than sharing a base (see the comment at `models.ts:241`), so a fix touches both.
-
-Planned in [Local-model context window: probe it instead of guessing 32K](plans/2026-09-10-local-model-context-window.md), revised 2026-09-18 after re-verifying every premise against `main`. Four things that revision settled, because they change what the entry above implies:
-
-- **The effective budget is the declared window minus `reserveTokens`**, which is 16,384 by default, so the prompt is 2.7x over rather than 1.35x. That reserve is now Kady's own per-project setting (`server/src/agent/compaction-settings.ts`, tunable 4,000–64,000), not Pi's fixed default, so the arithmetic moves with it.
-- **The compaction hypothesis for the empty assistant message was falsified.** Phase 4 ran the feature against live servers on 2026-09-18 and compaction never fired, even with `reserveTokens` maxed. The symptom itself belongs to a different defect on a different surface, already fixed by `e2022ea` (2026-09-09), which told MCP clients when a finished run produced nothing. The context window was a real defect on its own terms; the two were never causally linked.
-- **The value really is discoverable, and Phase 1 is now complete.** LM Studio's `/api/v0/models` reports `max_context_length` (and `loaded_context_length`, which can be half of it on a default install); Ollama's `/api/tags` reports `details.context_length` and `/api/ps` the loaded figure. Both verified against live servers. The last open item — the Ollama model-name round trip — closed on 2026-09-18: Ollama accepts an untagged `all-minilm` but every listing endpoint reports `all-minilm:latest`, so `cacheKey` must append `:latest` to an untagged Ollama id. That normalisation is Ollama-only; applying it to LM Studio would break every key.
-- **A restored chat cannot hold a local model at all.** `runtime.getModel` returns `undefined` for both local providers, so `session.model` falls through to the configured default. That deleted the plan's run-path probe and half its dedup machinery — and it exposed a separate defect, below.
-
-## 6. A restored session silently switches away from a local model
+## 5. A restored session silently switches away from a local model
 
 `restoredSessionModel` and `latestProjectModel` (`server/src/agent/session-registry.ts:486`, `:472`) resolve through `runtime.getModel(provider, modelId)`. Local models are never in Pi's registry — Kady creates the runtime with `allowModelNetwork: false` and registers `ollama` / `openai-compatible` as providers with no model list — so that lookup returns `undefined` and the session falls back to `defaultModel`, normally an OpenRouter model.
 
@@ -164,4 +144,4 @@ Verified 2026-09-18 by constructing the real `ModelRuntime` the way `session-reg
 
 The web client persists `selectedModel` per tab and sends it on every run (`web/src/lib/workspace-persistence.ts:59`, `use-agent.ts:531`), so the UI path is unaffected — `body.model` wins before the fallback is reached. A run that omits `model` is not: a headless or MCP-initiated continuation of a local chat quietly bills a cloud provider instead. Worth confirming against the MCP server path before deciding how much this matters.
 
-Found while revising the plan in section 5. Deliberately not folded into it — it is a different defect in a different file, and that plan is narrow on purpose.
+Found while revising the local-model context window plan (shipped in PR #35, archived under `plans/completed/`). Deliberately not folded into it — it is a different defect in a different file, and that plan is narrow on purpose.

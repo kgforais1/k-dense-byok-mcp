@@ -34,7 +34,7 @@ Measured 2026-09-18 on `main` at `5ae0604`. Two claims in todo §6 are wrong (fl
 - **Remove the four social shields; keep the License shield.** Nothing regenerates or replaces them (no fork channels exist), and per the todo's own drift rule a badge without a check is a future lie. This resolves the todo's "judgement call" for the social four; the License shield was never in question.
 - **Do not add fork-owned social badges** — there is nothing to link to while the fork is unpromoted. If that ever changes, the new badges ship with a check.
 - **Skills figure: drop the number, name the source.** Reword the four prose sites to point at the default catalogue repo plus the `KADY_SKILLS_REPO` override instead of asserting a count — the todo's "either name that revision or drop the figure", and naming a revision of a repo we do not control is the weaker option.
-- **Fork notices: one short line atop the remaining user-facing docs.** Candidate wording (final in implementation, reviewed in PR): `> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok); product prose below is upstream's work except where noted.` Skip `docs/development/*` — contributor-internal, already fork-scoped via `AGENTS.md`/`CONTRIBUTING.md`.
+- **Fork notices: one short line atop the remaining user-facing docs.** Shipped wording (shortened from the candidate during implementation so fork-authored docs like `docs/kady-as-mcp-server.md` carry no false prose-authorship claim): `> **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).` Skip `docs/development/*` — contributor-internal, already fork-scoped via `AGENTS.md`/`CONTRIBUTING.md`.
 - **Counts check: assert 326/229 in `docs:check`.** Extends the todo's "add a check with them" principle from badges to prose: `scripts/docs-check.mjs` counts `web/src/data/workflows.json` / `databases.json` entries and fails if they differ from the figures asserted in prose. If `docs:check` proves the wrong home (structural vs content), a standalone script plus a `Checks` workflow step is the fallback — record the decision in the implementing PR.
 - **`LICENSE`: verification only.** Confirm the MIT grant covers this repo (as `README.md:18` claims) and record the outcome; do not rewrite licence text.
 - **Out of scope**: `README.md:243` prose, skills-catalogue technical references, `upstream-sync-check.yml`, re-adding any badge.
@@ -48,39 +48,39 @@ docs/codebase-summary.md                     # drop 149 figure; add fork notice
 docs/installation.md                         # drop 149 figure; add fork notice
 docs/<25 remaining user-facing docs>         # add one-line fork notice
 scripts/docs-check.mjs                       # counts assertion for 326/229
-dev-docs/todo.md                             # §6: "Planned in [...]" pointer + fix wrong claims (implementing PR)
+dev-docs/todo.md                             # §6 deleted on shipment (implementing PR)
 ```
 
 ## Implementation sequence
 
 ### Phase 1 — Badges and the skills figure
 
-- [ ] Remove the four social shields from `README.md:4-7`; keep the License shield.
-- [ ] Reword the four "149 skills" prose sites (`README.md:89`, `docs/basic-usage.md:20`, `docs/codebase-summary.md:12`, `docs/installation.md:98`) to name the catalogue source instead of a count.
-- [ ] Re-read the README fork notice after badge removal — it references "social links" at `:16`, which will no longer exist on the page; adjust that sentence.
+- [x] Remove the four social shields from `README.md:4-7`; keep the License shield.
+- [x] Reword the four "149 skills" prose sites (`README.md:89`, `docs/basic-usage.md:20`, `docs/codebase-summary.md:12`, `docs/installation.md:98`) to name the catalogue source instead of a count.
+- [x] Re-read the README fork notice after badge removal — it references "social links" at `:16`, which will no longer exist on the page; adjust that sentence.
 
 **Exit criteria:** no shields pointing at K-Dense channels; no bare skills count in prose; the fork notice still describes the page accurately.
 
 ### Phase 2 — Fork notices across docs/
 
-- [ ] Add the one-line notice to all 28 user-facing `docs/*.md` files (none has one today); skip `docs/development/*`.
-- [ ] Keep the wording byte-identical across files so a future `grep` can audit it.
+- [x] Add the one-line notice to all 28 user-facing `docs/*.md` files (none has one today); skip `docs/development/*`.
+- [x] Keep the wording byte-identical across files so a future `grep` can audit it.
 
 **Exit criteria:** every user-facing doc states the fork relationship exactly once.
 
 ### Phase 3 — Counts check
 
-- [ ] Assert workflows/databases JSON entry counts match the prose figures in `docs:check` (fallback: standalone script + `Checks` step; record the call).
-- [ ] Confirm the check fails loudly on a mismatch (bump a count in a scratch copy, run, revert).
+- [x] Assert workflows/databases JSON entry counts match the prose figures in `docs:check` (fallback: standalone script + `Checks` step; record the call).
+- [x] Confirm the check fails loudly on a mismatch (bump a count in a scratch copy, run, revert).
 
 **Exit criteria:** moving 326/229 without updating prose fails a CI check.
 
 ### Phase 4 — Verification and close-out
 
-- [ ] `npm run verify -- docs` and `npm run verify -- fast` green.
-- [ ] Implementing PR adds the "Planned in" pointer to todo §6, fixes the wrong claims (installation.md + limitations.md notices, 140+ inconsistency), moves this plan to `completed/`, sets final status, records handoff disposition (no active handoff exists for this work — mark N/A in the PR closing checklist), and records in `CHANGELOG.md` and/or `maintenance-log.md` per the archive lifecycle.
+- [x] `npm run verify -- docs` and `npm run verify -- fast` green.
+- [x] Implementing PR deleted todo §6 (entry ships here — deletion, not a pointer, per the TODO lifecycle), moved this plan to `completed/`, set final status, recorded handoff disposition (no active handoff exists for this work — mark N/A in the PR closing checklist), and recorded in `CHANGELOG.md` per the archive lifecycle.
 
-**Exit criteria:** plan archived; todo §6's remaining items either done or re-pointed.
+**Exit criteria:** plan archived; todo §6 deleted (all items done).
 
 ## Guardrails
 

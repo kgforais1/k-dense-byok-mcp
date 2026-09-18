@@ -9,7 +9,7 @@
 > tool](./docs/kady-as-mcp-server.md) — Kady acting as an MCP *server*, which is
 > the opposite direction from the [external-tool
 > connector](./docs/mcp-servers.md) upstream already provides — plus related
-> changes. The K-Dense channel links and videos on this page refer to the
+> changes. The K-Dense channel links, videos and star history on this page refer to the
 > upstream project and its authors, not to this fork. The MIT License badge is
 > not in that group: that licence covers this repository too.
 >

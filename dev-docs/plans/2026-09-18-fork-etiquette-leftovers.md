@@ -1,6 +1,6 @@
 ---
 title: "Fork etiquette leftovers — attribution cleanup"
-status: proposed
+status: accepted
 created: 2026-09-18
 branch: fork-etiquette-leftovers
 ---

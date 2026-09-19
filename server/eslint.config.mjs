@@ -52,11 +52,17 @@ export default tseslint.config(
 
       // Ceilings, not targets, set at exactly the current worst offender:
       // complexity 62 (`agent/notebook-export.ts` is now exempted per-function;
-      // see the FORK notes there), 1468 lines (`modal/manager.ts`, grown by the
+      // see the FORK notes there), 1467 lines (`modal/manager.ts`, grown by the
       // upstream v0.10.0 hardening series), and a 672-line function
       // (`api/sandbox.ts`, grown by merged routes). Re-measure after touching
       // those files: this config's own lint fix deleted a dead import from
       // `manager.ts` and moved the number.
+      //
+      // The number only ever moves *down*. A change that needs lines in the
+      // worst file pays for them there: rewriting `manager.ts`'s `wait` cost
+      // four lines and returned five, so the limit went 1468 -> 1467. Raising
+      // it to fit a diff would make the cap track the tree instead of bounding
+      // it, which is the opposite of what it is for.
       //
       // Exactly, not rounded up. A limit above the worst thing in the tree is
       // a gate nobody can trip: at `max-lines: 1200` a new 1199-line file
@@ -73,7 +79,7 @@ export default tseslint.config(
       // keeps the number honest, and this codebase should never be discouraged
       // from adding a comment.
       complexity: ["error", 62],
-      "max-lines": ["error", 1468],
+      "max-lines": ["error", 1467],
       "max-lines-per-function": ["error", 672],
     },
   },

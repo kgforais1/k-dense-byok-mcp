@@ -553,18 +553,17 @@ export class DurableModalJobManager {
   ): Promise<ModalJob> {
     const deadline =
       timeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + Math.max(0, timeoutMs);
+    const key = this.key(projectId, jobId);
     while (true) {
       const job = this.store.require(projectId, jobId);
-      if (
-        isTerminalModalState(job.state) &&
-        job.accounting.reconciled &&
-        !this.active.has(this.key(projectId, jobId))
-      ) {
-        return job;
-      }
+      if (isTerminalModalState(job.state) && job.accounting.reconciled && !this.active.has(key)) return job;
       if (signal?.aborted) throw new ModalCancellationError("Wait aborted");
       if (Date.now() >= deadline) return job;
-      await sleep(Math.min(250, Math.max(1, deadline - Date.now())));
+      // Wake when the worker finishes, not only on the next fixed tick: its
+      // promise settles once it has reconciled and left `active`, which is the
+      // condition checked above. The tick is the backstop for an unowned job.
+      const tick = sleep(Math.min(250, Math.max(1, deadline - Date.now())));
+      await Promise.race([this.active.get(key)?.promise ?? tick, tick]);
     }
   }
 

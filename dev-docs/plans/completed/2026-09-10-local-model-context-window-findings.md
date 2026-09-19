@@ -456,3 +456,78 @@ are dropped in favour of it.
 
 `server/test/openai-compatible.test.ts:229` and `:239` still assert
 `context_length: 0`, as the first draft said.
+
+## Post-merge verification, 2026-09-19
+
+Two questions were left open when PR #35 merged, both about server behaviour
+rather than our code. Both were put to the running servers.
+
+**What this was checked against.** Every figure in this note, and every field
+name the code depends on, came from these exact builds on 2026-09-19. Nothing
+here is a claim about local servers in general — if a shape below stops
+matching, the first thing to check is whether the server moved.
+
+| Server | Version | How to re-check |
+|---|---|---|
+| Ollama | 0.33.2 | `curl -s localhost:11434/api/version` |
+| LM Studio | 0.4.23+1 (`lms` CLI at commit `07b7252`) | `cat ~/.lmstudio/.internal/app-version` |
+
+The earlier measurements in this file, including the 2026-09-11 and 2026-09-18
+sections, were taken against the same Ollama 0.33.2. The LM Studio build was
+not recorded at the time, which is the gap this table exists to stop
+repeating.
+
+### LM Studio always reports `loaded_context_length` for a resident model
+
+The open worry was that LM Studio might report a model as loaded while omitting
+`loaded_context_length`, which `probeOpenAICompatible` would read as "not
+loaded" and clear — reverting to the higher architectural figure and
+over-declaring.
+
+It does not. Across fourteen models on a live server, the field tracks state
+exactly:
+
+| `state` | `loaded_context_length` |
+|---|---|
+| `not-loaded` | `null` |
+| `loading` | the target figure, already correct |
+| `loaded` | the actual figure |
+
+Verified by polling `/api/v0/models` once per second through a cold load of
+`allenai/olmocr-2-7b`: it reported `state: "loading"` with
+`loaded_context_length: 64000` for the whole load, never a null. An embeddings
+model behaves the same (`text-embedding-nomic-embed-text-v1.5`, loaded 2048
+against a 2048 maximum), so the field is not chat-only.
+
+Two consequences for the code, both already true of it. Treating `null` as
+absent is right, because `null` is precisely what "not loaded" looks like — the
+field is never simply missing. And recording a figure from a `loading` row is
+right rather than premature, because the figure is already the one the model
+will serve.
+
+No change needed. The `state` field stays unread: it carries no information
+that `loaded_context_length` does not already give us.
+
+### Ollama's architectural figure comes from an undocumented field
+
+`details.context_length` on `/api/tags` is **not in Ollama's API
+documentation**. The documented `details` fields are `format`, `family`,
+`families`, `parameter_size` and `quantization_level`. Ollama 0.33.2 does emit
+it — both local models carry it — but we are reading a field the publisher has
+not committed to.
+
+`/api/ps`'s `context_length`, which is where the loaded figure comes from, *is*
+documented.
+
+So the two halves of the Ollama path do not rest on equal footing, and the
+undocumented half is the architectural one. That is the better half to lose:
+with no architectural figure, a loaded model still reports correctly through
+`/api/ps`, and only an *unloaded* model falls through to the 128,000 floor.
+That was already recorded as an accepted residual risk; it is now known to be a
+documentation risk as well as a version risk.
+
+How far back the field goes remains unverified — that needs older Ollama
+builds, not a live query. Tracked as todo 8.
+
+Sources: [/api/tags](https://docs.ollama.com/api/tags),
+[/api/ps](https://docs.ollama.com/api/ps).

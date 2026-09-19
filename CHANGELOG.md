@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **`adm-zip` 0.5.18 → 0.6.1**: clears [GHSA-7q85-xj36-vmfc](https://github.com/advisories/GHSA-7q85-xj36-vmfc) (high; uncontrolled allocation from a forged uncompressed-size header), and moves past the range of the still-unpatched [GHSA-vwc7-r8mq-g2x9](https://github.com/advisories/GHSA-vwc7-r8mq-g2x9). Not exploitable here either way — the one call site builds archives and never parses foreign bytes — but that argument had now needed revising twice, so upgrading beat dismissing a third alert. `@types/adm-zip` is dropped because 0.6 ships its own definitions.
+
 ### Added
 - **Local models declare their real context window** ([#35](https://github.com/kgforais1/k-dense-byok-mcp/pull/35)):
   - Kady asked neither local server how big the model's context window was; it hardcoded 32,768 for all of them. A live LM Studio model reports 262,144, and Kady's own prompt is ~39,600 tokens against a 16,384-token compaction reserve — so the declared floor exceeded the declared ceiling and no local model could run inside its own declared budget. The window is now read from each server: Ollama's `/api/tags` and `/api/ps`, LM Studio's `/api/v0/models`.

@@ -22,7 +22,15 @@ Done:
 
 Still open:
 
-- **Bring the ratchets down.** The complexity, `max-lines` and `max-lines-per-function` limits are set at today's worst offender. The frontend has no size limits at all, because a useful value cannot be set while `file-preview-panel.tsx` is 2238 lines. Full backlog with current numbers is in the plan's [ratchet backlog](plans/2026-09-08-repo-quality-gates.md).
+- **Bring the ratchets down, and make them lower themselves.** The complexity,
+  `max-lines` and `max-lines-per-function` limits are set at today's worst
+  offender. The frontend has no size limits at all, because a useful value cannot be set while `file-preview-panel.tsx` is 2238 lines. Full backlog with current numbers is in the plan's [ratchet
+  backlog](plans/2026-09-08-repo-quality-gates.md). Today the number only moves
+  when someone notices, and it moves by hand, so a branch that shrinks the worst
+  file leaves the slack behind for the next one to spend. Worth a check that
+  recomputes the worst offender and fails when the configured limit sits above
+  it — that turns every shrink into a permanent one, and keeps a diff that needs
+  lines in the worst file from buying them by raising the cap.
 - **Raise the coverage floors**, particularly on the frontend (48.8% statements vs the backend's 72.1%, which now includes `server/pi-packages/**`).
 - **Semgrep rules for this repository's own invariants** — not a generic ruleset, which would duplicate CodeQL. Candidates are recorded in the plan.
 - **Required status checks before merge.** The branch ruleset gates on CodeQL today; the new `Checks` jobs are not yet in the required set.
@@ -169,44 +177,7 @@ model carrying the wrong *window*.
 
 Found by muse-spark-1.3 reviewing PR #35.
 
-## 7. Two I/O-heavy test files time out on Windows CI
-
-Both the backend and frontend Windows jobs fail intermittently with `Test timed
-out in 5000ms`, in two files that have nothing to do with each other except
-that both do real I/O:
-
-- `server/test/notebook-robustness.test.ts` — real filesystem work in a temp
-  directory. Observed failing on three *different* tests across four runs:
-  *never treats corrupted retained outputs…* (`576619e`), *refuses altered
-  uploads…* (`5ae0604`, on **main**), and *admits once, verifies uploaded
-  bytes…* (PR #37).
-- `web/src/components/pdf-viewer/pdfjs-integration.test.ts` — loads the real
-  `pdfjs-dist` and parses a real PDF, deliberately unmocked. Observed failing
-  twice on the same test, *is still on the pdfjs major that was verified in a
-  browser* (`d72b1ce` and PR #37).
-
-Ubuntu passes both every time. The notebook file takes roughly 21s on a Windows
-runner against vitest's 5s per-test default, so it sits at the edge and
-whichever test the runner starves is the one that fails — which is why the
-victim keeps moving. That the file as a whole is over budget, rather than any
-one test being slow, is the thing to fix.
-
-This has a real cost: it reds a PR for reasons unrelated to its diff, which
-trains everyone to wave the check through. It has already done so on #35 twice
-and on #37.
-
-Two candidate fixes, and they are not equivalent. Raising `testTimeout` for
-these files admits the work is genuinely slow on Windows; finding the specific
-slow operation might fix the cause instead — temp-dir fs work and real module
-loading are both places Windows is slowest. Prefer the second, and only fall
-back to the first with a comment saying why. Whichever is chosen, apply the
-same reasoning to both files: they fail the same way for the same reason, and
-fixing one would leave the other to keep costing red checks.
-
-Recorded 2026-09-19; widened the same day when the frontend file failed
-alongside the backend one on #37.
-
-## 8. Ollama's architectural context figure is undocumented
+## 7. Ollama's architectural context figure is undocumented
 
 `/api/tags` → `details.context_length` is what PR #35 reads for a model's
 architectural maximum, and Ollama does not document it. The documented
@@ -228,24 +199,3 @@ The practical guard is re-checking the field after an Ollama upgrade. The
 version this was confirmed against is recorded in
 [the findings note](plans/completed/2026-09-10-local-model-context-window-findings.md)
 and in [the user docs](../docs/local-models-ollama.md).
-
-## 9. Keep the two local discovery routes symmetric — done
-
-`server/test/local-discovery-contract.test.ts` now runs one table of
-malformed-payload cases against both routes, so a rule applied to one provider
-and not the other fails there rather than shipping.
-
-It exists because the same defect was found and fixed three times in PR #35,
-each time on one provider only, and each time by a reviewer noticing the
-asymmetry rather than by a test: a malformed row blanking the list
-(`a58c2bf`), a malformed 200 rendering as a healthy empty server (`5565225`,
-`0dc70d0`, then still present on the other route in `9202d12`), and a
-whitespace-only identifier (`956617f`, then still wrong in both probes in
-`576619e`).
-
-Verified to work by reverting `system.ts` to `0dc70d0`: 8 of the 24 cases fail,
-all of them on the OpenAI-compatible side, while every Ollama case passes.
-
-Left open deliberately: the routes' *probes* have no equivalent contract test,
-and the whitespace predicate bug lived there too. Worth extending if a fourth
-asymmetry turns up.

@@ -17,7 +17,7 @@
  * upgrade and are noted in `dev-docs/todo.md` as the remaining coverage gap.
  */
 
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -37,6 +37,12 @@ async function loadPdfjs() {
   return import("pdfjs-dist/legacy/build/pdf.mjs");
 }
 
+type Pdfjs = Awaited<ReturnType<typeof loadPdfjs>>;
+type AppEntry = Awaited<ReturnType<typeof loadAppEntry>>;
+
+let pdfjs: Pdfjs;
+let appEntry: AppEntry;
+
 /**
  * The entry point the app itself imports. Only its exported surface is touched
  * here — the modern build is not meant to *run* under Node.
@@ -45,7 +51,7 @@ async function loadAppEntry() {
   return import("pdfjs-dist");
 }
 
-async function openFixture(pdfjs: Awaited<ReturnType<typeof loadPdfjs>>) {
+async function openFixture(pdfjs: Pdfjs) {
   return pdfjs.getDocument({
     data: new Uint8Array(readFileSync(FIXTURE)),
     standardFontDataUrl: STANDARD_FONTS,
@@ -69,14 +75,23 @@ async function openFixture(pdfjs: Awaited<ReturnType<typeof loadPdfjs>>) {
 const BROWSER_VERIFIED_MAJOR = 6;
 
 describe("pdfjs-dist integration", () => {
-  it("is still on the pdfjs major that was verified in a browser", async () => {
-    const pdfjs = await loadPdfjs();
+  // Both builds are loaded once, here, rather than inside the tests. pdfjs is a
+  // large unmocked module, and the import dominates this file: locally the
+  // first test to call it took ~300ms while every later one took ~1ms off the
+  // module cache. On a Windows runner that one-time cost has repeatedly blown
+  // vitest's 5s per-test budget, failing whichever test happened to import
+  // first for a reason that had nothing to do with what it asserts. A hook owns
+  // the cost instead, with an explicit budget well clear of the observed worst
+  // case, so a genuinely broken import still fails rather than hanging.
+  beforeAll(async () => {
+    [pdfjs, appEntry] = await Promise.all([loadPdfjs(), loadAppEntry()]);
+  }, 60_000);
 
+  it("is still on the pdfjs major that was verified in a browser", () => {
     expect(Number(pdfjs.version.split(".")[0])).toBe(BROWSER_VERIFIED_MAJOR);
   });
 
   it("opens a real PDF and reports its page count", async () => {
-    const pdfjs = await loadPdfjs();
     const doc = await openFixture(pdfjs);
 
     expect(doc.numPages).toBe(1);
@@ -85,7 +100,6 @@ describe("pdfjs-dist integration", () => {
   });
 
   it("exposes teardown on the loading task, not the document", async () => {
-    const pdfjs = await loadPdfjs();
     const doc = await openFixture(pdfjs);
 
     // This pair is the pdfjs 6 breaking change that `destroyDoc` exists for.
@@ -106,16 +120,12 @@ describe("pdfjs-dist integration", () => {
    * other tests here rely on — otherwise those tests could pass while the app
    * loads something that behaves differently.
    */
-  it("agrees with the build the app actually imports", async () => {
-    const [legacy, app] = await Promise.all([loadPdfjs(), loadAppEntry()]);
-
-    expect(app.version).toBe(legacy.version);
-    expect(Object.keys(app).sort()).toEqual(Object.keys(legacy).sort());
+  it("agrees with the build the app actually imports", () => {
+    expect(appEntry.version).toBe(pdfjs.version);
+    expect(Object.keys(appEntry).sort()).toEqual(Object.keys(pdfjs).sort());
   });
 
-  it("still exports the TextLayer constructor the viewer builds text with", async () => {
-    const pdfjs = await loadPdfjs();
-
+  it("still exports the TextLayer constructor the viewer builds text with", () => {
     // `pdf-viewer.tsx` reaches for `TextLayer` through an `as unknown as` cast,
     // so its removal would be silent: the viewer would render pages with no
     // selectable text and no error. Assert it directly.
@@ -125,7 +135,6 @@ describe("pdfjs-dist integration", () => {
   });
 
   it("extracts the fixture's text", async () => {
-    const pdfjs = await loadPdfjs();
     const doc = await openFixture(pdfjs);
     const page = await doc.getPage(1);
 
@@ -140,7 +149,6 @@ describe("pdfjs-dist integration", () => {
   });
 
   it("computes a scaled viewport", async () => {
-    const pdfjs = await loadPdfjs();
     const doc = await openFixture(pdfjs);
     const page = await doc.getPage(1);
 

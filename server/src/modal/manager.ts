@@ -553,18 +553,17 @@ export class DurableModalJobManager {
   ): Promise<ModalJob> {
     const deadline =
       timeoutMs === undefined ? Number.POSITIVE_INFINITY : Date.now() + Math.max(0, timeoutMs);
+    const key = this.key(projectId, jobId);
     while (true) {
       const job = this.store.require(projectId, jobId);
-      if (
-        isTerminalModalState(job.state) &&
-        job.accounting.reconciled &&
-        !this.active.has(this.key(projectId, jobId))
-      ) {
-        return job;
-      }
+      if (isTerminalModalState(job.state) && job.accounting.reconciled && !this.active.has(key)) return job;
       if (signal?.aborted) throw new ModalCancellationError("Wait aborted");
       if (Date.now() >= deadline) return job;
-      await sleep(Math.min(250, Math.max(1, deadline - Date.now())));
+      // Wake when the worker finishes, not only on the next fixed tick: its
+      // promise settles once it has reconciled and left `active`, which is the
+      // condition checked above. The tick is the backstop for an unowned job.
+      const tick = sleep(Math.min(250, Math.max(1, deadline - Date.now())));
+      await Promise.race([this.active.get(key)?.promise ?? tick, tick]);
     }
   }
 
@@ -740,8 +739,10 @@ export class DurableModalJobManager {
         }
       })
       .finally(() => {
-        runtime.adapter?.close();
+        // Leave `active` before closing: a throwing `close()` would skip the
+        // delete, and `wait` races this chain's promise — see its comment.
         this.active.delete(key);
+        runtime.adapter?.close();
       })
       // Terminal handler: nothing above may surface as an unhandled rejection,
       // which would take the whole backend (every chat tab) down with it.
@@ -1035,9 +1036,7 @@ export class DurableModalJobManager {
       this.store.update(projectId, jobId, (current) => {
         current.inputFiles = inputPlan.manifest;
       });
-      await checked(
-        sandbox.filesystem.makeDirectory(REMOTE_CONTROL_DIR, { createParents: true }),
-      );
+      await checked(sandbox.filesystem.makeDirectory(REMOTE_CONTROL_DIR, { createParents: true }));
       await stageInputs(sandbox, inputPlan, checked);
       // Hash the bytes actually uploaded, not merely the local files that
       // preceded a potentially racing upload — for every job, not only

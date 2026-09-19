@@ -46,6 +46,19 @@ const consent = (p: RobustnessPreview) => ({ digest: p.digest, approveRemote: tr
 const approve = (p: RobustnessPreview) => service.approve(project, source, p.id, consent(p));
 const wait = async (p: RobustnessPreview) => { await Promise.all(p.jobs.map((j) => manager.wait(project, j.jobId, 5000))); return service.get(project, source, p.id); };
 
+// Every test here drives real jobs through the durable manager over a real
+// temp filesystem, and Windows CI runs it roughly three times slower than a
+// developer machine: the median test measured 1.1s there against 0.3s here.
+// Against vitest's 5s default that leaves no room for the runner to stall, and
+// it has repeatedly failed whichever test the stall happened to land on —
+// three different tests across four runs, each of them passing in about a
+// second on the runs either side. The per-operation cost is addressed in
+// `manager.wait`, which now wakes on the worker finishing rather than on a
+// fixed 250ms tick; this raises the budget for the contention that is left.
+// It is deliberately file-scoped: the 5s default is the right one to keep
+// everywhere a test is not doing this much I/O.
+vi.setConfig({ testTimeout: 20_000 });
+
 describe("bounded robustness workflows", () => {
   it("previews exact snapshots and quotes without admitting work or reserving money", async () => {
     const p = await prepare();

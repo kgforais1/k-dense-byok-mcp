@@ -1,5 +1,60 @@
 # Maintenance Log
 
+### 2026-09-19 — Windows CI test timeouts fixed (PR #38)
+
+- **Category:** CI / test infrastructure
+- **Summary:** Two unrelated test files had been failing intermittently on the
+  Windows runners only, both with `Test timed out in 5000ms`, and between them
+  had redded #35 twice and #37 once. The job logs gave two different causes.
+  `web/src/components/pdf-viewer/pdfjs-integration.test.ts` charged whichever
+  test imported `pdfjs-dist` first for loading it — 6311ms on Windows against
+  the 5s per-test budget, while the other six tests in the file cost 238ms
+  between them; both builds now load once in a `beforeAll`.
+  `server/test/notebook-robustness.test.ts` had no single slow operation, just
+  a Windows median of 1.1s per test with failures at 5.4s on tests that passed
+  in under a second the run before. `DurableModalJobManager.wait` no longer
+  polls on a fixed 250ms tick — it races the worker's own promise, which
+  settles exactly when the condition `wait` checks becomes true — and the file
+  raises `testTimeout` to 20s, file-scoped, for the contention that is left.
+- **Evidence:** Windows job logs `35442605790` (frontend, 6311ms import) and
+  `105412502215` (backend, per-test durations). Locally the backend file drops
+  5.13s → 3.28s and its worst test 684ms → 421ms; no test in the frontend file
+  now exceeds 22ms. Full server (1402) and web (728) suites, both typechecks,
+  both lints, and `docs:check` pass.
+- **Follow-up:** The backend `max-lines` ratchet moved 1468 → 1467 rather than
+  up, and `server/eslint.config.mjs` now states that the number only ever moves
+  down. Automating that check is recorded in `dev-docs/todo.md` §1.
+- **Latent bug found in review:** making `wait` depend on the worker promise
+  exposed an ordering the old fixed tick had masked. `schedule()`'s `finally`
+  called `runtime.adapter.close()` before `this.active.delete(key)`, so a
+  throwing `close()` skipped the delete and the terminal `.catch` swallowed the
+  error, leaving a settled promise in `active`. Every race then resolved
+  immediately: the wait loop burned its whole budget without yielding to a
+  timer, and with no timeout it would have starved the event loop. The delete
+  now precedes the close, covered by `settles waiters when adapter cleanup
+  throws` in `test/modal-durable.test.ts`. Found by a `codex/gpt-5.6-terra`
+  review of PR #38; a second reviewer traced the same chain and missed it.
+
+### 2026-09-19 — Local discovery route contract and adm-zip bump (PR #37)
+
+- **Category:** test infrastructure / security
+- **Summary:** Answered the two server-behaviour questions PR #35 left open and
+  pinned the result: `server/test/local-discovery-contract.test.ts` runs one
+  table of malformed-payload cases against both local model-discovery routes,
+  so a rule applied to one provider and not the other fails there rather than
+  shipping. Recorded the Ollama (0.33.2) and LM Studio (0.4.23+1) builds the
+  context-window work was verified against, giving the undocumented
+  `/api/tags` → `details.context_length` field a re-check trigger. Bumped
+  `adm-zip` 0.5.18 → 0.6.1 and dropped `@types/adm-zip`.
+- **Evidence:** Reverting `system.ts` to `0dc70d0` fails 8 of the 24 contract
+  cases, all on the OpenAI-compatible side, while every Ollama case passes.
+- **Follow-up:** The routes' background probes have no equivalent contract
+  test, and the whitespace-identifier bug lived there too. This entry is
+  recorded late, in PR #38: #37 ticked its `dev-docs/todo.md` row "done"
+  instead of deleting it and wrote no durable record, which is what
+  `docs/development/workflow.md#archive-lifecycle` requires. The row is now
+  deleted.
+
 ### 2026-09-17 — Plan-close lifecycle clarified (PR #33)
 
 - **Category:** operational

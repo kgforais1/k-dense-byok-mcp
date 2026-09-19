@@ -44,6 +44,16 @@ fix the doc in the same PR or call it out explicitly.
 
 This repo is a fork: `kgforais1/k-dense-byok-mcp`. Never open PRs against, or push to, the upstream repo. Always pass `--repo kgforais1/k-dense-byok-mcp` to `gh pr create` (the `gh` default repo is set to the fork, but pass it explicitly anyway). A pre-push hook (`.githooks/pre-push`) blocks pushes to any remote that is not the fork; `start.mjs` activates it automatically via `git config core.hooksPath .githooks` on every launch (run that command manually if you haven't launched the app). Never use `git push --no-verify` (or any other hook-bypass flag) without explicitly asking the user first and getting confirmation. Fork work follows the **overlay rule** (additive over in-place; see `CONTRIBUTING.md#keeping-up-with-upstream`): new files and narrow seams, `// FORK:` marks where unavoidable.
 
+## Work lifecycle (close it in the same PR)
+
+Canonical rules: [`docs/development/workflow.md#archive-lifecycle`](docs/development/workflow.md#archive-lifecycle). The short version, because this is the policy most often missed:
+
+- **TODO entries are deleted, not ticked.** `dev-docs/todo.md` holds unstarted and in-progress work only, so a shipped row is removed in the PR that ships it. A row marked "done" is a bug — `CONTRIBUTING.md` says so too. An entry spanning several PRs is not deleted until the last one, but its body is refreshed in whichever PR invalidates it.
+- **The result goes somewhere durable**: `CHANGELOG.md` under `## [Unreleased]`, `dev-docs/maintenance-log.md`, or both. If the PR completes a plan, at least one is mandatory.
+- **Plans move to `dev-docs/plans/completed/`** with a `Completed and merged in PR #<n>` status, and the active handoff is removed — both in the implementing PR, never after merge.
+
+`.github/pull_request_template.md` ends with the full checklist. **Passing `--body` to `gh pr create` silently discards that template**, which is how agent-authored PRs miss it: if you write the body yourself, copy the closing checklist into it. Then run `npm run verify -- docs`.
+
 ## Project overview
 
 K-Dense BYOK is a local AI research-assistant app ("Kady") that brings the user's own model credentials (API keys or supported subscriptions). It runs natively on macOS, Linux, and Windows. It is one repo with **two** runtime services started together by the cross-platform launcher `start.mjs` (wrapped by `./start.sh` on macOS/Linux and `start.cmd` on Windows):

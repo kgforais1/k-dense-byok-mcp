@@ -169,28 +169,42 @@ model carrying the wrong *window*.
 
 Found by muse-spark-1.3 reviewing PR #35.
 
-## 7. `notebook-robustness.test.ts` times out on Windows CI
+## 7. Two I/O-heavy test files time out on Windows CI
 
-`backend (vitest, windows-latest)` fails intermittently with `Test timed out in
-5000ms` somewhere in `server/test/notebook-robustness.test.ts`. It is not tied
-to any one test: run `576619e` failed on *never treats corrupted retained
-outputs or preview records as verified absence*, and run `5ae0604` on **main**
-failed on *refuses altered uploads before executing science and bounds output
-downloads*. Ubuntu passes the same file every time.
+Both the backend and frontend Windows jobs fail intermittently with `Test timed
+out in 5000ms`, in two files that have nothing to do with each other except
+that both do real I/O:
 
-The file takes roughly 21s on a Windows runner against vitest's 5s per-test
-default, so the suite sits at the edge and whichever test the runner happens to
-starve is the one that fails. This is a real cost: it reds a PR for reasons
-unrelated to its diff, which trains everyone to wave the check through.
+- `server/test/notebook-robustness.test.ts` — real filesystem work in a temp
+  directory. Observed failing on three *different* tests across four runs:
+  *never treats corrupted retained outputs…* (`576619e`), *refuses altered
+  uploads…* (`5ae0604`, on **main**), and *admits once, verifies uploaded
+  bytes…* (PR #37).
+- `web/src/components/pdf-viewer/pdfjs-integration.test.ts` — loads the real
+  `pdfjs-dist` and parses a real PDF, deliberately unmocked. Observed failing
+  twice on the same test, *is still on the pdfjs major that was verified in a
+  browser* (`d72b1ce` and PR #37).
+
+Ubuntu passes both every time. The notebook file takes roughly 21s on a Windows
+runner against vitest's 5s per-test default, so it sits at the edge and
+whichever test the runner starves is the one that fails — which is why the
+victim keeps moving. That the file as a whole is over budget, rather than any
+one test being slow, is the thing to fix.
+
+This has a real cost: it reds a PR for reasons unrelated to its diff, which
+trains everyone to wave the check through. It has already done so on #35 twice
+and on #37.
 
 Two candidate fixes, and they are not equivalent. Raising `testTimeout` for
-this file admits the work is genuinely slow on Windows; finding the specific
-slow operation (the file does real fs work in a temp dir, which is where
-Windows is slowest) might fix the cause instead. Prefer the second, and only
-fall back to the first with a comment saying why.
+these files admits the work is genuinely slow on Windows; finding the specific
+slow operation might fix the cause instead — temp-dir fs work and real module
+loading are both places Windows is slowest. Prefer the second, and only fall
+back to the first with a comment saying why. Whichever is chosen, apply the
+same reasoning to both files: they fail the same way for the same reason, and
+fixing one would leave the other to keep costing red checks.
 
-Recorded 2026-09-19 after it failed PR #35 twice with nothing in that PR
-touching notebooks.
+Recorded 2026-09-19; widened the same day when the frontend file failed
+alongside the backend one on #37.
 
 ## 8. Ollama's architectural context figure is undocumented
 

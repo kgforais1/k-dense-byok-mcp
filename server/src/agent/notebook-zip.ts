@@ -9,21 +9,24 @@
  * `new AdmZip()` empty, `addLocalFile`, `addFile`, `toBuffer`. That is load
  * bearing, and the reason is narrower than "we don't extract".
  *
- * adm-zip's open advisories split two ways. GHSA-vwc7-r8mq-g2x9
- * (CVE-2026-76845, symlink-following overwrite) is extraction-only, and has
- * **no fixed release at all** — 0.6.0 is inside its range. GHSA-xcpc-8h2w-3j85
- * (4 GB allocation from a forged uncompressed-size header) is *not*: it fires
- * on `readFile`, `readAsText`, `entry.getData()` and `test()` as well, so any
- * code that so much as parses an untrusted archive is exposed.
+ * We are on 0.6.1, which clears the advisories that were open against the
+ * 0.5 line: GHSA-xcpc-8h2w-3j85 and then GHSA-7q85-xj36-vmfc, both
+ * "uncontrolled allocation from a forged uncompressed-size header", fixed in
+ * 0.6.0 and 0.6.1 respectively. It also leaves the range of
+ * GHSA-vwc7-r8mq-g2x9 (symlink-following overwrite on extract), which is
+ * `>= 0.5.9, <= 0.6.0` and still has no fixed release — we are past it rather
+ * than patched against it.
  *
- * So the safe property is that nothing here ever hands adm-zip bytes it did
- * not just produce. Reading an uploaded or downloaded zip would be a live
- * DoS, and adding an extract path would inherit a dependency with no patch
- * available. Use a different library for either. The dismissed Dependabot
- * alerts rest on this paragraph; revisit them if it stops being true.
+ * Keep the write-only property anyway. The allocation advisories arrived
+ * twice in the same shape, so a third is a reasonable expectation, and they
+ * fire on `readFile`, `readAsText`, `entry.getData()` and `test()` — anything
+ * that parses an archive, not just extraction. Nothing here hands adm-zip
+ * bytes it did not just produce, which is what makes a future advisory of
+ * that family a version bump rather than an incident. Adding a read-untrusted
+ * path would change that; use a different library for it.
  *
- * The tests do call `new AdmZip(buffer)`, but only on buffers they just
- * built here.
+ * The tests do call `new AdmZip(buffer)`, and `readAsText`, `getEntries` and
+ * one `extractAllTo` — but only on archives they just built themselves.
  *
  * One thing this does *not* claim: that Kady never touches an untrusted zip.
  * A user can drop one in the sandbox and ask the agent to open it. That read

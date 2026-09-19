@@ -168,3 +168,71 @@ is about the model *choice* changing, this one is about a correctly-pinned
 model carrying the wrong *window*.
 
 Found by muse-spark-1.3 reviewing PR #35.
+
+## 7. `notebook-robustness.test.ts` times out on Windows CI
+
+`backend (vitest, windows-latest)` fails intermittently with `Test timed out in
+5000ms` somewhere in `server/test/notebook-robustness.test.ts`. It is not tied
+to any one test: run `576619e` failed on *never treats corrupted retained
+outputs or preview records as verified absence*, and run `5ae0604` on **main**
+failed on *refuses altered uploads before executing science and bounds output
+downloads*. Ubuntu passes the same file every time.
+
+The file takes roughly 21s on a Windows runner against vitest's 5s per-test
+default, so the suite sits at the edge and whichever test the runner happens to
+starve is the one that fails. This is a real cost: it reds a PR for reasons
+unrelated to its diff, which trains everyone to wave the check through.
+
+Two candidate fixes, and they are not equivalent. Raising `testTimeout` for
+this file admits the work is genuinely slow on Windows; finding the specific
+slow operation (the file does real fs work in a temp dir, which is where
+Windows is slowest) might fix the cause instead. Prefer the second, and only
+fall back to the first with a comment saying why.
+
+Recorded 2026-09-19 after it failed PR #35 twice with nothing in that PR
+touching notebooks.
+
+## 8. Ollama's architectural context figure is undocumented
+
+`/api/tags` → `details.context_length` is what PR #35 reads for a model's
+architectural maximum, and Ollama does not document it. The documented
+`details` fields are `format`, `family`, `families`, `parameter_size` and
+`quantization_level`. Ollama 0.33.2 does emit it. `/api/ps` →`context_length`,
+the loaded figure, *is* documented.
+
+Losing it degrades rather than breaks: a loaded model still reports correctly
+through `/api/ps`, and only an unloaded one falls through to the 128,000 floor
+— the over-declaring direction, but bounded and already accepted.
+
+Worth doing: check how far back the field goes (needs older Ollama builds, not
+a live query), and decide whether `/api/show` — which does document a model's
+parameters — is a better architectural source, or a worse one because it costs
+a call per model rather than one for the whole list.
+
+See [the findings note](plans/completed/2026-09-10-local-model-context-window-findings.md)
+for the 2026-09-19 verification.
+
+## 9. Nothing keeps the two local discovery routes symmetric
+
+The same defect was found and fixed three times in PR #35, each time on one
+provider only, because the two routes in `server/src/api/system.ts` are written
+as parallel prose rather than against a shared contract:
+
+- a malformed row blanking the list — fixed for Ollama in `a58c2bf`, the
+  OpenAI-compatible route already had it right;
+- a malformed 200 rendering as a healthy empty server — fixed for Ollama in
+  `5565225` and `0dc70d0`, then found still present on the OpenAI-compatible
+  route in `9202d12`;
+- a whitespace-only identifier — fixed in the route in `956617f`, then found
+  still wrong in both probes in `576619e`.
+
+Each was a real user-visible bug, and each was found by a different reviewer
+noticing the asymmetry rather than by a test. A table-driven test that runs the
+same malformed-payload cases against both routes would make the next
+divergence fail rather than ship. The rules genuinely shared: a top-level
+non-object is unavailable, a present-but-non-array list field is unavailable,
+an absent list field is an honest empty, an unusable row is dropped while the
+rest of the list survives, and identifier predicates match between a route and
+its probe.
+
+Recorded 2026-09-19.

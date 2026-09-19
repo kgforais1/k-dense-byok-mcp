@@ -84,9 +84,10 @@ each server's own API is read when the model picker opens:
 | LM Studio | `/api/v0/models` → `max_context_length` | `loaded_context_length` |
 
 Those field names were last confirmed on 2026-09-19 against Ollama 0.33.2 and
-LM Studio 0.4.23. Ollama does not document `details.context_length`, so that
-one in particular is worth re-checking after an upgrade; if it disappears, an
-unloaded model falls back to the figure below rather than breaking.
+LM Studio 0.4.23+1 (`cat ~/.lmstudio/.internal/app-version`). Ollama does not
+document `details.context_length`, so that one in particular is worth
+re-checking after an upgrade; if it disappears, an unloaded model falls back to
+the figure below rather than breaking.
 
 The **loaded** figure wins when both are known, because that is what your
 request is measured against and it is often smaller than the maximum. Both

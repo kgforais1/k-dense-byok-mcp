@@ -25,8 +25,11 @@
  * that family a version bump rather than an incident. Adding a read-untrusted
  * path would change that; use a different library for it.
  *
- * The tests do call `new AdmZip(buffer)`, and `readAsText`, `getEntries` and
- * one `extractAllTo` — but only on archives they just built themselves.
+ * The tests do parse archives — `new AdmZip(buffer|path)`, `readAsText`,
+ * `readFile`, `getEntries`, `getEntry`, `getData`, and one `extractAllTo`,
+ * which is most of the advisory-triggering surface. That is fine only
+ * because every one of those archives was built moments earlier by the code
+ * under test.
  *
  * One thing this does *not* claim: that Kady never touches an untrusted zip.
  * A user can drop one in the sandbox and ask the agent to open it. That read

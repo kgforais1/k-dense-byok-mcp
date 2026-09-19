@@ -32,6 +32,7 @@ import {
 import { isSubscriptionProvider, subscriptionProvider } from "./provider-auth.ts";
 import { customProviderName, isCustomProvider } from "./custom-models.ts";
 import { directProvider, isDirectProvider } from "./provider-catalog.ts";
+import { getContextWindow } from "./local-context.ts";
 
 // OpenRouter's base URL. Overridable via OPENROUTER_BASE_URL so the
 // OpenAI-compatible provider can point at any compatible gateway — e.g.
@@ -234,7 +235,7 @@ function buildOllamaModel(name: string): Model<Api> {
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32_768,
+    contextWindow: getContextWindow("ollama", OLLAMA_BASE_URL, name) ?? 128_000,
     maxTokens: 8192,
   };
 }
@@ -245,8 +246,17 @@ function buildOllamaModel(name: string): Model<Api> {
  * because both endpoints happen to be OpenAI-shaped.
  *
  * `/v1/models` carries no pricing or context length anywhere near reliably, so
- * this uses the same $0 / 32K defaults Ollama does. $0 is honest here only
- * because the provider is local-only; see `billingForProvider`.
+ * the native endpoints are consulted instead: `/api/v0/models` here (LM
+ * Studio) and `/api/tags` + `/api/ps` for Ollama. The discovery routes
+ * (`GET /openai-compatible/models`, `GET /ollama/models`) read those into the
+ * `local-context.ts` cache, and the builders do a synchronous lookup with a
+ * 128,000 fallback. 128,000, not 32,768: Kady's own prompt measured 44,409
+ * tokens and Pi reserves 16,384 on top of the declared window, so a 32,768
+ * declaration cannot fit Kady's own prompt, while 128,000 clears that floor
+ * with room to work. It is also what this file already uses when it has no
+ * better information (`:76`, `:137`) and what Pi itself defaults a
+ * compat-provider model to. $0 is honest here only because the provider is
+ * local-only; see `billingForProvider`.
  */
 export function buildOpenAICompatibleModel(name: string): Model<Api> {
   return {
@@ -258,7 +268,9 @@ export function buildOpenAICompatibleModel(name: string): Model<Api> {
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32_768,
+    contextWindow:
+      getContextWindow("openai-compatible", OPENAI_COMPATIBLE_BASE_URL, name) ??
+      128_000,
     maxTokens: 8192,
   };
 }
@@ -483,7 +495,15 @@ export function resolveModel(
     return buildFusionModel(fusionConfig);
   }
   if (r.startsWith("ollama/")) {
-    return buildOllamaModel(r.slice("ollama/".length));
+    const name = r.slice("ollama/".length);
+    // Rejected here rather than deferred to the provider call, and for the
+    // same reason as the openai-compatible branch below: an empty id keys the
+    // cache at ":latest", which nothing ever writes, so it would take the
+    // 128,000 fallback and fail much later with a worse message.
+    if (!name) {
+      throw new ModelResolutionError(`Model ref "${r}" is missing a model id`);
+    }
+    return buildOllamaModel(name);
   }
   // Everything after the prefix is the model id verbatim — LM Studio ids often
   // contain slashes themselves (e.g. "qwen/qwen3-8b"), so this must not split.

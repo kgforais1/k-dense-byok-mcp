@@ -130,6 +130,48 @@ describe("toClientFrame error mapping", () => {
     } as never);
     expect(frame).toEqual({ type: "error", message: "Model error (aborted)", reason: "aborted" });
   });
+
+  it("forwards a failed compaction's errorMessage verbatim, without prefix or kind", () => {
+    const message = "Context window overflow: unable to compact 200000 tokens into 32000";
+    const frame = toClientFrame({
+      type: "compaction_end",
+      reason: "overflow",
+      aborted: false,
+      willRetry: false,
+      result: undefined,
+      errorMessage: message,
+    } as never);
+    expect(frame).toEqual({ type: "error", message });
+  });
+
+  it("still renders a successful compaction as a system card", () => {
+    const frame = toClientFrame({
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: false,
+      willRetry: false,
+      result: { summary: "…", firstKeptEntryId: "e9", tokensBefore: 120_000 },
+    } as never);
+    expect(frame).toEqual({
+      type: "message_start",
+      role: "custom",
+      customType: "compaction",
+      content: "Context compacted",
+      details: { tokensBefore: 120_000, reason: "threshold" },
+    });
+  });
+
+  it("treats an aborted compaction as no error even when an errorMessage is present", () => {
+    const frame = toClientFrame({
+      type: "compaction_end",
+      reason: "overflow",
+      aborted: true,
+      willRetry: false,
+      result: undefined,
+      errorMessage: "Context window overflow: unable to compact",
+    } as never);
+    expect(frame).toBeNull();
+  });
 });
 
 /** Fake ExtensionAPI capturing the handlers the extension registers. */

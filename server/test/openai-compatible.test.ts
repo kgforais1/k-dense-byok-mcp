@@ -63,6 +63,11 @@ describe("resolveModel (openai-compatible refs)", () => {
     expect(() => resolveModel("openai-compatible/", getModelRegistry())).toThrow(
       ModelResolutionError,
     );
+    // The ollama branch rejects identically. An empty id would otherwise key
+    // the cache at ":latest", take the 128,000 fallback, and fail later.
+    expect(() => resolveModel("ollama/", getModelRegistry())).toThrow(
+      ModelResolutionError,
+    );
   });
 
   it("needs no provider auth (the credential is a placeholder)", async () => {
@@ -162,7 +167,14 @@ describe("GET /openai-compatible/models", () => {
   let baseUrl: string;
   /** Set by each test to control what the fake server returns. */
   let respond: (res: http.ServerResponse) => void;
+  /** Serves the native `/api/v0/models` probe; defaults to 404 (vLLM et al.). */
+  let respondNative: (res: http.ServerResponse) => void;
   let requestedPaths: string[];
+
+  function notFound(res: http.ServerResponse) {
+    res.writeHead(404);
+    res.end("nope");
+  }
 
   beforeEach(async () => {
     requestedPaths = [];
@@ -170,9 +182,12 @@ describe("GET /openai-compatible/models", () => {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ data: [] }));
     };
+    respondNative = notFound;
     server = http.createServer((req, res) => {
-      requestedPaths.push(req.url ?? "");
-      respond(res);
+      const url = req.url ?? "";
+      requestedPaths.push(url);
+      if (url.startsWith("/api/v0/models")) respondNative(res);
+      else respond(res);
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -202,6 +217,31 @@ describe("GET /openai-compatible/models", () => {
     return app;
   }
 
+  /**
+   * The context probe fires unawaited after the list is served, so a test
+   * that wants the post-probe rows re-opens the picker until they appear.
+   * Each re-open re-fires (or joins) the probe; the dedup in local-context.ts
+   * keeps rival probes from racing.
+   */
+  async function waitForModels(
+    app: Pick<Awaited<ReturnType<typeof buildRoutes>>, "inject">,
+    predicate: (models: { context_length: number }[]) => boolean,
+  ): Promise<{
+    available: boolean;
+    configured: boolean;
+    models: { context_length: number }[];
+  }> {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      const body = (await app.inject({ url: "/openai-compatible/models" })).json();
+      if (predicate(body.models)) return body;
+      if (Date.now() > deadline) {
+        throw new Error("timed out waiting for the context probe to land");
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
   it("maps /v1/models into the picker's model shape", async () => {
     respond = (res) => {
       res.writeHead(200, { "content-type": "application/json" });
@@ -212,15 +252,31 @@ describe("GET /openai-compatible/models", () => {
         }),
       );
     };
+    respondNative = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          data: [
+            {
+              id: "qwen/qwen3-8b",
+              max_context_length: 32768,
+              loaded_context_length: 16384,
+            },
+            { id: "llama-3.1-8b-instruct", max_context_length: 131072 },
+          ],
+        }),
+      );
+    };
     const app = await buildRoutes(baseUrl);
 
-    const response = await app.inject({ url: "/openai-compatible/models" });
-    const body = response.json();
+    // Cold cache: the honest answer is 0, which the picker renders as no
+    // badge. The rows are built before the probe fires, so this holds no
+    // matter how fast the probe answers.
+    const first = (await app.inject({ url: "/openai-compatible/models" })).json();
 
-    expect(requestedPaths).toEqual(["/v1/models"]);
-    expect(body.available).toBe(true);
-    expect(body.configured).toBe(true);
-    expect(body.models).toEqual([
+    expect(first.available).toBe(true);
+    expect(first.configured).toBe(true);
+    expect(first.models).toEqual([
       {
         id: "openai-compatible/qwen/qwen3-8b",
         label: "qwen/qwen3-8b",
@@ -242,6 +298,65 @@ describe("GET /openai-compatible/models", () => {
         description: "Local OpenAI-compatible model: llama-3.1-8b-instruct",
       },
     ]);
+    // The list fetch leads; the probe follows unawaited on its own path.
+    expect(requestedPaths[0]).toEqual("/v1/models");
+
+    // Reopening serves the probed figures — loaded preferred where present.
+    const second = await waitForModels(
+      app,
+      (models) => models.every((m) => m.context_length > 0),
+    );
+    expect(second.models.map((m: { context_length: number }) => m.context_length)).toEqual(
+      [16384, 131072],
+    );
+    expect(requestedPaths).toContain("/api/v0/models");
+    await app.close();
+  });
+
+  // `/api/v0/models` is LM Studio's own endpoint: vLLM,
+  // text-generation-webui and the rest 404 it. Losing context metadata is
+  // acceptable; losing the model list is not — the probe failure must never
+  // change the response.
+  it("returns the full list with 0s when the native endpoint 404s", async () => {
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          data: [{ id: "model-a" }, { id: "model-b" }],
+        }),
+      );
+    };
+    // respondNative stays the default 404.
+    const app = await buildRoutes(baseUrl);
+
+    const body = (await app.inject({ url: "/openai-compatible/models" })).json();
+
+    expect(body.available).toBe(true);
+    expect(body.models.map((m: { id: string }) => m.id)).toEqual([
+      "openai-compatible/model-a",
+      "openai-compatible/model-b",
+    ]);
+    expect(body.models.every((m: { context_length: number }) => m.context_length === 0)).toBe(
+      true,
+    );
+
+    // And still after the 404 has landed — the list is intact and the rows
+    // keep their honest 0s. A cold cache also reads 0, so this cannot tell a
+    // wiped cache from an empty one; it is here for the list, not the
+    // figures. local-context.test.ts guards the cache itself.
+    const deadline = Date.now() + 5000;
+    while (!requestedPaths.includes("/api/v0/models") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(requestedPaths).toContain("/api/v0/models");
+    const reopened = (await app.inject({ url: "/openai-compatible/models" })).json();
+    expect(reopened.models.map((m: { id: string }) => m.id)).toEqual([
+      "openai-compatible/model-a",
+      "openai-compatible/model-b",
+    ]);
+    expect(
+      reopened.models.every((m: { context_length: number }) => m.context_length === 0),
+    ).toBe(true);
     await app.close();
   });
 
@@ -273,6 +388,43 @@ describe("GET /openai-compatible/models", () => {
       "openai-compatible/good-model",
       "openai-compatible/second-model",
     ]);
+    await app.close();
+  });
+
+  it("reports a malformed 200 as unavailable, not as an empty server", async () => {
+    // `{available: true, models: []}` renders as "The server is up but
+    // serving no models. Load one and reopen this menu" — the wrong advice
+    // for someone whose server is loaded and whose proxy answered nonsense.
+    // Mirrors the Ollama route's rule, including the shapes that have no
+    // `data` property at all and so would read as "none loaded".
+    for (const payload of ["nope", 7, true, [], [{ id: "a" }], { data: "not-an-array" }]) {
+      respond = (res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(payload));
+      };
+      const app = await buildRoutes(baseUrl);
+
+      const body = (await app.inject({ url: "/openai-compatible/models" })).json();
+
+      expect(body.available).toBe(false);
+      expect(body.models).toEqual([]);
+      await app.close();
+    }
+  });
+
+  it("reports an absent data field as up with nothing loaded", async () => {
+    // The one benign shape: a server honestly saying it has none, which is
+    // exactly what the "load one" hint is for.
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ object: "list" }));
+    };
+    const app = await buildRoutes(baseUrl);
+
+    const body = (await app.inject({ url: "/openai-compatible/models" })).json();
+
+    expect(body.available).toBe(true);
+    expect(body.models).toEqual([]);
     await app.close();
   });
 
@@ -315,7 +467,8 @@ describe("GET /openai-compatible/models", () => {
 
     await app.inject({ url: "/openai-compatible/models" });
 
-    expect(requestedPaths).toEqual(["/v1/models"]);
+    // The unawaited probe follows on its own path; the list fetch leads.
+    expect(requestedPaths[0]).toEqual("/v1/models");
     await app.close();
   });
 });

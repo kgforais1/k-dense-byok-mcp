@@ -8,6 +8,15 @@ import {
   resolveModel,
 } from "../src/agent/models.ts";
 import { getModelRegistry } from "../src/agent/session-registry.ts";
+import {
+  cacheKey,
+  recordArchitectural,
+  recordLoaded,
+} from "../src/agent/local-context.ts";
+import {
+  OLLAMA_BASE_URL,
+  OPENAI_COMPATIBLE_BASE_URL,
+} from "../src/config.ts";
 
 // Reasoning-effort suffixes ("...-xhigh", "...-high", …) are an OpenRouter
 // routing form, not separate catalogue rows. Before the fix they missed the
@@ -118,5 +127,116 @@ describe("custom model servers in ref resolution", () => {
       fs.rmSync(path.join(KADY_PI_AGENT_DIR, "models.json"), { force: true });
       fs.rmSync(path.join(KADY_PI_AGENT_DIR, "kady-custom-models.json"), { force: true });
     }
+  });
+});
+
+// Local-model builders read the `local-context.ts` cache (filled by the
+// discovery routes) and fall back to 128_000 on a cold cache. State is seeded
+// with `recordArchitectural` / `recordLoaded` under `cacheKey`, never by
+// stubbing fetch — the builders only ever see the bare id `resolveModel`
+// hands them, so each test seeds the key the builder will look up. Model ids
+// are unique per test because the cache is module-level with no reset hook.
+describe("local-model context window (cache-backed builders)", () => {
+  const registry = getModelRegistry();
+
+  it("falls back to 128_000 with a cold cache", () => {
+    expect(
+      resolveModel("ollama/ctx-test-cold-ollama-xyz", registry).contextWindow,
+    ).toBe(128_000);
+    expect(
+      resolveModel("openai-compatible/ctx-test-cold-compat-xyz", registry)
+        .contextWindow,
+    ).toBe(128_000);
+  });
+
+  it("returns the cached architectural figure when warm", () => {
+    recordArchitectural(
+      cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-warm-ollama-xyz:latest"),
+      40_960,
+    );
+    expect(
+      resolveModel("ollama/ctx-test-warm-ollama-xyz:latest", registry)
+        .contextWindow,
+    ).toBe(40_960);
+
+    recordArchitectural(
+      cacheKey(
+        "openai-compatible",
+        OPENAI_COMPATIBLE_BASE_URL,
+        "ctx-test-vendor/ctx-test-warm-compat-xyz",
+      ),
+      64_000,
+    );
+    expect(
+      resolveModel(
+        "openai-compatible/ctx-test-vendor/ctx-test-warm-compat-xyz",
+        registry,
+      ).contextWindow,
+    ).toBe(64_000);
+  });
+
+  it("prefers the loaded figure over the architectural one", () => {
+    const ollamaKey = cacheKey(
+      "ollama",
+      OLLAMA_BASE_URL,
+      "ctx-test-loaded-ollama-xyz:latest",
+    );
+    recordArchitectural(ollamaKey, 40_960);
+    recordLoaded(ollamaKey, 8192);
+    expect(
+      resolveModel("ollama/ctx-test-loaded-ollama-xyz:latest", registry)
+        .contextWindow,
+    ).toBe(8192);
+
+    const compatKey = cacheKey(
+      "openai-compatible",
+      OPENAI_COMPATIBLE_BASE_URL,
+      "ctx-test-vendor/ctx-test-loaded-compat-xyz",
+    );
+    recordArchitectural(compatKey, 128_000);
+    recordLoaded(compatKey, 64_000);
+    expect(
+      resolveModel(
+        "openai-compatible/ctx-test-vendor/ctx-test-loaded-compat-xyz",
+        registry,
+      ).contextWindow,
+    ).toBe(64_000);
+  });
+
+  it("resolves an untagged Ollama id to its canonical tagged entry", () => {
+    // The discovery route writes the tagged key (`/api/tags` only ever
+    // reports `all-minilm:latest`), while a ref that omits the tag resolves
+    // to a bare id — without the `:latest` normalisation that run would miss
+    // the cache forever and sit silently on the fallback.
+    recordArchitectural(
+      cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-untagged-xyz:latest"),
+      32_768,
+    );
+    expect(cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-untagged-xyz")).toBe(
+      cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-untagged-xyz:latest"),
+    );
+    expect(
+      resolveModel("ollama/ctx-test-untagged-xyz", registry).contextWindow,
+    ).toBe(32_768);
+  });
+
+  it("does not apply :latest normalisation to openai-compatible ids", () => {
+    // LM Studio ids routinely carry no colon at all
+    // (`qwen/qwen3.8-27b-mlx-6bit-xhigh`), so the Ollama tagging rule would
+    // retag every id and break every key here.
+    const id = "qwen/ctx-test-notag-compat-xyz";
+    recordArchitectural(
+      cacheKey("openai-compatible", OPENAI_COMPATIBLE_BASE_URL, id),
+      96_000,
+    );
+    expect(
+      resolveModel(`openai-compatible/${id}`, registry).contextWindow,
+    ).toBe(96_000);
+    // A `:latest`-suffixed lookup is a different model, not the same entry —
+    // if the tagging rule leaked across providers, this would hit the entry
+    // above instead of falling back.
+    expect(
+      resolveModel(`openai-compatible/${id}:latest`, registry).contextWindow,
+    ).toBe(128_000);
   });
 });

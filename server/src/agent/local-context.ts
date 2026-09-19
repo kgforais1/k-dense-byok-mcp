@@ -295,6 +295,12 @@ async function probeOpenAICompatible(root: string): Promise<void> {
       continue;
     }
     const key = cacheKey("openai-compatible", root, id);
+    // First occurrence wins, as it does in the discovery route, which skips
+    // an id it has already seen (`system.ts:181`). A server repeating an id
+    // with different figures is malformed either way, but the row the user
+    // picked from the list and the figure cached against it must come from
+    // the same one.
+    if (reported.has(key)) continue;
     reported.add(key);
     recordArchitectural(key, asNumber(entry?.["max_context_length"]));
     // Absent and unreadable are different answers. No `loaded_context_length`

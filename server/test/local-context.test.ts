@@ -400,6 +400,22 @@ describe("probeLoaded (openai-compatible)", () => {
     }
   });
 
+  it("keeps the first of a duplicated id, as the discovery route does", async () => {
+    // The route skips an id it has already seen, so the row the user picks is
+    // built from the first occurrence. The cached figure has to agree.
+    const base = freshBase();
+    stubFetch(() =>
+      okJson({
+        data: [
+          { id: "dupe", max_context_length: 8192, loaded_context_length: 4096 },
+          { id: "dupe", max_context_length: 65536, loaded_context_length: 32768 },
+        ],
+      }),
+    );
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "dupe")).toBe(4096);
+  });
+
   it("a whitespace-only id forfeits the clear, like any unreadable row", async () => {
     const base = freshBase();
     stubFetch(() => okJson(v0Payload));

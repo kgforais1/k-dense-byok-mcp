@@ -170,13 +170,30 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       );
       clearTimeout(t);
       if (!resp.ok) return { available: false, configured, models: [] };
-      const data = (await resp.json()) as { data?: unknown };
-      // Deliberately lenient: take `id` off each entry and skip anything that
-      // doesn't have one, so a single odd row can't blank out the whole list.
-      // Nothing beyond `id` is trusted — servers disagree on every other field.
+      const data: unknown = await resp.json();
+      // Same two-level shape check as the Ollama route, for the same reason:
+      // `{available: true, models: []}` renders as "The server is up but
+      // serving no models. Load one and reopen this menu"
+      // (`model-selector.tsx:405`), which is the wrong thing to tell someone
+      // whose server is loaded and whose proxy answered with nonsense.
+      // Converting "learned nothing" into "learned there are none" is the
+      // failure; an absent `data` key is the one benign case, because that is
+      // a server honestly reporting none.
+      const payload =
+        data !== null && typeof data === "object" && !Array.isArray(data)
+          ? (data as { data?: unknown })
+          : undefined;
+      if (!payload) return { available: false, configured, models: [] };
+      if (payload.data !== undefined && !Array.isArray(payload.data)) {
+        return { available: false, configured, models: [] };
+      }
+      // Rows stay deliberately lenient: take `id` off each entry and skip
+      // anything that doesn't have one, so a single odd row can't blank out
+      // the whole list. Nothing beyond `id` is trusted — servers disagree on
+      // every other field.
       const seen = new Set<string>();
       const models = [];
-      for (const entry of Array.isArray(data.data) ? data.data : []) {
+      for (const entry of payload.data ?? []) {
         const id = (entry as { id?: unknown })?.id;
         if (typeof id !== "string" || !id.trim() || seen.has(id)) continue;
         seen.add(id);

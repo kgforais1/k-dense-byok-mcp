@@ -495,7 +495,15 @@ export function resolveModel(
     return buildFusionModel(fusionConfig);
   }
   if (r.startsWith("ollama/")) {
-    return buildOllamaModel(r.slice("ollama/".length));
+    const name = r.slice("ollama/".length);
+    // Rejected here rather than deferred to the provider call, and for the
+    // same reason as the openai-compatible branch below: an empty id keys the
+    // cache at ":latest", which nothing ever writes, so it would take the
+    // 128,000 fallback and fail much later with a worse message.
+    if (!name) {
+      throw new ModelResolutionError(`Model ref "${r}" is missing a model id`);
+    }
+    return buildOllamaModel(name);
   }
   // Everything after the prefix is the model id verbatim — LM Studio ids often
   // contain slashes themselves (e.g. "qwen/qwen3-8b"), so this must not split.

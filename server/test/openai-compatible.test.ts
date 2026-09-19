@@ -63,6 +63,11 @@ describe("resolveModel (openai-compatible refs)", () => {
     expect(() => resolveModel("openai-compatible/", getModelRegistry())).toThrow(
       ModelResolutionError,
     );
+    // The ollama branch rejects identically. An empty id would otherwise key
+    // the cache at ":latest", take the 128,000 fallback, and fail later.
+    expect(() => resolveModel("ollama/", getModelRegistry())).toThrow(
+      ModelResolutionError,
+    );
   });
 
   it("needs no provider auth (the credential is a placeholder)", async () => {
@@ -383,6 +388,43 @@ describe("GET /openai-compatible/models", () => {
       "openai-compatible/good-model",
       "openai-compatible/second-model",
     ]);
+    await app.close();
+  });
+
+  it("reports a malformed 200 as unavailable, not as an empty server", async () => {
+    // `{available: true, models: []}` renders as "The server is up but
+    // serving no models. Load one and reopen this menu" — the wrong advice
+    // for someone whose server is loaded and whose proxy answered nonsense.
+    // Mirrors the Ollama route's rule, including the shapes that have no
+    // `data` property at all and so would read as "none loaded".
+    for (const payload of ["nope", 7, true, [], [{ id: "a" }], { data: "not-an-array" }]) {
+      respond = (res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(payload));
+      };
+      const app = await buildRoutes(baseUrl);
+
+      const body = (await app.inject({ url: "/openai-compatible/models" })).json();
+
+      expect(body.available).toBe(false);
+      expect(body.models).toEqual([]);
+      await app.close();
+    }
+  });
+
+  it("reports an absent data field as up with nothing loaded", async () => {
+    // The one benign shape: a server honestly saying it has none, which is
+    // exactly what the "load one" hint is for.
+    respond = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ object: "list" }));
+    };
+    const app = await buildRoutes(baseUrl);
+
+    const body = (await app.inject({ url: "/openai-compatible/models" })).json();
+
+    expect(body.available).toBe(true);
+    expect(body.models).toEqual([]);
     await app.close();
   });
 

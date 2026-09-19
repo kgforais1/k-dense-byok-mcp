@@ -145,3 +145,26 @@ Verified 2026-09-18 by constructing the real `ModelRuntime` the way `session-reg
 The web client persists `selectedModel` per tab and sends it on every run (`web/src/lib/workspace-persistence.ts:59`, `use-agent.ts:531`), so the UI path is unaffected — `body.model` wins before the fallback is reached. A run that omits `model` is not: a headless or MCP-initiated continuation of a local chat quietly bills a cloud provider instead. Worth confirming against the MCP server path before deciding how much this matters.
 
 Found while revising the local-model context window plan (shipped in PR #35, archived under `plans/completed/`). Deliberately not folded into it — it is a different defect in a different file, and that plan is narrow on purpose.
+
+## 6. A subagent on a local model cannot see the discovered context window
+
+`local-context.ts` holds the discovered figures in a module-level `Map`, which
+lives in the backend process. A subagent child runs in pi-subagents' detached
+runner, a separate process, and resolves its model through Pi rather than
+through `resolveModel`. Pi's composer defaults a definition with no window to
+128,000 (`provider-composer.js:72`), so a child pinned to a local model whose
+loaded window is genuinely small declares 128,000 while the lead correctly
+declares the smaller figure.
+
+That is the over-declaring direction, which is the one PR #35 exists to avoid.
+It is narrow in practice — the lead usually fails first on the same model, and
+the common case is lead and child sharing the cold 128,000 default — and it was
+not reproduced end to end, only derived from the process boundary.
+
+Worth deciding between seeding the runner with the resolved window at spawn
+time and accepting it as a documented limitation. Related to but distinct from
+[5](#5-a-restored-session-silently-switches-away-from-a-local-model): that one
+is about the model *choice* changing, this one is about a correctly-pinned
+model carrying the wrong *window*.
+
+Found by muse-spark-1.3 reviewing PR #35.

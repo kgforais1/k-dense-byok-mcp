@@ -75,20 +75,32 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       });
       clearTimeout(t);
       if (!resp.ok) return { available: false, models: [] };
-      // Typed as loosely as the wire actually is: every field is optional
-      // and rows may be nullish, because the guards below are what make the
-      // shape safe, not this annotation.
-      const data = (await resp.json()) as {
-        models?: ({ name?: unknown; details?: { context_length?: unknown } } | null)[];
-      };
-      // A `models` key that is present but not an array is a malformed
-      // answer: we learned nothing about what is installed. Report it the
-      // same way as an unreachable daemon, because the alternative reads as
-      // `available: true` with an empty list, and the picker renders that as
-      // "Ollama is running but no models are pulled" — telling a user with a
-      // shelf full of models to go pull one. An *absent* key is different and
-      // stays an empty list, since that is a daemon saying it has none.
-      if (data.models !== undefined && !Array.isArray(data.models)) {
+      // Deliberately `unknown`: the guards below are what make the shape
+      // safe, and a cast here would only let the compiler agree with an
+      // assumption the daemon has not made.
+      const data: unknown = await resp.json();
+      // Anything that is not a `{ models }` object is a malformed answer: we
+      // learned nothing about what is installed. Report it the same way as an
+      // unreachable daemon, because the alternative reads as `available: true`
+      // with an empty list, and the picker renders that as "Ollama is running
+      // but no models are pulled" — telling a user with a shelf full of models
+      // to go pull one. Both levels have to be checked: a top-level array,
+      // string or number would sail past a `models`-only test, since reading
+      // `.models` off it is merely `undefined` rather than an error.
+      //
+      // An *absent* `models` key is the one benign case and stays an empty
+      // list, since that is a daemon saying it has none.
+      const payload =
+        data !== null && typeof data === "object" && !Array.isArray(data)
+          ? (data as {
+              models?: ({
+                name?: unknown;
+                details?: { context_length?: unknown };
+              } | null)[];
+            })
+          : undefined;
+      if (!payload) return { available: false, models: [] };
+      if (payload.models !== undefined && !Array.isArray(payload.models)) {
         return { available: false, models: [] };
       }
       // Individual rows are a different matter: losing context metadata is
@@ -96,7 +108,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // usable name is dropped and the rest of the list survives. Dropped
       // rather than rendered, because `ollama/undefined` is a selectable
       // entry that resolves to nothing.
-      const rows = data.models ?? [];
+      const rows = payload.models ?? [];
       const models = rows.flatMap((m) => {
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never

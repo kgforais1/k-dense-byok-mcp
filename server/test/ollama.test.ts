@@ -262,6 +262,21 @@ describe("GET /ollama/models", () => {
     await app.close();
   });
 
+  it("reports a non-object payload as unavailable", async () => {
+    // A top-level array, string or number sails past a models-only check,
+    // because reading `.models` off it is undefined rather than an error —
+    // and undefined is the one shape that legitimately means "none pulled".
+    for (const payload of [[], [{ name: "a" }], "nope", 7, true]) {
+      respondTags = (res) => okJson(res, payload);
+      const app = await buildRoutes(baseUrl);
+
+      const body = (await app.inject({ url: "/ollama/models" })).json();
+
+      expect(body).toEqual({ available: false, models: [] });
+      await app.close();
+    }
+  });
+
   it("reports an absent models field as running with nothing pulled", async () => {
     // Different answer from the one above: no key is a daemon saying it has
     // no models, which is exactly what the "pull one" hint is for.

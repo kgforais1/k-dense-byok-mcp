@@ -252,6 +252,13 @@ async function probeOllama(root: string): Promise<void> {
     }
     const key = cacheKey("ollama", root, name);
     reported.add(key);
+    // Unlike LM Studio's endpoint, `/api/ps` lists *only* running models, so
+    // a row being here already means loaded. Absence of `context_length` is
+    // therefore missing metadata about a loaded model, not evidence that it
+    // unloaded, and it is handled the same as an unreadable value: keep what
+    // we had. Clearing on either would revert to the higher architectural
+    // figure and over-declare. This is why the two probes treat a missing
+    // field oppositely — the two endpoints mean different things by absence.
     const contextLength = asNumber(row?.["context_length"]);
     if (contextLength !== undefined) recordLoaded(key, contextLength);
   }

@@ -261,6 +261,24 @@ describe("probeLoaded (ollama)", () => {
     expect(getContextWindow("ollama", base, "qwen3:8b")).toBe(40960);
   });
 
+  it("keeps the old figure when a running model's context_length is unusable", async () => {
+    // `/api/ps` lists only running models, so the row itself proves the model
+    // is loaded. A missing or unusable `context_length` is absent metadata,
+    // never evidence of an unload — clearing would over-declare.
+    for (const bad of [undefined, "256", 0, -1, {}]) {
+      const base = freshBase();
+      seedArchitectural(base, "all-minilm", 512);
+      stubOllama();
+      await probeLoaded("ollama", base);
+      expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+      stubFetch(() =>
+        okJson({ models: [{ name: "all-minilm:latest", context_length: bad }] }),
+      );
+      await probeLoaded("ollama", base);
+      expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+    }
+  });
+
   it("a genuinely empty /api/ps still clears, because nothing is loaded", async () => {
     const base = freshBase();
     seedArchitectural(base, "all-minilm", 512);

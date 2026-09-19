@@ -259,9 +259,12 @@ describe("GET /ollama/models", () => {
       body.models.map((m: { context_length: number }) => m.context_length),
     ).toEqual([512, 40960]);
 
-    // And still after the failed probe has landed. A refresh that fails is a
-    // no-op, never a downgrade to the fallback, so reopening the picker must
-    // serve the same architectural figures rather than a pair of 0s.
+    // And still after the failed probe has landed. This is route stability
+    // across a completed probe, not cache-integrity coverage: the route
+    // re-records the architectural figures inline from /api/tags on every
+    // open, so it would repopulate them even if the probe had wiped the
+    // cache. "a failed loaded-probe clears nothing" in local-context.test.ts
+    // is what actually guards the cache.
     const deadline = Date.now() + 5000;
     while (!requestedPaths.includes("/api/ps") && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));

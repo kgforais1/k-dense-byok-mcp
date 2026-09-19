@@ -335,8 +335,10 @@ describe("GET /openai-compatible/models", () => {
       true,
     );
 
-    // And still after the 404 has landed. The probe learned nothing, so the
-    // rows keep their honest 0s and, more importantly, the list is intact.
+    // And still after the 404 has landed — the list is intact and the rows
+    // keep their honest 0s. A cold cache also reads 0, so this cannot tell a
+    // wiped cache from an empty one; it is here for the list, not the
+    // figures. local-context.test.ts guards the cache itself.
     const deadline = Date.now() + 5000;
     while (!requestedPaths.includes("/api/v0/models") && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));

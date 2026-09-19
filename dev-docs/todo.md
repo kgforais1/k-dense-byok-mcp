@@ -204,35 +204,34 @@ Losing it degrades rather than breaks: a loaded model still reports correctly
 through `/api/ps`, and only an unloaded one falls through to the 128,000 floor
 — the over-declaring direction, but bounded and already accepted.
 
-Worth doing: check how far back the field goes (needs older Ollama builds, not
-a live query), and decide whether `/api/show` — which does document a model's
+Worth doing: decide whether `/api/show` — which does document a model's
 parameters — is a better architectural source, or a worse one because it costs
-a call per model rather than one for the whole list.
+a call per model rather than one call for the whole list. Not worth doing:
+tracing how far back the undocumented field goes. Old Ollama builds are not a
+supported target, and the degradation is benign.
 
-See [the findings note](plans/completed/2026-09-10-local-model-context-window-findings.md)
-for the 2026-09-19 verification.
+The practical guard is re-checking the field after an Ollama upgrade. The
+version this was confirmed against is recorded in
+[the findings note](plans/completed/2026-09-10-local-model-context-window-findings.md)
+and in [the user docs](../docs/local-models-ollama.md).
 
-## 9. Nothing keeps the two local discovery routes symmetric
+## 9. Keep the two local discovery routes symmetric — done
 
-The same defect was found and fixed three times in PR #35, each time on one
-provider only, because the two routes in `server/src/api/system.ts` are written
-as parallel prose rather than against a shared contract:
+`server/test/local-discovery-contract.test.ts` now runs one table of
+malformed-payload cases against both routes, so a rule applied to one provider
+and not the other fails there rather than shipping.
 
-- a malformed row blanking the list — fixed for Ollama in `a58c2bf`, the
-  OpenAI-compatible route already had it right;
-- a malformed 200 rendering as a healthy empty server — fixed for Ollama in
-  `5565225` and `0dc70d0`, then found still present on the OpenAI-compatible
-  route in `9202d12`;
-- a whitespace-only identifier — fixed in the route in `956617f`, then found
-  still wrong in both probes in `576619e`.
+It exists because the same defect was found and fixed three times in PR #35,
+each time on one provider only, and each time by a reviewer noticing the
+asymmetry rather than by a test: a malformed row blanking the list
+(`a58c2bf`), a malformed 200 rendering as a healthy empty server (`5565225`,
+`0dc70d0`, then still present on the other route in `9202d12`), and a
+whitespace-only identifier (`956617f`, then still wrong in both probes in
+`576619e`).
 
-Each was a real user-visible bug, and each was found by a different reviewer
-noticing the asymmetry rather than by a test. A table-driven test that runs the
-same malformed-payload cases against both routes would make the next
-divergence fail rather than ship. The rules genuinely shared: a top-level
-non-object is unavailable, a present-but-non-array list field is unavailable,
-an absent list field is an honest empty, an unusable row is dropped while the
-rest of the list survives, and identifier predicates match between a route and
-its probe.
+Verified to work by reverting `system.ts` to `0dc70d0`: 8 of the 24 cases fail,
+all of them on the OpenAI-compatible side, while every Ollama case passes.
 
-Recorded 2026-09-19.
+Left open deliberately: the routes' *probes* have no equivalent contract test,
+and the whitespace predicate bug lived there too. Worth extending if a fourth
+asymmetry turns up.

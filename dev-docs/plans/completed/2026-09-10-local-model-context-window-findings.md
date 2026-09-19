@@ -462,6 +462,21 @@ are dropped in favour of it.
 Two questions were left open when PR #35 merged, both about server behaviour
 rather than our code. Both were put to the running servers.
 
+**What this was checked against.** Every figure in this note, and every field
+name the code depends on, came from these exact builds on 2026-09-19. Nothing
+here is a claim about local servers in general — if a shape below stops
+matching, the first thing to check is whether the server moved.
+
+| Server | Version | How to re-check |
+|---|---|---|
+| Ollama | 0.33.2 | `curl -s localhost:11434/api/version` |
+| LM Studio | 0.4.23+1 (`lms` CLI at commit `07b7252`) | `cat ~/.lmstudio/.internal/app-version` |
+
+The earlier measurements in this file, including the 2026-09-11 and 2026-09-18
+sections, were taken against the same Ollama 0.33.2. The LM Studio build was
+not recorded at the time, which is the gap this table exists to stop
+repeating.
+
 ### LM Studio always reports `loaded_context_length` for a resident model
 
 The open worry was that LM Studio might report a model as loaded while omitting

@@ -408,6 +408,20 @@ export function isSubscriptionModelRef(ref: string): boolean {
 }
 
 /**
+ * The two providers backed by a server on this machine. They have no model
+ * list in Pi's registry and no real credential, so several checks that are
+ * meaningful for a cloud provider are meaningless for them.
+ *
+ * Not the same thing as "runs on localhost": a custom model server
+ * (`custom-models.ts`) may well do, but it is a registered Pi provider with
+ * its own declared pricing and is billed `payg` at that price. This predicate
+ * is about the $0, credential-free, registry-less pair only.
+ */
+export function isLocalProvider(providerId: string): boolean {
+  return providerId === "ollama" || providerId === "openai-compatible";
+}
+
+/**
  * True for providers Kady only reaches through an OAuth login: no API-key row
  * exists for them, so an ambient token must not be mistaken for subscription
  * access (`openai-codex`, `github-copilot`, `radius`). OpenRouter is in the
@@ -446,7 +460,7 @@ export async function assertModelAuthentication(
 ): Promise<void> {
   // Local servers authenticate with a placeholder credential, so there is no
   // real auth state to assert — reachability is the only failure mode.
-  if (model.provider === "ollama" || model.provider === "openai-compatible") return;
+  if (isLocalProvider(model.provider)) return;
   const auth = await modelRuntime.checkAuth(model.provider);
   const name = providerDisplayName(model.provider);
   if (!auth) {

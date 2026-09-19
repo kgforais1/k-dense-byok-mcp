@@ -4,7 +4,6 @@
 
 - [ ] **Finish MCP server work** → [3. Finish MCP server work](#3-finish-mcp-server-work)
 - [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
-- [ ] **Check the restored-session model fallback** → [5. A restored session silently switches away from a local model](#5-a-restored-session-silently-switches-away-from-a-local-model)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
 
 ---
@@ -144,15 +143,36 @@ project scoping, cancellation, tool policy, and accounting.
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
 
-## 5. A restored session silently switches away from a local model
+## 5. Three OpenRouter catalogue models do not survive a session restore
 
-`restoredSessionModel` and `latestProjectModel` (`server/src/agent/session-registry.ts:486`, `:472`) resolve through `runtime.getModel(provider, modelId)`. Local models are never in Pi's registry — Kady creates the runtime with `allowModelNetwork: false` and registers `ollama` / `openai-compatible` as providers with no model list — so that lookup returns `undefined` and the session falls back to `defaultModel`, normally an OpenRouter model.
+The same shape as the local-model fallback fixed in PR #39, on a different
+provider and much narrower. `persistedModel` hands every non-local ref to
+`runtime.getModel`, and Pi's registry does not carry every id in the
+OpenRouter catalogue (`web/src/data/models.json`). A session pinned to one of
+the missing ones restores as the configured default instead.
 
-Verified 2026-09-18 by constructing the real `ModelRuntime` the way `session-registry.ts` does: `getModels("ollama")` is `[]` and `getModel("ollama", "qwen3:0.6b")` is `undefined`.
+Measured 2026-09-19 against the real runtime, resolving each catalogue row and
+asking `getModel(model.provider, model.id)` with the pair a transcript would
+actually persist: **3 of 170** are missing, all `:batch` variants —
+`z-ai/glm-5.2:batch`, `z-ai/glm-5.3:batch`,
+`deepseek/deepseek-v4-flash-vision-exp:batch`. The other 167 resolve.
 
-The web client persists `selectedModel` per tab and sends it on every run (`web/src/lib/workspace-persistence.ts:59`, `use-agent.ts:531`), so the UI path is unaffected — `body.model` wins before the fallback is reached. A run that omits `model` is not: a headless or MCP-initiated continuation of a local chat quietly bills a cloud provider instead. Worth confirming against the MCP server path before deciding how much this matters.
+Milder than the local case: the swap is cloud-to-cloud, so it is a different
+model at a different price rather than an unasked-for provider getting the
+bill. Still wrong — the user picked a model and silently got another.
 
-Found while revising the local-model context window plan (shipped in PR #35, archived under `plans/completed/`). Deliberately not folded into it — it is a different defect in a different file, and that plan is narrow on purpose.
+The fix is not simply widening `isLocalProvider`. `resolveModel`'s OpenRouter
+branch ends `registry.find(...) ?? buildOpenRouterModel(orId)`, and
+`buildOpenRouterModel` prices an id the catalogue does not know at **$0**
+(`models.ts:131`) — and a payg model synthesized at $0 bypasses the project
+spend cap, which is the hazard `resolveModel` already refuses for direct
+providers. So any restore path that synthesizes an OpenRouter model must
+require `catalogueEntryFor(orId)` to return an entry first, and keep
+returning `undefined` otherwise. That is the whole of the work, plus a test
+per branch.
+
+Found by a `cursor/composer-2.5` review of PR #39, which flagged it as a
+suspicion and out of scope; the counts above are from checking it.
 
 ## 6. A subagent on a local model cannot see the discovered context window
 
@@ -170,10 +190,9 @@ the common case is lead and child sharing the cold 128,000 default — and it wa
 not reproduced end to end, only derived from the process boundary.
 
 Worth deciding between seeding the runner with the resolved window at spawn
-time and accepting it as a documented limitation. Related to but distinct from
-[5](#5-a-restored-session-silently-switches-away-from-a-local-model): that one
-is about the model *choice* changing, this one is about a correctly-pinned
-model carrying the wrong *window*.
+time and accepting it as a documented limitation. Distinct from the restored-session fallback fixed in PR #39: that one was
+about the model *choice* changing, this one is about a correctly-pinned model
+carrying the wrong *window*.
 
 Found by muse-spark-1.3 reviewing PR #35.
 

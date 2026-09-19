@@ -75,10 +75,23 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       });
       clearTimeout(t);
       if (!resp.ok) return { available: false, models: [] };
+      // Typed as loosely as the wire actually is: every field is optional
+      // and rows may be nullish, because the guards below are what make the
+      // shape safe, not this annotation.
       const data = (await resp.json()) as {
-        models?: { name: string; details?: { context_length?: unknown } }[];
+        models?: ({ name?: unknown; details?: { context_length?: unknown } } | null)[];
       };
-      const models = (data.models ?? []).map((m) => {
+      // Losing context metadata is acceptable; losing the model list is not.
+      // Every shape below is therefore checked rather than assumed: a
+      // non-array `models`, a nullish row, or a row with no usable name would
+      // each otherwise throw into this route's catch and blank the whole
+      // Ollama section as if the daemon were down. A row we cannot name is
+      // dropped rather than rendered, because `ollama/undefined` is a
+      // selectable entry that resolves to nothing.
+      const rows = Array.isArray(data.models) ? data.models : [];
+      const models = rows.flatMap((m) => {
+        const name = m?.name;
+        if (typeof name !== "string" || !name) return [];
         // Architectural figure, parsed inline from the payload already in
         // hand — no extra call. Lenient like the rest of this route: a
         // missing or malformed value records nothing (absent, not zero).
@@ -86,29 +99,23 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           typeof m.details?.context_length === "number"
             ? m.details.context_length
             : undefined;
-        // Only key off a real name. `cacheKey` normalises the id by slicing
-        // it, so a nameless row would throw into the route's catch and cost
-        // the whole list — and losing the models is never an acceptable price
-        // for losing context metadata.
-        if (typeof m.name === "string" && m.name) {
-          recordArchitectural(
-            cacheKey("ollama", OLLAMA_BASE_URL, m.name),
-            architectural,
-          );
-        }
-        return {
-          id: `ollama/${m.name}`,
-          label: m.name,
-          provider: "Ollama",
-          tier: "budget",
-          context_length:
-            typeof m.name === "string" && m.name
-              ? (getContextWindow("ollama", OLLAMA_BASE_URL, m.name) ?? 0)
-              : 0,
-          pricing: { prompt: 0, completion: 0 },
-          modality: "text->text",
-          description: `Local Ollama model: ${m.name}`,
-        };
+        recordArchitectural(
+          cacheKey("ollama", OLLAMA_BASE_URL, name),
+          architectural,
+        );
+        return [
+          {
+            id: `ollama/${name}`,
+            label: name,
+            provider: "Ollama",
+            tier: "budget",
+            context_length:
+              getContextWindow("ollama", OLLAMA_BASE_URL, name) ?? 0,
+            pricing: { prompt: 0, completion: 0 },
+            modality: "text->text",
+            description: `Local Ollama model: ${name}`,
+          },
+        ];
       });
       // Loaded figures, unawaited with the probe's own timeout inside. It
       // never rejects, so no .catch() — and awaiting it would stall the

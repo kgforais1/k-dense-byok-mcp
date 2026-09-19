@@ -218,21 +218,45 @@ describe("GET /ollama/models", () => {
     await app.close();
   });
 
-  it("keeps the list when a row has no name at all", async () => {
+  it("drops unusable rows and keeps the rest of the list", async () => {
     // cacheKey normalises by slicing the id, so an unguarded nameless row
     // throws into the route's catch and costs the entire local section.
-    // Losing context metadata is acceptable; losing the models is not.
+    // Losing context metadata is acceptable; losing the models is not. A row
+    // we cannot name is dropped rather than rendered, because an
+    // `ollama/undefined` entry is selectable and resolves to nothing.
     respondTags = (res) =>
       okJson(res, {
-        models: [{ model: "no-name-field" }, { name: "ok:latest", details: { context_length: 4096 } }],
+        models: [
+          { model: "no-name-field" },
+          null,
+          { name: "" },
+          { name: 7 },
+          { name: "ok:latest", details: { context_length: 4096 } },
+        ],
       });
     const app = await buildRoutes(baseUrl);
 
     const body = (await app.inject({ url: "/ollama/models" })).json();
 
     expect(body.available).toBe(true);
-    expect(body.models).toHaveLength(2);
-    expect(body.models[1].context_length).toBe(4096);
+    expect(body.models).toHaveLength(1);
+    expect(body.models[0]).toMatchObject({
+      id: "ollama/ok:latest",
+      label: "ok:latest",
+      context_length: 4096,
+    });
+    await app.close();
+  });
+
+  it("keeps the section alive when models is not an array", async () => {
+    // A truthy non-array would throw on .map, and the catch would report the
+    // daemon as down. Report an empty list instead: that is what we know.
+    respondTags = (res) => okJson(res, { models: { not: "an array" } });
+    const app = await buildRoutes(baseUrl);
+
+    const body = (await app.inject({ url: "/ollama/models" })).json();
+
+    expect(body).toEqual({ available: true, models: [] });
     await app.close();
   });
 

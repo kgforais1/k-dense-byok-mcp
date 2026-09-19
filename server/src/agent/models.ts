@@ -254,7 +254,7 @@ function buildOllamaModel(name: string): Model<Api> {
  * tokens and Pi reserves 16,384 on top of the declared window, so a 32,768
  * declaration cannot fit Kady's own prompt, while 128,000 clears that floor
  * with room to work. It is also what this file already uses when it has no
- * better information (`:75`, `:136`) and what Pi itself defaults a
+ * better information (`:76`, `:137`) and what Pi itself defaults a
  * compat-provider model to. $0 is honest here only because the provider is
  * local-only; see `billingForProvider`.
  */

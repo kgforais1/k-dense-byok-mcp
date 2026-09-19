@@ -95,10 +95,14 @@ Practical consequences:
 - **Opening the model picker is what refreshes this.** If you load a model at
   a different context length, reopen the picker so Kady sees the new figure.
   Until then it uses the previous one.
-- **Ollama shows the right number on the first open; LM Studio takes two.**
-  Ollama's list call carries the figure already, while LM Studio's lives on a
-  second endpoint that is read in the background. A model with no figure yet
-  simply shows no context badge.
+- **The first open shows the maximum; the loaded figure arrives on the
+  second.** Ollama's list call already carries the architectural maximum, so
+  its rows get a badge immediately, while LM Studio's figures live on a second
+  endpoint read in the background and its rows show no badge at all until
+  then. Either way the *loaded* figure — the one your request is measured
+  against — lands only after that background read, so if a model is loaded
+  smaller than its maximum, the first open overstates it. Reopening the picker
+  settles it.
 - **If nothing answers, Kady assumes 128,000.** That is a deliberate floor
   rather than a guess at your hardware: Kady's own system prompt is roughly
   44,000 tokens and the compaction reserve adds about 16,000 on top, so a

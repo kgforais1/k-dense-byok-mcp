@@ -414,6 +414,15 @@ export function isSubscriptionModelRef(ref: string): boolean {
  * OAuth list only as a sign-in alternative to its key row and is never
  * OAuth-only.
  */
+/**
+ * The two providers backed by a server on this machine. They have no model
+ * list in Pi's registry and no real credential, so several checks that are
+ * meaningful for a cloud provider are meaningless for them.
+ */
+export function isLocalProvider(providerId: string): boolean {
+  return providerId === "ollama" || providerId === "openai-compatible";
+}
+
 export function isOAuthOnlyProvider(providerId: string): boolean {
   return (
     isSubscriptionProvider(providerId) &&
@@ -446,7 +455,7 @@ export async function assertModelAuthentication(
 ): Promise<void> {
   // Local servers authenticate with a placeholder credential, so there is no
   // real auth state to assert — reachability is the only failure mode.
-  if (model.provider === "ollama" || model.provider === "openai-compatible") return;
+  if (isLocalProvider(model.provider)) return;
   const auth = await modelRuntime.checkAuth(model.provider);
   const name = providerDisplayName(model.provider);
   if (!auth) {

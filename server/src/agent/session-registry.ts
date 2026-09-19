@@ -23,7 +23,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
 import { getMcpTools } from "./mcp.ts";
-import { defaultModel, setupModelRuntime } from "./models.ts";
+import { defaultModel, isLocalProvider, resolveModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
 import {
   forgetHeadlessSession,
@@ -469,21 +469,64 @@ async function latestProjectModel(
   for (const info of candidates) {
     const last = lastModelInSessionFile(info.path);
     if (!last) continue;
-    const model = runtime.getModel(last.provider, last.modelId);
+    const model = persistedModel(runtime, modelRegistry, last.provider, last.modelId);
     if (model && runtime.hasConfiguredAuth(model.provider)) return model;
   }
   return undefined;
 }
 
 /**
- * The model a persisted session last ran with, when Pi's registry still knows
- * it and its provider has credentials. Mirrors the restore Pi's SDK performs
- * when no explicit `model` is passed.
+ * Resolve a model a session previously ran with, or `undefined` when it can no
+ * longer be resolved.
+ *
+ * Pi's registry has no entry for a local model: Kady creates the runtime with
+ * `allowModelNetwork: false` and registers `ollama` / `openai-compatible` as
+ * providers with an empty model list, so `runtime.getModel` returns `undefined`
+ * for every one of them. Callers then fall through to the configured default,
+ * which is normally an OpenRouter model — so a session that ran on a local
+ * model came back on a cloud one and spent money nobody asked it to spend. The
+ * browser never showed this because the client sends `model` on every run and
+ * that wins earlier; a headless or MCP-initiated continuation, which is
+ * documented as defaulting to "the session's current model", did.
+ *
+ * Local refs are therefore rebuilt exactly the way `resolveModel` builds them
+ * for an explicit request. Only local ones: `resolveModel`'s trailing branch
+ * treats an unrecognised prefix as an OpenRouter vendor id, so handing it every
+ * persisted ref would turn a provider Pi has since dropped into a billable
+ * cloud model — the same failure this exists to prevent, one step further on.
+ *
+ * A local server that is currently down still resolves. That is deliberate:
+ * the run then fails on reachability, naming the model the session actually
+ * chose, instead of quietly succeeding against a different provider's bill.
+ *
+ * Exported for the same reason `lastModelInSessionFile` is: it is the whole of
+ * the decision, and its two callers are one line each.
+ */
+export function persistedModel(
+  runtime: ModelRuntime,
+  registry: ModelRegistry,
+  provider: string,
+  modelId: string,
+): Model<Api> | undefined {
+  if (!isLocalProvider(provider)) return runtime.getModel(provider, modelId);
+  if (!modelId.trim()) return undefined;
+  try {
+    return resolveModel(`${provider}/${modelId}`, registry);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The model a persisted session last ran with, when it still resolves and its
+ * provider has credentials. Mirrors the restore Pi's SDK performs when no
+ * explicit `model` is passed. See `persistedModel` for why the lookup does not
+ * go through the runtime alone.
  */
 function restoredSessionModel(sessionManager: SessionManager, runtime: ModelRuntime): Model<Api> | undefined {
   const context = sessionManager.buildSessionContext();
   if (context.messages.length === 0 || !context.model) return undefined;
-  const model = runtime.getModel(context.model.provider, context.model.modelId);
+  const model = persistedModel(runtime, modelRegistry, context.model.provider, context.model.modelId);
   if (!model || !runtime.hasConfiguredAuth(model.provider)) return undefined;
   return model;
 }

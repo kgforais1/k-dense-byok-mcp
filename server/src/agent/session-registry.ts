@@ -451,7 +451,7 @@ export function lastModelInSessionFile(file: string): { provider: string; modelI
  * The model most recently used by a chat session of this project (system
  * sessions excluded), when the runtime still knows it and has credentials.
  */
-async function latestProjectModel(
+export async function latestProjectModel(
   paths: ProjectPaths,
   runtime: ModelRuntime,
   exclude: ReadonlySet<string>,
@@ -489,6 +489,14 @@ async function latestProjectModel(
  * that wins earlier; a headless or MCP-initiated continuation, which is
  * documented as defaulting to "the session's current model", did.
  *
+ * A custom model server is deliberately not in this class, despite also being
+ * a URL on someone's own network. Its models live in `models.json`, which
+ * `ModelRuntime.create` reads, so the registry does know them and
+ * `runtime.getModel` already returns one — measured: a provider declared there
+ * with a placeholder `apiKey` resolves with its declared cost and context
+ * window. It is also billed `payg` at that declared cost rather than at $0,
+ * so routing it through the local path would be wrong twice over.
+ *
  * Local refs are therefore rebuilt exactly the way `resolveModel` builds them
  * for an explicit request. Only local ones: `resolveModel`'s trailing branch
  * treats an unrecognised prefix as an OpenRouter vendor id, so handing it every
@@ -499,8 +507,10 @@ async function latestProjectModel(
  * the run then fails on reachability, naming the model the session actually
  * chose, instead of quietly succeeding against a different provider's bill.
  *
- * Exported for the same reason `lastModelInSessionFile` is: it is the whole of
- * the decision, and its two callers are one line each.
+ * Exported, with both callers, so the tests can pin each restore path rather
+ * than only this helper: reverting one call site and not the other leaves a
+ * real hole — a reopened session on one, and a new session inheriting from a
+ * sibling on the other — and a test of the helper alone would not see it.
  */
 export function persistedModel(
   runtime: ModelRuntime,
@@ -523,7 +533,7 @@ export function persistedModel(
  * explicit `model` is passed. See `persistedModel` for why the lookup does not
  * go through the runtime alone.
  */
-function restoredSessionModel(sessionManager: SessionManager, runtime: ModelRuntime): Model<Api> | undefined {
+export function restoredSessionModel(sessionManager: SessionManager, runtime: ModelRuntime): Model<Api> | undefined {
   const context = sessionManager.buildSessionContext();
   if (context.messages.length === 0 || !context.model) return undefined;
   const model = persistedModel(runtime, modelRegistry, context.model.provider, context.model.modelId);

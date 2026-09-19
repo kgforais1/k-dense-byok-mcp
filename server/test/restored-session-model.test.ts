@@ -2,12 +2,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   getModelRegistry,
   getModelRuntime,
   lastModelInSessionFile,
+  latestProjectModel,
   persistedModel,
+  restoredSessionModel,
 } from "../src/agent/session-registry.ts";
+import { PROJECTS_ROOT } from "../src/config.ts";
+import { createProject, resolvePaths } from "../src/projects.ts";
 
 /**
  * Reopening a session must bring back the model it was running, and a local
@@ -107,5 +112,53 @@ describe("restoring the model a session last ran with", () => {
       persistedModel(runtime, getModelRegistry(), "ollama", "qwen3:0.6b")?.id,
     ).toBe("qwen3:0.6b");
     expect(asked).toHaveLength(1);
+  });
+
+  // Both call sites, not just the helper. Reverting one and not the other
+  // leaves a real hole that a helper-only test cannot see: `restoredSessionModel`
+  // governs reopening a session, `latestProjectModel` governs what a NEW
+  // session inherits from the project's most recent one. Each of these fails
+  // if its own call site goes back to `runtime.getModel`.
+  describe("each restore path, end to end", () => {
+    it("reopens a session on the local model its transcript records", () => {
+      const manager = {
+        buildSessionContext: () => ({
+          messages: [{ role: "user" }],
+          model: { provider: "ollama", modelId: "qwen3:0.6b" },
+        }),
+      } as unknown as SessionManager;
+
+      expect(restoredSessionModel(manager, getModelRuntime())?.id).toBe("qwen3:0.6b");
+    });
+
+    it("starts a new session on the local model the project last used", async () => {
+      fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+      fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
+      const projectId = createProject({ name: "Restore", projectId: "restore" }).id;
+      const paths = resolvePaths(projectId);
+      fs.mkdirSync(paths.sessionsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(paths.sessionsDir, "20260919-101500_prior.jsonl"),
+        [
+          // `cwd` is load-bearing: SessionManager.list drops any session whose
+          // header cwd is not this project's sandbox.
+          JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "prior",
+            timestamp: "2026-09-19T10:15:00.000Z",
+            cwd: paths.sandbox,
+          }),
+          JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } }),
+          JSON.stringify({ type: "model_change", provider: "ollama", modelId: "qwen3:0.6b" }),
+        ].join("\n") + "\n",
+      );
+
+      const model = await latestProjectModel(paths, getModelRuntime(), new Set());
+
+      expect(model?.provider).toBe("ollama");
+      expect(model?.id).toBe("qwen3:0.6b");
+      fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+    });
   });
 });

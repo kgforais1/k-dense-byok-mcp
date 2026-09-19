@@ -418,6 +418,11 @@ export function isSubscriptionModelRef(ref: string): boolean {
  * The two providers backed by a server on this machine. They have no model
  * list in Pi's registry and no real credential, so several checks that are
  * meaningful for a cloud provider are meaningless for them.
+ *
+ * Not the same thing as "runs on localhost": a custom model server
+ * (`custom-models.ts`) may well do, but it is a registered Pi provider with
+ * its own declared pricing and is billed `payg` at that price. This predicate
+ * is about the $0, credential-free, registry-less pair only.
  */
 export function isLocalProvider(providerId: string): boolean {
   return providerId === "ollama" || providerId === "openai-compatible";

@@ -232,8 +232,10 @@ async function probeOllama(root: string): Promise<void> {
   // discovery route has already fetched to build its response, so it records
   // that inline with `recordArchitectural` rather than paying for a second
   // fetch here. That keeps a picker open at the budgeted two calls — the
-  // route's `/api/tags` plus this one — and is why the Ollama badge is right
-  // on the *first* open while LM Studio's takes two.
+  // route's `/api/tags` plus this one — and is why an Ollama row carries a
+  // badge on the *first* open while LM Studio's carries none until the
+  // second. The badge is the architectural maximum until this probe lands,
+  // so a model loaded smaller than its maximum reads high until then.
   //
   // `/api/ps` returns every running model at once, so one call covers all of
   // them. It lists running models only, so a cached model missing from a good
@@ -245,8 +247,14 @@ async function probeOllama(root: string): Promise<void> {
   let complete = true;
   for (const model of psModels) {
     const row = asRecord(model);
+    // Same predicate as the discovery route: a whitespace-only name is
+    // unusable, and the two must agree. If this side accepted one, the row
+    // would join `reported` under a key nothing else ever writes, the
+    // snapshot would look complete, and every genuinely loaded model absent
+    // from it would have its figure cleared — reverting to the higher
+    // architectural number and over-declaring.
     const name = row?.["name"];
-    if (typeof name !== "string" || !name) {
+    if (typeof name !== "string" || !name.trim()) {
       complete = false;
       continue;
     }
@@ -282,7 +290,7 @@ async function probeOpenAICompatible(root: string): Promise<void> {
   for (const row of rows) {
     const entry = asRecord(row);
     const id = entry?.["id"];
-    if (typeof id !== "string" || !id) {
+    if (!entry || typeof id !== "string" || !id.trim()) {
       complete = false;
       continue;
     }

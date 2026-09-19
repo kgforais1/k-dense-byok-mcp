@@ -93,7 +93,8 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never
         // reported, whose key could never match a /api/ps row.
-        const name = m?.name;
+        if (!m) return [];
+        const name = m.name;
         if (typeof name !== "string" || !name.trim()) return [];
         // Architectural figure, parsed inline from the payload already in
         // hand — no extra call. Lenient like the rest of this route: a

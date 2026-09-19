@@ -279,6 +279,22 @@ describe("probeLoaded (ollama)", () => {
     }
   });
 
+  it("a whitespace-only name forfeits the clear, like any unreadable row", async () => {
+    // The probe's name predicate must match the discovery route's. If it
+    // accepted "   ", the row would join `reported` under a key nothing else
+    // ever writes, the snapshot would look complete, and all-minilm's real
+    // loaded figure would be cleared in favour of the higher architectural
+    // one.
+    const base = freshBase();
+    seedArchitectural(base, "all-minilm", 512);
+    stubOllama();
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+    stubFetch(() => okJson({ models: [{ name: "   ", context_length: 4096 }] }));
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+  });
+
   it("a genuinely empty /api/ps still clears, because nothing is loaded", async () => {
     const base = freshBase();
     seedArchitectural(base, "all-minilm", 512);
@@ -382,6 +398,16 @@ describe("probeLoaded (openai-compatible)", () => {
       await probeLoaded("openai-compatible", base);
       expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
     }
+  });
+
+  it("a whitespace-only id forfeits the clear, like any unreadable row", async () => {
+    const base = freshBase();
+    stubFetch(() => okJson(v0Payload));
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+    stubFetch(() => okJson({ data: [{ id: "   ", max_context_length: 8192 }] }));
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
   });
 
   it("a null loaded_context_length reads as absent, so it clears", async () => {

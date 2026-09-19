@@ -230,6 +230,7 @@ describe("GET /ollama/models", () => {
           { model: "no-name-field" },
           null,
           { name: "" },
+          { name: "   " },
           { name: 7 },
           { name: "ok:latest", details: { context_length: 4096 } },
         ],

@@ -90,8 +90,11 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // selectable entry that resolves to nothing.
       const rows = Array.isArray(data.models) ? data.models : [];
       const models = rows.flatMap((m) => {
+        // Rejected, not trimmed: a whitespace-only name is as unusable as a
+        // missing one, and trimming would invent an id the daemon never
+        // reported, whose key could never match a /api/ps row.
         const name = m?.name;
-        if (typeof name !== "string" || !name) return [];
+        if (typeof name !== "string" || !name.trim()) return [];
         // Architectural figure, parsed inline from the payload already in
         // hand — no extra call. Lenient like the rest of this route: a
         // missing or malformed value records nothing (absent, not zero).

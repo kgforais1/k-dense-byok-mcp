@@ -202,21 +202,23 @@ function asNumber(value: unknown): number | undefined {
  * from a good answer is what unloading looks like, while a failed probe
  * clears nothing (every transient blip would otherwise wipe a good figure).
  *
- * `rowCount` is how many rows the answer contained, `reported` how many of
- * them parsed. Rows that all fail to parse are a malformed answer wearing a
- * 200, not an empty one: clearing on that would drop every loaded figure and
- * revert to the *higher* architectural number, which over-declares — the
- * exact failure this module exists to prevent. An answer with genuinely zero
- * rows is different and does clear, because that is what "nothing is loaded"
- * looks like on `/api/ps`.
+ * `complete` says whether every row in the answer named a model we could key
+ * on. Clearing is an argument from absence, so it is only sound over a
+ * complete snapshot: a row we could not identify might have been the one
+ * loaded model whose figure we are about to drop, and dropping it reverts to
+ * the *higher* architectural number, which over-declares — the exact failure
+ * this module exists to prevent. One unreadable row therefore forfeits the
+ * clear for the whole answer, not just for itself. An answer with genuinely
+ * zero rows is complete and does clear, because that is what "nothing is
+ * loaded" looks like on `/api/ps`.
  */
 function clearUnreportedLoaded(
   providerId: string,
   root: string,
   reported: Set<string>,
-  rowCount: number,
+  complete: boolean,
 ): void {
-  if (rowCount > 0 && reported.size === 0) return;
+  if (!complete) return;
   const prefix = `${providerId}\n${root}\n`;
   for (const [key, entry] of cache) {
     if (key.startsWith(prefix) && !reported.has(key) && entry.loaded !== undefined) {
@@ -240,16 +242,20 @@ async function probeOllama(root: string): Promise<void> {
   const psModels = arrayField(ps, "models");
   if (!psModels) return;
   const reported = new Set<string>();
+  let complete = true;
   for (const model of psModels) {
     const row = asRecord(model);
     const name = row?.["name"];
-    if (typeof name !== "string" || !name) continue;
+    if (typeof name !== "string" || !name) {
+      complete = false;
+      continue;
+    }
     const key = cacheKey("ollama", root, name);
     reported.add(key);
     const contextLength = asNumber(row?.["context_length"]);
     if (contextLength !== undefined) recordLoaded(key, contextLength);
   }
-  clearUnreportedLoaded("ollama", root, reported, psModels.length);
+  clearUnreportedLoaded("ollama", root, reported, complete);
 }
 
 async function probeOpenAICompatible(root: string): Promise<void> {
@@ -265,14 +271,28 @@ async function probeOpenAICompatible(root: string): Promise<void> {
     arrayField(body, "data") ?? (Array.isArray(body) ? body : undefined);
   if (!rows) return;
   const reported = new Set<string>();
+  let complete = true;
   for (const row of rows) {
     const entry = asRecord(row);
     const id = entry?.["id"];
-    if (typeof id !== "string" || !id) continue;
+    if (typeof id !== "string" || !id) {
+      complete = false;
+      continue;
+    }
     const key = cacheKey("openai-compatible", root, id);
     reported.add(key);
     recordArchitectural(key, asNumber(entry?.["max_context_length"]));
-    recordLoaded(key, asNumber(entry?.["loaded_context_length"]));
+    // Absent and unreadable are different answers. No `loaded_context_length`
+    // means the model is listed but not loaded, so the slot is cleared. A
+    // field that is present but not a usable number tells us nothing, and
+    // treating it as absent would clear a good figure in favour of the higher
+    // architectural one.
+    const rawLoaded = entry["loaded_context_length"];
+    if (rawLoaded === undefined || rawLoaded === null) {
+      recordLoaded(key, undefined);
+    } else if (isPositiveInt(rawLoaded)) {
+      recordLoaded(key, rawLoaded);
+    }
   }
-  clearUnreportedLoaded("openai-compatible", root, reported, rows.length);
+  clearUnreportedLoaded("openai-compatible", root, reported, complete);
 }

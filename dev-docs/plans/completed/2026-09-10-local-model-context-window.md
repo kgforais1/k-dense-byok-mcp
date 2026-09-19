@@ -296,7 +296,7 @@ safe. It is still worth doing: a failed *compaction* reports only through
 `compaction_end` and is still dropped without it. Treat this section as
 defensive hardening rather than a blocking dependency.
 
-- [ ] Extend the **existing** `compaction_end` case at `events.ts:412`. It
+- [x] Extend the **existing** `compaction_end` case at `events.ts:412`. It
       currently reads `if (ev.aborted || !ev.result) return null;` and then
       renders a compaction system card. Pi sets `result: undefined` and
       populates `errorMessage` on every failure emit
@@ -309,7 +309,7 @@ defensive hardening rather than a blocking dependency.
       `{ type: "error", message: ev.errorMessage }` when `errorMessage` is
       present and `ev.aborted` is false. Keep the `aborted` bail ahead of it:
       a user-cancelled compaction is not an error.
-- [ ] **Omit `reason` and `kind`.** `reason` on a `message_update` error is
+- [x] **Omit `reason` and `kind`.** `reason` on a `message_update` error is
       Pi's `"error" | "aborted"` (`events.ts:434`), while `compaction_end`
       carries its own `reason: "overflow"`. Those vocabularies are unrelated
       and nothing reads the field — the client dispatches on `frame.type` and
@@ -318,11 +318,11 @@ defensive hardening rather than a blocking dependency.
       block, so leaving `kind` off resolves it to `"error"`, which is correct.
       Do not reuse the `Model error: ` prefix from `events.ts:437`; this is not
       a provider failure and Pi's message is already a complete sentence.
-- [ ] Note that `compaction-bridge.ts:249` already logs
+- [x] Note that `compaction-bridge.ts:249` already logs
       `session_compact_failed` server-side. That is the same information on a
       different hook; it is a useful cross-check while testing, not a
       substitute, because it never reaches the client.
-- [ ] Add tests to `model-refusal.test.ts`: a `compaction_end` with an
+- [x] Add tests to `model-refusal.test.ts`: a `compaction_end` with an
       `errorMessage` produces an `error` frame carrying that exact text; one
       with a `result` still produces the compaction system card; one with
       neither still returns `null`.
@@ -389,7 +389,7 @@ round trip resolved. Both are now done; Phase 1 is complete.
 
 ### Phase 2 — Cache and probe
 
-- [ ] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
+- [x] Add `server/src/agent/local-context.ts`: a module-level cache keyed by
       `(providerId, normalizedBaseUrl, bareModelId)`, no TTL. Export five
       things so the callers do not each invent a shape:
       `cacheKey(providerId, baseUrl, modelId): string`, normalising the base
@@ -401,11 +401,11 @@ round trip resolved. Both are now done; Phase 1 is complete.
       `probeLoaded(providerId, baseUrl): Promise<void>`, sharing one dedup map
       keyed `(providerId, baseUrl)` and a 2 s timeout. A second caller joins
       the in-flight promise rather than starting a rival.
-- [ ] Never let a failed probe destroy a good entry. Write only when the parsed
+- [x] Never let a failed probe destroy a good entry. Write only when the parsed
       value is a positive integer; on a 404, a timeout, a malformed body or a
       zero, leave the existing entry alone. A refresh that fails is a no-op,
       not a downgrade to the fallback.
-- [ ] Fill the cache from `GET /openai-compatible/models` with a **second,
+- [x] Fill the cache from `GET /openai-compatible/models` with a **second,
       independent** call to `/api/v0/models`, preferring `loaded_context_length`
       and falling back to `max_context_length` — never skip an entry because it
       is not loaded. **Do not await it and do not share its
@@ -416,10 +416,10 @@ round trip resolved. Both are now done; Phase 1 is complete.
       text-generation-webui and the rest 404 it. A 404, a timeout or a
       malformed body means "no context metadata", never "no models" — the
       route must still return every row `/v1/models` gave it.
-- [ ] Fill the cache from `GET /ollama/models` by reading
+- [x] Fill the cache from `GET /ollama/models` by reading
       `details.context_length` out of the `/api/tags` response the route
       already fetches (`api/system.ts:67`). No extra call, no fan-out.
-- [ ] Then fetch the loaded figures with **one** extra call to `/api/ps`,
+- [x] Then fetch the loaded figures with **one** extra call to `/api/ps`,
       unawaited, with its own `AbortController`, failing into a no-op. They go
       into the entry's `loaded` slot. `/api/ps` returns every running model at
       once, so this is bounded.
@@ -434,7 +434,7 @@ round trip resolved. Both are now done; Phase 1 is complete.
       inline from the payload the route already holds, synchronously, before
       the route replies. Re-fetching `/api/tags` to route it through a shared
       function would buy nothing and cost a duplicate call.
-- [ ] Serve each route's `context_length` from the cache instead of the
+- [x] Serve each route's `context_length` from the cache instead of the
       hardcoded `0`: the cached figure when there is one, `0` when there is
       not. **Do not make the route await the probe to avoid a cold `0`.** On a
       cold first open the honest answer is `0`, which the picker already
@@ -446,13 +446,13 @@ and reopening it after either local server changes overwrites those entries.
 
 ### Phase 3 — Consume it
 
-- [ ] In both builders, resolve the cache and fall back to 128,000. Each
+- [x] In both builders, resolve the cache and fall back to 128,000. Each
       builder already holds its own provider id and base URL as constants, so
       it can build the key from what it has; no signature changes.
-- [ ] Update the comment at `models.ts:247`. It is correct about `/v1/models`
+- [x] Update the comment at `models.ts:247`. It is correct about `/v1/models`
       and should stay — extend it to say why the native endpoint is consulted
       instead, so the next reader does not re-derive this.
-- [ ] Fix the test expectations. `server/test/openai-compatible.test.ts` has
+- [x] Fix the test expectations. `server/test/openai-compatible.test.ts` has
       **no** 32K builder assertions to update; what it has is two route
       assertions on `context_length: 0` (`:229`, `:239`), which break the
       moment the routes return real values. Update those, and add the builder

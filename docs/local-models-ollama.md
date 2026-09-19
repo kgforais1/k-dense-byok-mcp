@@ -103,10 +103,15 @@ Practical consequences:
   rather than a guess at your hardware: Kady's own system prompt is roughly
   44,000 tokens and the compaction reserve adds about 16,000 on top, so a
   smaller assumption cannot fit the prompt before you have typed anything.
-- **A genuinely small model will now say so.** A model whose real window is
-  below roughly 61,000 tokens cannot hold Kady's prompt and will fail with a
-  context-overflow message naming the problem, instead of returning an empty
-  reply.
+- **A genuinely small model will say so, if your server says so.** A model
+  whose real window is below roughly 61,000 tokens cannot hold Kady's prompt.
+  On a server that rejects an oversized request — LM Studio and other
+  llama.cpp servers do — the run fails with a context-overflow message naming
+  the numbers, instead of returning an empty reply. Ollama instead truncates
+  the prompt silently, so there the model simply answers without the part that
+  did not fit. Declaring the real window is what avoids the oversized request
+  in the first place; the visible error is the backstop, and only some servers
+  offer it.
 - **To override a figure**, add the server as a custom model server
   (Settings → **Model providers** → **Custom model servers**) and declare
   `contextWindow` per model. See [Custom model servers](./custom-model-servers.md).

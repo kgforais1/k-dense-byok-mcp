@@ -242,6 +242,25 @@ describe("probeLoaded (ollama)", () => {
     expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
   });
 
+  it("one unreadable row forfeits the clear for the whole answer", async () => {
+    // The partial case the all-rows-fail guard misses. `qwen3:8b` is loaded
+    // and reported; the nameless row could be `all-minilm`, so we cannot
+    // read its absence as "unloaded" and must leave its figure alone.
+    const base = freshBase();
+    seedArchitectural(base, "all-minilm", 512);
+    stubOllama();
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+    stubFetch(() =>
+      okJson({
+        models: [{ name: "qwen3:8b", context_length: 40960 }, { no: "name" }],
+      }),
+    );
+    await probeLoaded("ollama", base);
+    expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+    expect(getContextWindow("ollama", base, "qwen3:8b")).toBe(40960);
+  });
+
   it("a genuinely empty /api/ps still clears, because nothing is loaded", async () => {
     const base = freshBase();
     seedArchitectural(base, "all-minilm", 512);
@@ -308,6 +327,65 @@ describe("probeLoaded (openai-compatible)", () => {
     stubFetch(() => okJson({ data: [{}] }));
     await probeLoaded("openai-compatible", base);
     expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+  });
+
+  it("one unreadable row forfeits the clear for the whole answer", async () => {
+    // Same partial-snapshot rule as the ollama side.
+    const base = freshBase();
+    stubFetch(() => okJson(v0Payload));
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+    stubFetch(() =>
+      okJson({ data: [{ id: "qwen/qwen3-8b", max_context_length: 32768 }, {}] }),
+    );
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+  });
+
+  it("a present but unreadable loaded_context_length keeps the old figure", async () => {
+    // Present-but-unusable means we learned nothing. Clearing on it would
+    // revert to the higher architectural figure and over-declare.
+    for (const bad of ["65536", 0, -1, 4096.5, {}]) {
+      const base = freshBase();
+      stubFetch(() => okJson(v0Payload));
+      await probeLoaded("openai-compatible", base);
+      expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+      stubFetch(() =>
+        okJson({
+          data: [
+            {
+              id: "allenai/olmocr-2-7b",
+              max_context_length: 128000,
+              loaded_context_length: bad,
+            },
+          ],
+        }),
+      );
+      await probeLoaded("openai-compatible", base);
+      expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+    }
+  });
+
+  it("a null loaded_context_length reads as absent, so it clears", async () => {
+    // LM Studio omits the field when a model is unloaded, but a server that
+    // sends an explicit null means the same thing.
+    const base = freshBase();
+    stubFetch(() => okJson(v0Payload));
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(64000);
+    stubFetch(() =>
+      okJson({
+        data: [
+          {
+            id: "allenai/olmocr-2-7b",
+            max_context_length: 128000,
+            loaded_context_length: null,
+          },
+        ],
+      }),
+    );
+    await probeLoaded("openai-compatible", base);
+    expect(getContextWindow("openai-compatible", base, "allenai/olmocr-2-7b")).toBe(128000);
   });
 
   it("a listed-but-unloaded entry reverts a stale loaded slot", async () => {

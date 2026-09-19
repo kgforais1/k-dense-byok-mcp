@@ -334,6 +334,22 @@ describe("GET /openai-compatible/models", () => {
     expect(body.models.every((m: { context_length: number }) => m.context_length === 0)).toBe(
       true,
     );
+
+    // And still after the 404 has landed. The probe learned nothing, so the
+    // rows keep their honest 0s and, more importantly, the list is intact.
+    const deadline = Date.now() + 5000;
+    while (!requestedPaths.includes("/api/v0/models") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(requestedPaths).toContain("/api/v0/models");
+    const reopened = (await app.inject({ url: "/openai-compatible/models" })).json();
+    expect(reopened.models.map((m: { id: string }) => m.id)).toEqual([
+      "openai-compatible/model-a",
+      "openai-compatible/model-b",
+    ]);
+    expect(
+      reopened.models.every((m: { context_length: number }) => m.context_length === 0),
+    ).toBe(true);
     await app.close();
   });
 

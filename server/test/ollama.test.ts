@@ -258,6 +258,19 @@ describe("GET /ollama/models", () => {
     expect(
       body.models.map((m: { context_length: number }) => m.context_length),
     ).toEqual([512, 40960]);
+
+    // And still after the failed probe has landed. A refresh that fails is a
+    // no-op, never a downgrade to the fallback, so reopening the picker must
+    // serve the same architectural figures rather than a pair of 0s.
+    const deadline = Date.now() + 5000;
+    while (!requestedPaths.includes("/api/ps") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(requestedPaths).toContain("/api/ps");
+    const reopened = (await app.inject({ url: "/ollama/models" })).json();
+    expect(
+      reopened.models.map((m: { context_length: number }) => m.context_length),
+    ).toEqual([512, 40960]);
     await app.close();
   });
 
@@ -289,7 +302,7 @@ describe("GET /ollama/models", () => {
     }
 
     expect(requestedPaths.filter((p) => p === "/api/tags")).toHaveLength(1);
-    expect(requestedPaths.filter((p) => p === "/api/ps").length).toBeGreaterThanOrEqual(1);
+    expect(requestedPaths.filter((p) => p === "/api/ps")).toHaveLength(1);
     await app.close();
   });
 });

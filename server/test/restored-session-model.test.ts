@@ -71,9 +71,10 @@ describe("restoring the model a session last ran with", () => {
 
   it("reads the local model back out of a real transcript", () => {
     const last = lastModelInSessionFile(sessionFile("ollama", "qwen3:0.6b"));
+    if (!last) throw new Error("the fixture's model_change row was not read back");
 
     expect(last).toEqual({ provider: "ollama", modelId: "qwen3:0.6b" });
-    expect(resolve(last!.provider, last!.modelId)?.id).toBe("qwen3:0.6b");
+    expect(resolve(last.provider, last.modelId)?.id).toBe("qwen3:0.6b");
   });
 
   it("keeps an id containing slashes whole", () => {

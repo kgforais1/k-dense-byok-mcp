@@ -408,13 +408,6 @@ export function isSubscriptionModelRef(ref: string): boolean {
 }
 
 /**
- * True for providers Kady only reaches through an OAuth login: no API-key row
- * exists for them, so an ambient token must not be mistaken for subscription
- * access (`openai-codex`, `github-copilot`, `radius`). OpenRouter is in the
- * OAuth list only as a sign-in alternative to its key row and is never
- * OAuth-only.
- */
-/**
  * The two providers backed by a server on this machine. They have no model
  * list in Pi's registry and no real credential, so several checks that are
  * meaningful for a cloud provider are meaningless for them.
@@ -428,6 +421,13 @@ export function isLocalProvider(providerId: string): boolean {
   return providerId === "ollama" || providerId === "openai-compatible";
 }
 
+/**
+ * True for providers Kady only reaches through an OAuth login: no API-key row
+ * exists for them, so an ambient token must not be mistaken for subscription
+ * access (`openai-codex`, `github-copilot`, `radius`). OpenRouter is in the
+ * OAuth list only as a sign-in alternative to its key row and is never
+ * OAuth-only.
+ */
 export function isOAuthOnlyProvider(providerId: string): boolean {
   return (
     isSubscriptionProvider(providerId) &&

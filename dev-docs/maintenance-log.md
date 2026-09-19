@@ -24,6 +24,16 @@
 - **Follow-up:** The backend `max-lines` ratchet moved 1468 → 1467 rather than
   up, and `server/eslint.config.mjs` now states that the number only ever moves
   down. Automating that check is recorded in `dev-docs/todo.md` §1.
+- **Latent bug found in review:** making `wait` depend on the worker promise
+  exposed an ordering the old fixed tick had masked. `schedule()`'s `finally`
+  called `runtime.adapter.close()` before `this.active.delete(key)`, so a
+  throwing `close()` skipped the delete and the terminal `.catch` swallowed the
+  error, leaving a settled promise in `active`. Every race then resolved
+  immediately: the wait loop burned its whole budget without yielding to a
+  timer, and with no timeout it would have starved the event loop. The delete
+  now precedes the close, covered by `settles waiters when adapter cleanup
+  throws` in `test/modal-durable.test.ts`. Found by a `codex/gpt-5.6-terra`
+  review of PR #38; a second reviewer traced the same chain and missed it.
 
 ### 2026-09-19 — Local discovery route contract and adm-zip bump (PR #37)
 

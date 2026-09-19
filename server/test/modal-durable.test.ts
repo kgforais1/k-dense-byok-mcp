@@ -98,6 +98,39 @@ describe("Modal catalogue and transfer safety", () => {
     expect(plan.manifest[0].sha256).toBe("ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb");
   });
 
+  it("settles waiters when adapter cleanup throws", async () => {
+    // `schedule()`'s `finally` used to call `close()` before deleting the job
+    // from `active`, so a throwing `close()` skipped the delete and the
+    // terminal `.catch` swallowed the error. `wait` races that chain's
+    // promise, so an already-settled promise left in the map resolved every
+    // race immediately: the loop spun without yielding to a timer, burning its
+    // whole budget here and starving the event loop outright when called with
+    // no timeout at all.
+    const fake = new FakeModal();
+    const base = fake.factory;
+    const manager = new DurableModalJobManager(() => ({
+      ...base(),
+      close() {
+        throw new Error("adapter cleanup failed");
+      },
+    }));
+    const job = manager.submit(
+      "default",
+      { command: "echo cleanup" },
+      { sessionId: "cleanup-session", submittedBy: "api" },
+    );
+
+    const started = Date.now();
+    const settled = await manager.wait("default", job.id, 4000);
+
+    expect(settled.state).toBe("succeeded");
+    expect(settled.accounting.reconciled).toBe(true);
+    // The discriminator is that `wait` returns on the worker finishing rather
+    // than on its deadline. A generous bound, because the point is 4000 vs a
+    // job that takes well under a second even on a slow runner.
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
   it("supports named reusable environments and opting out of the project cache", async () => {
     const fake = new FakeModal();
     const manager = new DurableModalJobManager(fake.factory);

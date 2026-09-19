@@ -739,8 +739,10 @@ export class DurableModalJobManager {
         }
       })
       .finally(() => {
-        runtime.adapter?.close();
+        // Leave `active` before closing: a throwing `close()` would skip the
+        // delete, and `wait` races this chain's promise — see its comment.
         this.active.delete(key);
+        runtime.adapter?.close();
       })
       // Terminal handler: nothing above may surface as an unhandled rejection,
       // which would take the whole backend (every chat tab) down with it.
@@ -1034,9 +1036,7 @@ export class DurableModalJobManager {
       this.store.update(projectId, jobId, (current) => {
         current.inputFiles = inputPlan.manifest;
       });
-      await checked(
-        sandbox.filesystem.makeDirectory(REMOTE_CONTROL_DIR, { createParents: true }),
-      );
+      await checked(sandbox.filesystem.makeDirectory(REMOTE_CONTROL_DIR, { createParents: true }));
       await stageInputs(sandbox, inputPlan, checked);
       // Hash the bytes actually uploaded, not merely the local files that
       // preceded a potentially racing upload — for every job, not only

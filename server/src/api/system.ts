@@ -81,14 +81,22 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       const data = (await resp.json()) as {
         models?: ({ name?: unknown; details?: { context_length?: unknown } } | null)[];
       };
-      // Losing context metadata is acceptable; losing the model list is not.
-      // Every shape below is therefore checked rather than assumed: a
-      // non-array `models`, a nullish row, or a row with no usable name would
-      // each otherwise throw into this route's catch and blank the whole
-      // Ollama section as if the daemon were down. A row we cannot name is
-      // dropped rather than rendered, because `ollama/undefined` is a
-      // selectable entry that resolves to nothing.
-      const rows = Array.isArray(data.models) ? data.models : [];
+      // A `models` key that is present but not an array is a malformed
+      // answer: we learned nothing about what is installed. Report it the
+      // same way as an unreachable daemon, because the alternative reads as
+      // `available: true` with an empty list, and the picker renders that as
+      // "Ollama is running but no models are pulled" — telling a user with a
+      // shelf full of models to go pull one. An *absent* key is different and
+      // stays an empty list, since that is a daemon saying it has none.
+      if (data.models !== undefined && !Array.isArray(data.models)) {
+        return { available: false, models: [] };
+      }
+      // Individual rows are a different matter: losing context metadata is
+      // acceptable, losing the list is not, so a nullish row or one with no
+      // usable name is dropped and the rest of the list survives. Dropped
+      // rather than rendered, because `ollama/undefined` is a selectable
+      // entry that resolves to nothing.
+      const rows = data.models ?? [];
       const models = rows.flatMap((m) => {
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never

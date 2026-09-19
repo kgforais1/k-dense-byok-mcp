@@ -249,10 +249,23 @@ describe("GET /ollama/models", () => {
     await app.close();
   });
 
-  it("keeps the section alive when models is not an array", async () => {
-    // A truthy non-array would throw on .map, and the catch would report the
-    // daemon as down. Report an empty list instead: that is what we know.
+  it("reports a non-array models field as unavailable, not as empty", async () => {
+    // Saying available:true with no rows makes the picker tell the user
+    // "Ollama is running but no models are pulled" — bad advice when the
+    // daemon may hold plenty and simply answered with nonsense.
     respondTags = (res) => okJson(res, { models: { not: "an array" } });
+    const app = await buildRoutes(baseUrl);
+
+    const body = (await app.inject({ url: "/ollama/models" })).json();
+
+    expect(body).toEqual({ available: false, models: [] });
+    await app.close();
+  });
+
+  it("reports an absent models field as running with nothing pulled", async () => {
+    // Different answer from the one above: no key is a daemon saying it has
+    // no models, which is exactly what the "pull one" hint is for.
+    respondTags = (res) => okJson(res, {});
     const app = await buildRoutes(baseUrl);
 
     const body = (await app.inject({ url: "/ollama/models" })).json();

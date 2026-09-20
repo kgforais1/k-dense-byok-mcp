@@ -45,7 +45,7 @@ import {
 } from "../src/modal/transfer.ts";
 import { type Behavior, FakeModal, FakeSandbox, persistedRunningJob } from "./helpers/fake-modal.ts";
 import { readSteps } from "../src/provenance/store.ts";
-import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
+import { WAIT_BUDGET_MS, waitFor } from "./helpers/timing.ts";
 
 function reset(): void {
   fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
@@ -852,14 +852,26 @@ describe("Durable Modal transfer hardening", () => {
 });
 
 describe("Durable Modal log sync", () => {
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  async function until(check: () => boolean, ms = WAIT_BUDGET_MS): Promise<void> {
-    const deadline = Date.now() + ms;
-    while (!check()) {
-      if (Date.now() > deadline) throw new Error("condition not met in time");
-      await sleep(25);
-    }
-  }
+  // The manager reads remote logs on a 500ms tick. These tests used to write a
+  // stage and sleep 800ms for the tick to collect it, which is the shape the
+  // rest of this PR removed: on a loaded runner the tick lands late, the next
+  // stage overwrites the first, and the assembled stream is wrong. Each stage
+  // now waits for its own evidence instead.
+  const META = "/workspace/.kady-job/stdout.log.meta";
+  const logged = (manager: DurableModalJobManager, jobId: string) =>
+    manager.store.readLog("default", jobId, "stdout", 0).data;
+  /**
+   * Wait for a tick to have read the sidecar at least twice since `from`.
+   * Twice, not once: a tick already in flight when the caller wrote its
+   * stage may have read the file before that write, so only the second read
+   * is guaranteed to have seen it. Used where a tick is expected to produce
+   * *nothing* — there is no other trace of one having run, and the assertion
+   * that follows passes vacuously if none did.
+   */
+  const afterTick = async (sandbox: FakeSandbox, from: number) => {
+    await waitFor(() => expect(sandbox.filesystem.reads(META)).toBeGreaterThan(from + 1));
+  };
+  const until = (check: () => boolean) => waitFor(() => expect(check()).toBe(true));
   function remoteLog(sandbox: FakeSandbox, content: string | Buffer, dropped: number, metaSize?: number) {
     const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
     sandbox.filesystem.files.set("/workspace/.kady-job/stdout.log", bytes);
@@ -879,59 +891,71 @@ describe("Durable Modal log sync", () => {
     const fake = new FakeModal();
     const manager = new DurableModalJobManager(fake.factory);
     const { job, sandbox } = await runningSandbox(manager, fake, "s-logroll");
-    // Logical stream "0123456789" through a 4-byte remote window.
+    // Logical stream "0123456789" through a 4-byte remote window. Each stage
+    // must be collected before the next overwrites it, so wait for the bytes
+    // themselves rather than for a duration.
     remoteLog(sandbox, "0123", 0);
-    await sleep(800);
+    await waitFor(() => expect(logged(manager, job.id)).toBe("0123"));
     remoteLog(sandbox, "4567", 4);
-    await sleep(800);
+    await waitFor(() => expect(logged(manager, job.id)).toBe("01234567"));
     remoteLog(sandbox, "6789", 6);
-    await sleep(800);
+    await waitFor(() => expect(logged(manager, job.id)).toBe("0123456789"));
     await manager.cancel("default", job.id);
     await manager.wait("default", job.id, WAIT_BUDGET_MS);
-    expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("0123456789");
+    expect(logged(manager, job.id)).toBe("0123456789");
     expect(manager.store.events("default", job.id).some((event) => event.type === "log_gap")).toBe(false);
-  }, 15_000);
+  });
 
   it("records a gap when bytes rolled out of the remote window before they were seen", async () => {
     const fake = new FakeModal();
     const manager = new DurableModalJobManager(fake.factory);
     const { job, sandbox } = await runningSandbox(manager, fake, "s-loggap");
     remoteLog(sandbox, "6789", 6);
-    await sleep(800);
+    await waitFor(() => expect(logged(manager, job.id)).toBe("6789"));
     await manager.cancel("default", job.id);
     await manager.wait("default", job.id, WAIT_BUDGET_MS);
-    expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("6789");
+    expect(logged(manager, job.id)).toBe("6789");
     const gap = manager.store.events("default", job.id).find((event) => event.type === "log_gap");
     expect(gap?.data).toMatchObject({ stream: "stdout", bytes: 6 });
-  }, 15_000);
+  });
 
   it("keeps multibyte characters intact when a tick lands mid-character", async () => {
     const fake = new FakeModal();
     const manager = new DurableModalJobManager(fake.factory);
     const { job, sandbox } = await runningSandbox(manager, fake, "s-logutf8");
     const full = Buffer.from("héllo wörld\n", "utf-8");
+    const before = sandbox.filesystem.reads(META);
     remoteLog(sandbox, full.subarray(0, 2), 0); // "h" plus the first byte of "é"
-    await sleep(800);
+    // A tick must actually land on the half-character for this test to mean
+    // anything, so wait for one and check it collected the torn write. The
+    // store keeps bytes, not text, so reading it now decodes the orphan lead
+    // byte in isolation as U+FFFD — that is the state the next stage has to
+    // repair, and the assertion after it is the one that matters.
+    await afterTick(sandbox, before);
+    expect(logged(manager, job.id)).toBe("h\ufffd");
     remoteLog(sandbox, full, 0);
-    await sleep(800);
+    await waitFor(() => expect(logged(manager, job.id)).toBe("héllo wörld\n"));
     await manager.cancel("default", job.id);
     await manager.wait("default", job.id, WAIT_BUDGET_MS);
-    expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("héllo wörld\n");
-  }, 15_000);
+    expect(logged(manager, job.id)).toBe("héllo wörld\n");
+  });
 
   it("skips a tick whose sidecar disagrees with the file size instead of appending torn bytes", async () => {
     const fake = new FakeModal();
     const manager = new DurableModalJobManager(fake.factory);
     const { job, sandbox } = await runningSandbox(manager, fake, "s-logmeta");
+    const before = sandbox.filesystem.reads(META);
     remoteLog(sandbox, "0123", 0, 2); // wrapper mid-write: sidecar lags the file
-    await sleep(800);
-    expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("");
+    // The skip is invisible in the store, so prove a tick read the disagreeing
+    // sidecar before asserting it appended nothing.
+    await afterTick(sandbox, before);
+    expect(logged(manager, job.id)).toBe("");
     remoteLog(sandbox, "0123", 0);
-    await sleep(800);
+    await waitFor(() => expect(logged(manager, job.id)).toBe("0123"));
     await manager.cancel("default", job.id);
     await manager.wait("default", job.id, WAIT_BUDGET_MS);
-    expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("0123");
-  }, 15_000);
+    expect(logged(manager, job.id)).toBe("0123");
+  });
 });
 
 describe("Durable Modal manager safety nets", () => {

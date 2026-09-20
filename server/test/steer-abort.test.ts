@@ -165,7 +165,8 @@ import { recordRun } from "../src/cost/ledger.ts";
 import { runBroker } from "../src/agent/run-broker.ts";
 import { attachSessionObserver } from "../src/agent/session-observer.ts";
 import { resolvePaths } from "../src/projects.ts";
-import { quietFor, waitFor } from "./helpers/timing.ts";
+import { waitFor } from "./helpers/timing.ts";
+import { pendingFollowUpWaiters } from "../src/agent/follow-up-receipts.ts";
 
 const app = await buildApp();
 
@@ -616,12 +617,13 @@ describe("POST /sessions/:id/follow-up", () => {
       expect(s.followUps).toHaveLength(1);
     });
     const second = followUp("s1", body);
-    // Let the retry travel from inject dispatch to the reservation while the
-    // leader stays parked; then let the leader settle for both. Attaching as
-    // a waiter changes nothing observable — the leader already owns the
-    // reservation — so this is a delay rather than a poll, and it is sized
-    // for a Windows runner rather than for this machine.
-    await quietFor();
+    // Wait for the retry to actually attach as a waiter before releasing the
+    // leader. Sleeping instead would let the retry arrive late and take the
+    // completed-receipt path, which satisfies every assertion below without
+    // exercising the waiter path this test is named for.
+    await waitFor(() => {
+      expect(pendingFollowUpWaiters("default", "s1", body.requestId)).toBe(1);
+    });
     s.releaseFollowUp();
     const [r1, r2] = await Promise.all([first, second]);
     expect(r1.statusCode).toBe(200);
@@ -646,8 +648,9 @@ describe("POST /sessions/:id/follow-up", () => {
       expect(s.followUps).toHaveLength(1);
     });
     const second = followUp("s1", body);
-    // As above: no observable for the retry attaching as a waiter.
-    await quietFor();
+    await waitFor(() => {
+      expect(pendingFollowUpWaiters("default", "s1", body.requestId)).toBe(1);
+    });
     s.releaseFollowUp();
     const [r1, r2] = await Promise.all([first, second]);
     expect(r1.statusCode).toBe(409);

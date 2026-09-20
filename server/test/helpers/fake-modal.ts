@@ -81,7 +81,21 @@ export class FakeFilesystem implements ModalRemoteFilesystem {
     return { path: remotePath, name: path.posix.basename(remotePath), type: "file", size: value.length };
   }
 
+  /**
+   * Per-path read tally. The log-sync tests need to know that a sync tick
+   * actually examined a file, and two of them assert that a tick read a
+   * torn write and declined to append it — an outcome with no other
+   * observable at all. Without this they could only sleep and hope, which
+   * passes vacuously when no tick ran.
+   */
+  readCounts = new Map<string, number>();
+
+  reads(remotePath: string): number {
+    return this.readCounts.get(remotePath) ?? 0;
+  }
+
   async readText(remotePath: string): Promise<string> {
+    this.readCounts.set(remotePath, this.reads(remotePath) + 1);
     const value = this.files.get(remotePath);
     if (!value) throw new Error(`not found: ${remotePath}`);
     return value.toString("utf-8");

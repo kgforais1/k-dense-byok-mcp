@@ -34,6 +34,62 @@ jobs:
       - name: Run documentation checks
         run: npm run docs:check
 
+  # `gh pr create --body` replaces the PR template wholesale, so the closing
+  # checklist from `.github/pull_request_template.md` never reaches the PR
+  # description. This job catches that: it reads the body from the event
+  # payload and fails when the checklist is absent.
+  pr-checklist:
+    name: PR closing checklist
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      # No checkout and no Node setup: this reads one environment variable and
+      # nothing from the tree, and ubuntu-latest ships node. A gate that runs on
+      # every PR should cost seconds.
+      - name: Check PR closing checklist
+        env:
+          # Pass the body through an environment variable, never by shell
+          # interpolation. A PR body is attacker-controllable text; inserting
+          # it directly into a `run:` line is a script-injection vector.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          node - <<'NODE'
+          const body = process.env.PR_BODY || "";
+
+          if (!body) {
+            console.error("FAIL: PR body is empty.");
+            console.error(
+              "`gh pr create --body` discards the PR template. Copy the closing " +
+              "checklist from .github/pull_request_template.md into the PR description."
+            );
+            process.exit(1);
+          }
+
+          const hasHeading = body.includes("## PR closing checklist");
+          // A couple of the most distinctive items from the template. Be
+          // pragmatic: items get reworded, so we only require enough to prove
+          // the checklist was intentionally included rather than mentioned in
+          // passing.
+          const hasItems = [
+            "Handoff archived or removed from",
+            "Plan moved to",
+            "dev-docs/maintenance-log.md",
+            "npm run verify -- docs",
+          ].some((phrase) => body.includes(phrase));
+
+          if (!hasHeading || !hasItems) {
+            console.error("FAIL: PR body is missing the closing checklist.");
+            console.error(
+              "`gh pr create --body` discards the PR template. Copy the closing " +
+              "checklist from .github/pull_request_template.md into the PR description."
+            );
+            process.exit(1);
+          }
+
+          console.log("PR closing checklist: present");
+          NODE
+
   secrets:
     name: gitleaks
     timeout-minutes: 10

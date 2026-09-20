@@ -70,12 +70,27 @@ jobs:
             process.exit(1);
           }
 
-          const hasHeading = body.includes("## PR closing checklist");
+          const headingAt = body.indexOf("## PR closing checklist");
+          const hasHeading = headingAt !== -1;
+
+          // Everything from the heading to the next one, or to the end. The
+          // checks below run on that slice rather than the whole body: a PR
+          // that names the heading in one place and happens to carry a task
+          // list somewhere else — a plan, a set of follow-ups — would
+          // otherwise satisfy a gate whose whole question is whether the
+          // checklist itself is present.
+          const afterHeading = hasHeading
+            ? body.slice(headingAt + "## PR closing checklist".length)
+            : "";
+          const nextHeading = afterHeading.search(/^#{1,6} /m);
+          const section =
+            nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
+
           // An actual checkbox line is the one signal that is hard to produce
           // by accident. Without it, a body that merely *discusses* the
           // checklist ("I skipped the PR closing checklist because
           // npm run verify -- docs fails") satisfied the gate.
-          const hasCheckbox = /^\s*- \[[ xX]\]/m.test(body);
+          const hasCheckbox = /^\s*- \[[ xX]\]/m.test(section);
           // A couple of the most distinctive items from the template. Be
           // pragmatic: items get reworded, so we only require enough to prove
           // the checklist was intentionally included rather than mentioned in
@@ -85,7 +100,7 @@ jobs:
             "Plan moved to",
             "dev-docs/maintenance-log.md",
             "npm run verify -- docs",
-          ].some((phrase) => body.includes(phrase));
+          ].some((phrase) => section.includes(phrase));
 
           if (!hasHeading || !hasItems || !hasCheckbox) {
             console.error("FAIL: PR body is missing the closing checklist.");

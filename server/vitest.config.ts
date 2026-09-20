@@ -10,6 +10,16 @@ export default defineConfig({
     // beforeEach/afterAll; running files concurrently races on it (ENOTEMPTY,
     // files vanishing mid-assertion). Run test files serially to avoid that.
     fileParallelism: false,
+    // A test timeout is a hang detector, not a performance target: a passing
+    // test returns the moment its work is done and never touches this
+    // ceiling, so only a test that was going to fail pays for a high value.
+    // The 5s default bought nothing and cost real flakes — Windows runners
+    // intermittently run about three times slow, and `steer-abort.test.ts`
+    // hit 5000ms on a loaded one while passing in 4.33s locally. Set well
+    // above `WAIT_BUDGET_MS` in `test/helpers/timing.ts`, so a test that
+    // waits and waits again still fails on its own wait rather than here.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "json-summary", "lcov"],

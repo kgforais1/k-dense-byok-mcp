@@ -45,6 +45,7 @@ import {
 } from "../src/modal/transfer.ts";
 import { type Behavior, FakeModal, FakeSandbox, persistedRunningJob } from "./helpers/fake-modal.ts";
 import { readSteps } from "../src/provenance/store.ts";
+import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
 
 function reset(): void {
   fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
@@ -121,7 +122,7 @@ describe("Modal catalogue and transfer safety", () => {
     );
 
     const started = Date.now();
-    const settled = await manager.wait("default", job.id, 4000);
+    const settled = await manager.wait("default", job.id, WAIT_BUDGET_MS);
 
     expect(settled.state).toBe("succeeded");
     expect(settled.accounting.reconciled).toBe(true);
@@ -143,7 +144,7 @@ describe("Modal catalogue and transfer safety", () => {
       },
       { sessionId: "environment-session", submittedBy: "api" },
     );
-    await manager.wait("default", job.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(fake.prepared).toContainEqual({
       environment: "science-stack",
       cache: "none",
@@ -206,7 +207,7 @@ describe("Modal reservations and store", () => {
       { command: "echo ok", filesIn: ["input.txt"], filesOut: ["result.txt"] },
       { sessionId: "store-session", submittedBy: "api" },
     );
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(fs.existsSync(path.join(resolvePaths("default").modalJobsDir, job.id, "job.json"))).toBe(true);
     expect(manager.store.events("default", job.id).map((event) => event.state)).toContain("running");
@@ -231,7 +232,7 @@ describe("Modal reservations and store", () => {
       { command: "echo ok", filesIn: ["input.txt"], filesOut: ["result.txt"] },
       { sessionId: "prov-session", runId: "run_prov", submittedBy: "lead" },
     );
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
 
     const steps = readSteps("prov-session", "default");
@@ -313,7 +314,7 @@ describe("Durable Modal manager accounting", () => {
       { command: "work", filesOut: ["result.txt"] },
       { sessionId: `session-${state}-${String(exitCode)}`, submittedBy: "api" },
     );
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe(state);
     expect(terminal.accounting.reconciled).toBe(true);
     expect(listComputeReservations("default")).toEqual([]);
@@ -342,7 +343,7 @@ describe("Durable Modal manager accounting", () => {
       },
       { sessionId: "fallback-session", submittedBy: "api" },
     );
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(terminal.effectiveInstance).toBe("h200");
     expect(
@@ -362,7 +363,7 @@ describe("Durable Modal manager accounting", () => {
     const job = manager.submit("default", request, { sessionId: "s-headroom", submittedBy: "api" });
     expect(job.reservationUsd).toBeCloseTo(worstCaseReservationUsd(request), 12);
     expect(job.reservationUsd).toBeCloseTo(MODAL_INSTANCES.find((s) => s.id === "cpu")!.pricePerHour * (1100 / 3600), 12);
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     // Sandbox lifetime carries the headroom; the wrapped command does not.
     expect(fake.createParams.at(-1)?.timeoutMs).toBe(1100 * 1000);
@@ -384,7 +385,7 @@ describe("Durable Modal manager accounting", () => {
       { command: "work", instance: "h100", gpuFallback: ["h200"] },
       { sessionId: "auth-session", submittedBy: "api" },
     );
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.error).toMatchObject({ code: "AUTH_FAILED", retryable: false });
     expect(fake.createErrors).toHaveLength(1);
@@ -408,7 +409,7 @@ describe("Durable Modal manager accounting", () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     await manager.cancel("default", job.id);
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("cancelled");
     expect(terminal.accounting.reconciled).toBe(true);
     expect(fake.sandboxes.get(terminal.sandboxId!)?.terminated).toBe(true);
@@ -436,7 +437,7 @@ describe("Durable Modal manager accounting", () => {
     );
     const manager = new DurableModalJobManager(fake.factory, store);
     await manager.recoverProject("default");
-    const terminal = await manager.wait("default", id, 3000);
+    const terminal = await manager.wait("default", id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("lost");
     expect(terminal.accounting.reconciled).toBe(true);
     expect(sessionCostSummary("recovery-session", "default").entries[0]).toMatchObject({
@@ -475,7 +476,7 @@ describe("Durable Modal manager accounting", () => {
     store.appendLog("default", id, "stdout", "recovered\n");
     const manager = new DurableModalJobManager(fake.factory, store);
     await manager.recoverProject("default");
-    const terminal = await manager.wait("default", id, 3000);
+    const terminal = await manager.wait("default", id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(fs.readFileSync(path.join(resolvePaths("default").sandbox, "result.txt"), "utf-8")).toBe(
       "recovered result\n",
@@ -495,7 +496,7 @@ describe("Durable Modal manager accounting", () => {
         submittedBy: "subagent",
       },
     );
-    await manager.wait("default", job.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(
       manager.reattributeSubagentJobs("default", "child-run", "parent-session"),
     ).toBe(1);
@@ -529,8 +530,8 @@ describe("Durable Modal manager accounting", () => {
         submittedBy: "subagent",
       },
     );
-    await manager.wait("default", job.id, 3000);
-    await manager.wait("default", other.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
+    await manager.wait("default", other.id, WAIT_BUDGET_MS);
     expect(manager.reattributeSubagentJobs("default", sessionFile, "parent-session")).toBe(1);
     expect(manager.get("default", job.id).owner.sessionId).toBe("parent-session");
     expect(manager.get("default", other.id).owner.sessionId).toBe("subagent-child-b");
@@ -564,7 +565,7 @@ describe("Durable Modal manager recovery cleanup", () => {
     fake.behaviors.push({ kind: "success" });
     const manager = new DurableModalJobManager(fake.factory, store);
     await manager.recoverProject("default");
-    const terminal = await manager.wait("default", record.id, 3000);
+    const terminal = await manager.wait("default", record.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(orphan.terminated).toBe(true);
     expect(terminal.sandboxId).not.toBe(orphan.id);
@@ -596,7 +597,7 @@ describe("Durable Modal manager recovery cleanup", () => {
       { command: "work", instance: "h100", gpuFallback: ["h200"] },
       { sessionId: "s-orphan-fallback", submittedBy: "api" },
     );
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(terminal.effectiveInstance).toBe("h200");
     const first = fake.sandboxes.get("sb-1")!;
@@ -650,14 +651,14 @@ describe("Durable Modal transfer hardening", () => {
     const job = manager.submit("default", { command: "work", filesOut: ["**"] }, { sessionId: "s-reserved", submittedBy: "api" });
     // The remote command wrote into reserved roots before the success hook ran.
     const sandboxReady = async () => {
-      const deadline = Date.now() + 3000;
+      const deadline = Date.now() + WAIT_BUDGET_MS;
       while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
       return [...fake.sandboxes.values()][0]!;
     };
     const sandbox = await sandboxReady();
     sandbox.filesystem.files.set("/workspace/.pi/mcp.json", Buffer.from('{"mcpServers":{"evil":{"command":"x"}}}'));
     sandbox.filesystem.files.set("/workspace/.kady/modal/jobs/x/job.json", Buffer.from("{}"));
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(terminal.outputFiles.map((f) => f.path)).toEqual(["result.txt"]);
     expect(fs.existsSync(path.join(root(), ".pi", "mcp.json"))).toBe(false);
@@ -684,7 +685,7 @@ describe("Durable Modal transfer hardening", () => {
     }) as typeof innerCreate;
     const manager = new DurableModalJobManager(() => adapter);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt", "out/*.csv"] }, { sessionId: "s-scoped", submittedBy: "api" });
-    const terminal = await manager.wait("default", job.id, 5000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     expect(terminal.outputFiles.map((f) => f.path)).toEqual(["out/a.csv", "result.txt"]);
     expect(terminal.missingOutputs).toEqual([]);
@@ -704,7 +705,7 @@ describe("Durable Modal transfer hardening", () => {
     }) as typeof innerCreateFlip;
     const manager = new DurableModalJobManager(() => adapterFlip);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt"] }, { sessionId: "s-flip", submittedBy: "api" });
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("CHECKSUM_MISMATCH");
     expect(fs.existsSync(path.join(root(), "result.txt"))).toBe(false);
@@ -723,7 +724,7 @@ describe("Durable Modal transfer hardening", () => {
     }) as typeof innerCreateTrunc;
     const manager = new DurableModalJobManager(() => adapterTrunc);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt"] }, { sessionId: "s-trunc", submittedBy: "api" });
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("TRANSFER_TRUNCATED");
   });
@@ -745,7 +746,7 @@ describe("Durable Modal transfer hardening", () => {
     }) as typeof innerCreate;
     const manager = new DurableModalJobManager(() => adapter);
     const job = manager.submit("default", { command: "work", filesIn: ["input.txt"] }, { sessionId: "s-upload", submittedBy: "api" });
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("INPUT_CHANGED");
     expect(terminal.inputFiles[0]?.sha256).toHaveLength(64);
@@ -778,7 +779,7 @@ describe("Durable Modal transfer hardening", () => {
     }) as typeof innerCreate;
     const manager = new DurableModalJobManager(() => adapter);
     const job = manager.submit("default", { command: "work", filesIn: ["input.txt"], filesOut: ["result.txt"] }, { sessionId: "s-nopython", submittedBy: "api" });
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("succeeded");
     const skipped = manager.store.events("default", job.id).filter((event) => event.type === "verify_skipped");
     expect(skipped.map((event) => event.state)).toEqual(["preparing", "collecting"]);
@@ -791,10 +792,10 @@ describe("Durable Modal transfer hardening", () => {
     fake.behaviors.push({ kind: "success" });
     const manager = new DurableModalJobManager(fake.factory);
     const job = manager.submit("default", { command: "work", filesOut: ["result.txt", "other.txt"] }, { sessionId: "s-isdir", submittedBy: "api" });
-    const deadline = Date.now() + 3000;
+    const deadline = Date.now() + WAIT_BUDGET_MS;
     while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
     [...fake.sandboxes.values()][0]!.filesystem.files.set("/workspace/other.txt", Buffer.from("other\n"));
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.error?.code).toBe("OUTPUT_TARGET_IS_DIRECTORY");
     expect(fs.existsSync(path.join(root(), "other.txt"))).toBe(false);
@@ -821,10 +822,10 @@ describe("Durable Modal transfer hardening", () => {
       fake.behaviors.push({ kind: "success" });
       const manager = new DurableModalJobManager(fake.factory);
       const job = manager.submit("default", { command: "work", filesOut: ["result.txt", "other.txt"] }, { sessionId: "s-rollback", submittedBy: "api" });
-      const deadline = Date.now() + 3000;
+      const deadline = Date.now() + WAIT_BUDGET_MS;
       while (fake.sandboxes.size === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
       [...fake.sandboxes.values()][0]!.filesystem.files.set("/workspace/other.txt", Buffer.from("new other\n"));
-      const terminal = await manager.wait("default", job.id, 3000);
+      const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
       expect(terminal.state).toBe("failed");
       expect(fs.readFileSync(path.join(root(), "result.txt"), "utf-8")).toBe("old result\n");
       expect(fs.readFileSync(path.join(root(), "other.txt"), "utf-8")).toBe("old other\n");
@@ -842,7 +843,7 @@ describe("Durable Modal transfer hardening", () => {
     const job = manager.submit("default", { command: "work", filesIn: ["input.txt"] }, { sessionId: "s-neverran", submittedBy: "api" });
     expect(job.inputFiles[0]?.sha256).toBeUndefined();
     await manager.cancel("default", job.id);
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("cancelled");
     const [step] = readSteps("s-neverran", "default");
     expect(step.inputs[0]).toMatchObject({ path: "input.txt", confidence: terminal.runningAt ? "observed" : "inferred" });
@@ -852,7 +853,7 @@ describe("Durable Modal transfer hardening", () => {
 
 describe("Durable Modal log sync", () => {
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  async function until(check: () => boolean, ms = 3000): Promise<void> {
+  async function until(check: () => boolean, ms = WAIT_BUDGET_MS): Promise<void> {
     const deadline = Date.now() + ms;
     while (!check()) {
       if (Date.now() > deadline) throw new Error("condition not met in time");
@@ -886,7 +887,7 @@ describe("Durable Modal log sync", () => {
     remoteLog(sandbox, "6789", 6);
     await sleep(800);
     await manager.cancel("default", job.id);
-    await manager.wait("default", job.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("0123456789");
     expect(manager.store.events("default", job.id).some((event) => event.type === "log_gap")).toBe(false);
   }, 15_000);
@@ -898,7 +899,7 @@ describe("Durable Modal log sync", () => {
     remoteLog(sandbox, "6789", 6);
     await sleep(800);
     await manager.cancel("default", job.id);
-    await manager.wait("default", job.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("6789");
     const gap = manager.store.events("default", job.id).find((event) => event.type === "log_gap");
     expect(gap?.data).toMatchObject({ stream: "stdout", bytes: 6 });
@@ -914,7 +915,7 @@ describe("Durable Modal log sync", () => {
     remoteLog(sandbox, full, 0);
     await sleep(800);
     await manager.cancel("default", job.id);
-    await manager.wait("default", job.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("héllo wörld\n");
   }, 15_000);
 
@@ -928,7 +929,7 @@ describe("Durable Modal log sync", () => {
     remoteLog(sandbox, "0123", 0);
     await sleep(800);
     await manager.cancel("default", job.id);
-    await manager.wait("default", job.id, 3000);
+    await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(manager.store.readLog("default", job.id, "stdout", 0).data).toBe("0123");
   }, 15_000);
 });
@@ -954,7 +955,7 @@ describe("Durable Modal manager safety nets", () => {
     fake.behaviors.push({ kind: "failure", message: "remote exploded" });
     const manager = new DurableModalJobManager(fake.factory, new FlakyStore());
     const job = manager.submit("default", { command: "work" }, { sessionId: "s-crash", submittedBy: "api" });
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.accounting.reconciled).toBe(true);
     expect(listComputeReservations("default")).toEqual([]);
@@ -988,7 +989,7 @@ describe("Durable Modal manager safety nets", () => {
     // Restart-style recovery reattaches: the fake sandbox was already
     // terminated, so the job is marked lost and its hold reconciled.
     await manager.recoverProject("default");
-    const terminal = await manager.wait("default", job.id, 3000);
+    const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("lost");
     expect(terminal.accounting.reconciled).toBe(true);
     expect(listComputeReservations("default")).toEqual([]);

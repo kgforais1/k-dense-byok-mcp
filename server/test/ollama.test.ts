@@ -2,6 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fastify from "fastify";
+import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
 
 // GET /ollama/models: /api/tags serves the list and the architectural figure
 // (`details.context_length`) inline, and one unawaited /api/ps call follows
@@ -72,7 +73,7 @@ describe("GET /ollama/models", () => {
     app: Pick<Awaited<ReturnType<typeof buildRoutes>>, "inject">,
     predicate: (models: { context_length: number }[]) => boolean,
   ): Promise<{ available: boolean; models: { context_length: number }[] }> {
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + WAIT_BUDGET_MS;
     for (;;) {
       const body = (await app.inject({ url: "/ollama/models" })).json();
       if (predicate(body.models)) return body;
@@ -318,7 +319,7 @@ describe("GET /ollama/models", () => {
     // open, so it would repopulate them even if the probe had wiped the
     // cache. "a failed loaded-probe clears nothing" in local-context.test.ts
     // is what actually guards the cache.
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + WAIT_BUDGET_MS;
     while (!requestedPaths.includes("/api/ps") && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -352,7 +353,7 @@ describe("GET /ollama/models", () => {
     const app = await buildRoutes(baseUrl);
 
     await app.inject({ url: "/ollama/models" });
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + WAIT_BUDGET_MS;
     while (!requestedPaths.includes("/api/ps") && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
     }

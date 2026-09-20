@@ -13,6 +13,7 @@ import { approvedBatchDir, approvedInputRoot } from "../src/modal/approved.ts";
 import { modalJobFiles } from "../src/modal/store.ts";
 import { summarizeRobustness, type RobustnessDraft, type RobustnessPreview } from "../../web/src/lib/notebook-robustness.ts";
 import { RobustnessFakeModal } from "./helpers/robustness-modal.ts";
+import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
 
 const source = { sessionId: "science", entryId: "h" };
 const draft: RobustnessDraft = { title: "Normalization sensitivity", script: "analysis.py", inputs: ["data.csv"], metric: "difference", unit: "score", nullValue: 0, instance: "cpu-2", timeoutSec: 600, packages: [], specifications: [
@@ -44,20 +45,15 @@ afterEach(async () => { await manager.cancelProject(project); service.dispose();
 const prepare = (value = draft) => service.preview(project, source, { draft: value, planId, expectedPlanHead: head });
 const consent = (p: RobustnessPreview) => ({ digest: p.digest, approveRemote: true, reviewedScript: true, acknowledgeEstimates: true, acknowledgeUnverifiedPlanData: true, maxEstimatedUsd: p.totalReservationUsd });
 const approve = (p: RobustnessPreview) => service.approve(project, source, p.id, consent(p));
-const wait = async (p: RobustnessPreview) => { await Promise.all(p.jobs.map((j) => manager.wait(project, j.jobId, 5000))); return service.get(project, source, p.id); };
+const wait = async (p: RobustnessPreview) => { await Promise.all(p.jobs.map((j) => manager.wait(project, j.jobId, WAIT_BUDGET_MS))); return service.get(project, source, p.id); };
 
 // Every test here drives real jobs through the durable manager over a real
 // temp filesystem, and Windows CI runs it roughly three times slower than a
 // developer machine: the median test measured 1.1s there against 0.3s here.
-// Against vitest's 5s default that leaves no room for the runner to stall, and
-// it has repeatedly failed whichever test the stall happened to land on —
-// three different tests across four runs, each of them passing in about a
-// second on the runs either side. The per-operation cost is addressed in
-// `manager.wait`, which now wakes on the worker finishing rather than on a
-// fixed 250ms tick; this raises the budget for the contention that is left.
-// It is deliberately file-scoped: the 5s default is the right one to keep
-// everywhere a test is not doing this much I/O.
-vi.setConfig({ testTimeout: 20_000 });
+// This file used to raise `testTimeout` on its own for that reason. It no
+// longer needs to: the same slowness turned out to reach the rest of the
+// backend suite too, so the budget moved to `vitest.config.ts` and the waits
+// here take `WAIT_BUDGET_MS` from `test/helpers/timing.ts`.
 
 describe("bounded robustness workflows", () => {
   it("previews exact snapshots and quotes without admitting work or reserving money", async () => {
@@ -197,7 +193,7 @@ describe("bounded robustness workflows", () => {
     noSchedule.mockRestore(); service.dispose();
     manager = new DurableModalJobManager(fake.factory); service = new NotebookRobustnessService(manager, () => true);
     await manager.recoverProject(project); await service.recoverAll();
-    await manager.wait(project, p.jobs[1].jobId, 5000);
+    await manager.wait(project, p.jobs[1].jobId, WAIT_BUDGET_MS);
     const result = service.get(project, source, p.id);
     expect(result.attempts[0].state).toBe("record-unavailable"); expect(result.attempts[0].result).toBeUndefined();
     expect(listComputeReservations(project).map((r) => r.id)).toContain(p.jobs[0].jobId);

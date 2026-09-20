@@ -1,5 +1,33 @@
 # Maintenance Log
 
+### 2026-09-20 — Real-time waits across the backend suite (PR #42)
+
+- **Category:** CI / test infrastructure
+- **Summary:** PR #38 fixed two named files and called the Windows flake
+  closed. It was not: the condition is that a Windows runner intermittently
+  runs about three times slow, and every wait written as a fixed budget is
+  exposed to it, so the flake simply moved. PR #41's run `35515576893` lost 27
+  tests across `steer-abort.test.ts` and `session-observer.test.ts` on a
+  commit that touched no server runtime code. The two failed differently and
+  that distinction drove the fix. `steer-abort` timed out, which a bigger
+  budget solves. `session-observer` asserted `running` where it wanted
+  `complete` after a flat 250ms sleep, which no budget solves — the test has
+  to poll. `server/test/helpers/timing.ts` now holds `waitFor` (polling, on a
+  10s ceiling), `quietFor` (a fixed delay, for the negative assertions that
+  cannot be polled for) and `WAIT_BUDGET_MS` for blocking calls that take a
+  deadline. Every positive assertion behind a sleep in the backend suite now
+  polls, and `testTimeout` moved to 30s in `vitest.config.ts`.
+- **Evidence:** Server suite 1438 passed / 5 skipped, backend lint and
+  typecheck clean, `ratchet:check: ok (cap 1467)`.
+- **Why the budgets are generous:** a wait ceiling is a hang detector, not a
+  performance target. A satisfied condition returns on the first poll, so only
+  a test that was going to fail pays the ceiling. The 5s default bought
+  nothing and cost real flakes.
+- **Removed:** the file-scoped `vi.setConfig({ testTimeout: 20_000 })` in
+  `notebook-robustness.test.ts`, whose comment claimed the 5s default was
+  right everywhere else. That reading is what kept the scope too narrow the
+  first time.
+
 ### 2026-09-19 — Windows CI test timeouts fixed (PR #38)
 
 - **Category:** CI / test infrastructure

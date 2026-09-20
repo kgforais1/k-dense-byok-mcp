@@ -143,38 +143,7 @@ project scoping, cancellation, tool policy, and accounting.
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
 
-## 5. Three OpenRouter catalogue models do not survive a session restore
-
-The same shape as the local-model fallback fixed in PR #39, on a different
-provider and much narrower. `persistedModel` hands every non-local ref to
-`runtime.getModel`, and Pi's registry does not carry every id in the
-OpenRouter catalogue (`web/src/data/models.json`). A session pinned to one of
-the missing ones restores as the configured default instead.
-
-Measured 2026-09-19 against the real runtime, resolving each catalogue row and
-asking `getModel(model.provider, model.id)` with the pair a transcript would
-actually persist: **3 of 170** are missing, all `:batch` variants —
-`z-ai/glm-5.2:batch`, `z-ai/glm-5.3:batch`,
-`deepseek/deepseek-v4-flash-vision-exp:batch`. The other 167 resolve.
-
-Milder than the local case: the swap is cloud-to-cloud, so it is a different
-model at a different price rather than an unasked-for provider getting the
-bill. Still wrong — the user picked a model and silently got another.
-
-The fix is not simply widening `isLocalProvider`. `resolveModel`'s OpenRouter
-branch ends `registry.find(...) ?? buildOpenRouterModel(orId)`, and
-`buildOpenRouterModel` prices an id the catalogue does not know at **$0**
-(`models.ts:131`) — and a payg model synthesized at $0 bypasses the project
-spend cap, which is the hazard `resolveModel` already refuses for direct
-providers. So any restore path that synthesizes an OpenRouter model must
-require `catalogueEntryFor(orId)` to return an entry first, and keep
-returning `undefined` otherwise. That is the whole of the work, plus a test
-per branch.
-
-Found by a `cursor/composer-2.5` review of PR #39, which flagged it as a
-suspicion and out of scope; the counts above are from checking it.
-
-## 6. A subagent on a local model cannot see the discovered context window
+## 5. A subagent on a local model cannot see the discovered context window
 
 `local-context.ts` holds the discovered figures in a module-level `Map`, which
 lives in the backend process. A subagent child runs in pi-subagents' detached
@@ -196,7 +165,7 @@ carrying the wrong *window*.
 
 Found by muse-spark-1.3 reviewing PR #35.
 
-## 7. Ollama's architectural context figure is undocumented
+## 6. Ollama's architectural context figure is undocumented
 
 `/api/tags` → `details.context_length` is what PR #35 reads for a model's
 architectural maximum, and Ollama does not document it. The documented

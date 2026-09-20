@@ -23,6 +23,18 @@
   performance target. A satisfied condition returns on the first poll, so only
   a test that was going to fail pays the ceiling. The 5s default bought
   nothing and cost real flakes.
+- **Two backlog decisions recorded in the same PR**, both from `dev-docs/todo.md`.
+  The subagent context-window gap is **accepted as a documented limitation**
+  rather than fixed: `subagent-bridge.ts` pins a child to a model id string and
+  the window is resolved in the child's own process, so seeding it is not a
+  parameter we already have a slot for, and the over-declaration only bites a
+  child pinned to a local model whose loaded window is genuinely small — a case
+  where the lead usually fails first. It is now in
+  `docs/limitations.md#sub-agents`. Ollama's undocumented
+  `details.context_length` **stays the primary source**, with an `/api/show`
+  fallback to build for rows that lack it; switching outright would cost a call
+  per model against a two-call budget that `test/ollama.test.ts` guards.
+
 - **Removed:** the file-scoped `vi.setConfig({ testTimeout: 20_000 })` in
   `notebook-robustness.test.ts`, whose comment claimed the 5s default was
   right everywhere else. That reading is what kept the scope too narrow the

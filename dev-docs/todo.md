@@ -143,7 +143,48 @@ project scoping, cancellation, tool policy, and accounting.
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
 
-## 5. A subagent on a local model cannot see the discovered context window
+## 5. Timing-sensitive backend tests still fail on a loaded Windows runner
+
+PR #38 fixed two named files — `server/test/notebook-robustness.test.ts` and
+`web/src/components/pdf-viewer/pdfjs-integration.test.ts` — and both have been
+green since. That scope was too narrow. The underlying condition is that
+Windows CI runners intermittently run about three times slow, and *any* test
+leaning on a real timer is exposed.
+
+Observed 2026-09-20 on PR #41, run `35515576893` attempt 1, backend
+windows-latest only:
+
+- `test/steer-abort.test.ts` — 18 of 28 failed. The root failure is one
+  `Test timed out in 5000ms` at `steer-abort.test.ts:328`; the other 17 are
+  1ms cascades behind it.
+- `test/session-observer.test.ts` — 9 of 9 failed, and this one is the more
+  informative. It fails `expected 'running' to be 'complete'`, an async race
+  where the observer had not settled the run before the assertion, not a
+  timeout at all.
+
+The runner was badly loaded: 208s total with 114s of that in `import`, against
+~75s of actual test time. Both files pass locally in 4.33s together, and the
+attempt-2 rerun of the identical commit was green, so this is load, not logic.
+The commit under test touched no server runtime code.
+
+Between them the two files hold 11 real timer/wait constructs
+(`grep -cE "setTimeout|await new Promise|vi.waitFor"`). Two candidate fixes,
+and they are not equivalent:
+
+- Raise `testTimeout` for the timing-sensitive backend files, as
+  `notebook-robustness.test.ts` already does via `vi.setConfig`. Cheap, and
+  honest about the work being slow — but it does nothing for
+  `session-observer.test.ts`, which fails an assertion rather than a timeout.
+- Replace the real waits with `vi.waitFor`, so a test polls for the state it
+  needs instead of assuming it has arrived. Fixes both shapes, and is the only
+  one that addresses the race. More work per call site.
+
+Prefer the second for the race, and fall back to the first only where the work
+is genuinely slow rather than genuinely racy. Whichever is chosen, look for the
+same shape in the rest of the backend suite rather than fixing only the two
+files named above — that narrow approach is what left this open.
+
+## 6. A subagent on a local model cannot see the discovered context window
 
 `local-context.ts` holds the discovered figures in a module-level `Map`, which
 lives in the backend process. A subagent child runs in pi-subagents' detached
@@ -165,7 +206,7 @@ carrying the wrong *window*.
 
 Found by muse-spark-1.3 reviewing PR #35.
 
-## 6. Ollama's architectural context figure is undocumented
+## 7. Ollama's architectural context figure is undocumented
 
 `/api/tags` → `details.context_length` is what PR #35 reads for a model's
 architectural maximum, and Ollama does not document it. The documented

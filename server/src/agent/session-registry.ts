@@ -23,7 +23,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
 import { getMcpTools } from "./mcp.ts";
-import { defaultModel, isLocalProvider, resolveModel, setupModelRuntime } from "./models.ts";
+import { catalogueEntryFor, defaultModel, isLocalProvider, resolveModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
 import {
   forgetHeadlessSession,
@@ -507,6 +507,22 @@ export async function latestProjectModel(
  * the run then fails on reachability, naming the model the session actually
  * chose, instead of quietly succeeding against a different provider's bill.
  *
+ * The same gap exists on OpenRouter, narrowly. Pi's registry does not carry
+ * every row of the catalogue in `web/src/data/models.json`: measured
+ * 2026-09-19, 3 of 170 were missing, all `:batch` variants. A session pinned
+ * to one of those restored as the configured default instead — a different
+ * model at a different price than the one the user picked. Which ids are
+ * missing moves as Pi and the catalogue change, so the count is a measurement
+ * rather than a list to maintain; the branch below is keyed on the registry
+ * missing an entry, not on any id.
+ *
+ * Repaired only for OpenRouter, and only for an id the catalogue knows.
+ * `buildOpenRouterModel` prices an id the catalogue has never heard of at $0
+ * (`models.ts:131`), and a payg model synthesized at $0 accrues nothing
+ * against the project spend cap — which is the hazard `resolveModel` already
+ * refuses for direct providers. Without the catalogue gate this would trade a
+ * wrong-model bug for a no-spend-cap bug.
+ *
  * Exported, with both callers, so the tests can pin each restore path rather
  * than only this helper: reverting one call site and not the other leaves a
  * real hole — a reopened session on one, and a new session inheriting from a
@@ -518,7 +534,17 @@ export function persistedModel(
   provider: string,
   modelId: string,
 ): Model<Api> | undefined {
-  if (!isLocalProvider(provider)) return runtime.getModel(provider, modelId);
+  if (!isLocalProvider(provider)) {
+    const fromRuntime = runtime.getModel(provider, modelId);
+    if (fromRuntime) return fromRuntime;
+    if (provider !== "openrouter") return undefined;
+    if (!catalogueEntryFor(modelId)) return undefined;
+    try {
+      return resolveModel(`openrouter/${modelId}`, registry);
+    } catch {
+      return undefined;
+    }
+  }
   if (!modelId.trim()) return undefined;
   try {
     return resolveModel(`${provider}/${modelId}`, registry);

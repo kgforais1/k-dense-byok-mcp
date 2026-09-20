@@ -13,7 +13,7 @@ import { approvedBatchDir, approvedInputRoot } from "../src/modal/approved.ts";
 import { modalJobFiles } from "../src/modal/store.ts";
 import { summarizeRobustness, type RobustnessDraft, type RobustnessPreview } from "../../web/src/lib/notebook-robustness.ts";
 import { RobustnessFakeModal } from "./helpers/robustness-modal.ts";
-import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
+import { WAIT_BUDGET_MS, waitFor } from "./helpers/timing.ts";
 
 const source = { sessionId: "science", entryId: "h" };
 const draft: RobustnessDraft = { title: "Normalization sensitivity", script: "analysis.py", inputs: ["data.csv"], metric: "difference", unit: "score", nullValue: 0, instance: "cpu-2", timeoutSec: 600, packages: [], specifications: [
@@ -147,7 +147,7 @@ describe("bounded robustness workflows", () => {
   });
   it("cancels all remaining managed attempts and forbids direct retries", async () => {
     fake.behaviors = { baseline: "hang", adjusted: "hang" }; const p = await prepare(); await approve(p);
-    await vi.waitFor(() => expect(fake.executions).toBe(2));
+    await waitFor(() => expect(fake.executions).toBe(2));
     const w = await service.cancel(project, source, p.id);
     expect(w.cancelled).toBe(true); expect(w.attempts.every((a) => a.state === "cancelled")).toBe(true);
     expect(listComputeReservations(project)).toEqual([]);

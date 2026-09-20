@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthInteraction } from "@earendil-works/pi-ai";
+import { waitFor } from "./helpers/timing.ts";
 import {
   ProviderAuthError,
   ProviderAuthManager,
@@ -171,7 +172,7 @@ describe("ProviderAuthManager", () => {
 
     await expect(auth.start("xai")).rejects.toBeInstanceOf(ProviderAuthError);
     releaseLogin();
-    await vi.waitFor(() => expect(runtime.logout).toHaveBeenCalledWith("xai"));
+    await waitFor(() => expect(runtime.logout).toHaveBeenCalledWith("xai"));
 
     const restarted = await auth.start("xai");
     expect(restarted.providerId).toBe("xai");

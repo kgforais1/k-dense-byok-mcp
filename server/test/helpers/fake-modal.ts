@@ -95,9 +95,12 @@ export class FakeFilesystem implements ModalRemoteFilesystem {
   }
 
   async readText(remotePath: string): Promise<string> {
-    this.readCounts.set(remotePath, this.reads(remotePath) + 1);
     const value = this.files.get(remotePath);
+    // Tallied only on the way out, so the count means "a read that saw this
+    // file" rather than "a read that asked for it". A caller waiting on the
+    // count is waiting for content, and a miss carries none.
     if (!value) throw new Error(`not found: ${remotePath}`);
+    this.readCounts.set(remotePath, this.reads(remotePath) + 1);
     return value.toString("utf-8");
   }
 

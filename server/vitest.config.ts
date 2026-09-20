@@ -16,8 +16,11 @@ export default defineConfig({
     // The 5s default bought nothing and cost real flakes — Windows runners
     // intermittently run about three times slow, and `steer-abort.test.ts`
     // hit 5000ms on a loaded one while passing in 4.33s locally. Set well
-    // above `WAIT_BUDGET_MS` in `test/helpers/timing.ts`, so a test that
-    // waits and waits again still fails on its own wait rather than here.
+    // above `WAIT_BUDGET_MS` in `test/helpers/timing.ts`, so a test with a
+    // single wait fails on that wait — which names the condition that never
+    // held — rather than here, which names nothing. Ceilings do stack: a test
+    // that waits several times over can still exhaust this one first and
+    // report a timeout instead. That costs diagnostic quality, not a pass.
     testTimeout: 30_000,
     hookTimeout: 30_000,
     coverage: {

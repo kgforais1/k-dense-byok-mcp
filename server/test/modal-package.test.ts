@@ -474,7 +474,7 @@ describe("kady-modal child package over the real HTTP API", () => {
     const jobId = modalJobManager.store.list("default")[0].id;
     expect(outcome.details).toMatchObject({ error: "ABORTED", job_id: jobId });
 
-    const job = await modalJobManager.wait("default", jobId, 3000);
+    const job = await modalJobManager.wait("default", jobId, WAIT_BUDGET_MS);
     expect(job.state).toBe("cancelled");
   });
 

@@ -15,6 +15,8 @@
  *   verify [ladder]         run the verification ladder: fast | server | web | docs | all (default: fast)
  *   handoff:check           validate dev-docs/handoffs/active/ files for schema and branch consistency
  *   release:check           check server/package.json version and CHANGELOG.md structure
+ *   ratchet:sync            recompute and lower the max-lines ratchet in server/.ratchets.json
+ *   ratchet:check           fail when the stored max-lines ratchet is above the recomputed value
  *   work:plan --slug ...    scaffold a new plan under dev-docs/plans/ (refuses to overwrite)
  *   work:handoff --plan ... scaffold a new active handoff (refuses to overwrite)
  *   work:maintenance --pr ... scaffold a new maintenance-log entry (refuses to overwrite)
@@ -324,6 +326,8 @@ const VERIFY_LADDERS = {
             "repo:map",
             "handoff:check",
             "release:check",
+            "ratchet:sync",
+            "ratchet:check",
             "work:plan",
             "work:handoff",
             "work:maintenance",
@@ -817,6 +821,141 @@ export function checkRelease() {
 }
 
 // --------------------------------------------------------------------------
+// ratchet:sync / ratchet:check
+// --------------------------------------------------------------------------
+//
+// Scope limit: only max-lines is ratcheted this cheaply. `complexity` and
+// `max-lines-per-function` need ESLint's own AST analysis, not a line count,
+// so they stay manual.
+
+/**
+ * Compute the next allowed max-lines cap.
+ *
+ * Policy (in order of application):
+ *   1. `min(currentCap, ...)` — the cap never rises.
+ *   2. `max(worstFileLines, floor)` — it tracks the worst file down, but
+ *      never below the floor.
+ *
+ * ESLint enforces `max-lines` strictly greater than the limit, so the worst
+ * file passes at its own size.
+ */
+export function nextMaxLines(currentCap, worstFileLines, floor) {
+  return Math.min(currentCap, Math.max(worstFileLines, floor));
+}
+
+const RATCHETS_PATH = path.join(REPO_ROOT, "server", ".ratchets.json");
+
+/** Load and return the stored ratchet object. */
+function loadRatchets() {
+  return JSON.parse(readText(RATCHETS_PATH));
+}
+
+/** Save the ratchet object back to disk. */
+function saveRatchets(ratchets) {
+  fs.writeFileSync(RATCHETS_PATH, JSON.stringify(ratchets, null, 2) + "\n");
+}
+
+/**
+ * Physical lines, counted the way ESLint's `max-lines` counts them.
+ *
+ * A trailing newline terminates the last line, it does not start a new empty
+ * one — so `split("\n").length` is one too many for the newline-terminated
+ * files that make up this tree. Measured: `manager.ts` is 1467 to both ESLint
+ * and `wc -l`, and 1468 to a naive split. Overcounting by one would set the
+ * cap a line looser than the worst file, quietly defeating the "exactly at the
+ * worst offender" rule the config comment insists on.
+ */
+function countFileLines(filePath) {
+  const text = readText(filePath);
+  if (text === "") return 0;
+  const lines = text.split("\n").length;
+  return text.endsWith("\n") ? lines - 1 : lines;
+}
+
+/**
+ * Scan `.ts` files under `server/src/` and `server/test/`, skipping
+ * `dist`, `node_modules`, `coverage`, and `src/helpers/.venv`.
+ * Returns `{ file, lines }` for the worst offender, or null when no files.
+ */
+function findWorstFile() {
+  const scanRoots = [
+    path.join(REPO_ROOT, "server", "src"),
+    path.join(REPO_ROOT, "server", "test"),
+  ];
+  const skipDirs = new Set(["dist", "node_modules", "coverage", ".venv"]);
+  let worst = null;
+
+  // Walk to any depth. A hand-unrolled fixed depth silently stops counting
+  // below it, and a file the scan cannot see is one the cap can be lowered
+  // underneath — which turns into a lint failure nobody asked for.
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!skipDirs.has(entry.name)) walk(full);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        const lines = countFileLines(full);
+        if (!worst || lines > worst.lines) worst = { file: full, lines };
+      }
+    }
+  };
+
+  for (const root of scanRoots) {
+    if (exists(root)) walk(root);
+  }
+  return worst;
+}
+
+/**
+ * Recompute the max-lines ratchet and write it when it would go down.
+ * Returns `{ changed, previous, next, worstFile, worstLines }`.
+ */
+export function ratchetSync() {
+  const stored = loadRatchets();
+  const currentCap = stored.maxLines;
+  const floor = stored.floor;
+  const worst = findWorstFile();
+  const worstLines = worst ? worst.lines : 0;
+  const next = nextMaxLines(currentCap, worstLines, floor);
+  const changed = next < currentCap;
+
+  if (changed) {
+    saveRatchets({ maxLines: next, floor });
+  }
+
+  return {
+    changed,
+    previous: currentCap,
+    next,
+    worstFile: worst ? rel(worst.file) : null,
+    worstLines,
+  };
+}
+
+/**
+ * Return whether the stored ratchet matches what sync would produce.
+ * Also returns the recomputed values for messaging.
+ */
+export function ratchetCheck() {
+  const stored = loadRatchets();
+  const currentCap = stored.maxLines;
+  const floor = stored.floor;
+  const worst = findWorstFile();
+  const worstLines = worst ? worst.lines : 0;
+  const expected = nextMaxLines(currentCap, worstLines, floor);
+  const outOfDate = expected < currentCap;
+
+  return {
+    outOfDate,
+    stored: currentCap,
+    expected,
+    floor,
+    worstFile: worst ? rel(worst.file) : null,
+    worstLines,
+  };
+}
+
+// --------------------------------------------------------------------------
 // work:* scaffolders
 // --------------------------------------------------------------------------
 
@@ -1137,6 +1276,8 @@ Subcommands:
                           Default: fast. (npm run docs:check aliases verify -- docs.)
   handoff:check           Validate dev-docs/handoffs/active/ files.
   release:check           Check server/package.json version and CHANGELOG.md structure.
+  ratchet:sync            Recompute and lower the max-lines ratchet in server/.ratchets.json.
+  ratchet:check           Fail when the stored max-lines ratchet is above the recomputed value.
   work:plan --slug <s>    Scaffold a new plan under dev-docs/plans/ (refuses overwrite).
   work:handoff --plan <p> Scaffold a new active handoff (refuses overwrite).
                           Optional: --slug <s>, --branch <name> (default: current).
@@ -1209,6 +1350,35 @@ function cmdReleaseCheck() {
   return 1;
 }
 
+function cmdRatchetSync() {
+  const result = ratchetSync();
+  if (result.changed) {
+    process.stdout.write(
+      `ratchet:sync: lowered max-lines from ${result.previous} to ${result.next} ` +
+        `(worst file: ${result.worstFile}, ${result.worstLines} lines)\n`,
+    );
+    return 0;
+  }
+  process.stdout.write(
+    `ratchet:sync: no change (cap ${result.previous}, worst ${result.worstLines} lines)\n`,
+  );
+  return 0;
+}
+
+function cmdRatchetCheck() {
+  const result = ratchetCheck();
+  if (!result.outOfDate) {
+    process.stdout.write(`ratchet:check: ok (cap ${result.stored})\n`);
+    return 0;
+  }
+  process.stderr.write(
+    `ratchet:check: stored max-lines ${result.stored} is above recomputed ${result.expected} ` +
+      `(worst file: ${result.worstFile}, ${result.worstLines} lines, floor ${result.floor})\n`,
+  );
+  process.stderr.write(`Run: npm run ratchet:sync\n`);
+  return 1;
+}
+
 function cmdWorkPlan(rest) {
   try {
     const target = scaffoldPlan({
@@ -1259,6 +1429,8 @@ const COMMANDS = {
   verify: cmdVerify,
   "handoff:check": cmdHandoffCheck,
   "release:check": cmdReleaseCheck,
+  "ratchet:sync": cmdRatchetSync,
+  "ratchet:check": cmdRatchetCheck,
   "work:plan": cmdWorkPlan,
   "work:handoff": cmdWorkHandoff,
   "work:maintenance": cmdWorkMaintenance,

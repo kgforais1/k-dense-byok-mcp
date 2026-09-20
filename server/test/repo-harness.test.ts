@@ -10,6 +10,8 @@ import {
   checkHandoffs,
   checkRelease,
   loadManifest,
+  nextMaxLines,
+  ratchetCheck,
   runVerify,
   scaffoldHandoff,
   scaffoldMaintenance,
@@ -18,6 +20,7 @@ import {
 import { commandDiagnostics } from "./helpers/command-diagnostics";
 
 const REPO_ROOT = path.resolve(path.dirname(MANIFEST_PATH), "..");
+const RATCHETS_FILE = path.join(REPO_ROOT, "server", ".ratchets.json");
 
 function freshDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -521,6 +524,57 @@ describe("checkRelease", () => {
   it("returns no errors for the current repository state", () => {
     const result = checkRelease();
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("nextMaxLines", () => {
+  // Table: [currentCap, worstFileLines, floor, expected]
+  const cases = [
+    [1467, 1467, 750, 1467],
+    [1467, 1402, 750, 1402],
+    [1467, 600, 750, 750],
+    [750, 400, 750, 750],
+    [1467, 1500, 750, 1467],
+  ];
+  for (const [cap, worst, floor, expected] of cases) {
+    it(`nextMaxLines(${cap}, ${worst}, ${floor}) === ${expected}`, () => {
+      expect(nextMaxLines(cap, worst, floor)).toBe(expected);
+    });
+  }
+});
+
+describe("the ratchet against this repository", () => {
+  // Read-only on purpose. An earlier version of this called `ratchetSync()`,
+  // which writes `.ratchets.json` — a test that edits checked-in config, and
+  // one that proved nothing, since it then compared the file against the value
+  // it had just written.
+  it("stores a cap that is in sync, and does not move it to find out", () => {
+    const before = fs.readFileSync(RATCHETS_FILE, "utf8");
+
+    const result = ratchetCheck();
+
+    expect(result.outOfDate).toBe(false);
+    expect(result.stored).toBe(result.expected);
+    expect(fs.readFileSync(RATCHETS_FILE, "utf8")).toBe(before);
+  });
+
+  it("counts lines the way ESLint does", () => {
+    // The assertion that matters. `split("\n").length` overcounts a
+    // newline-terminated file by one, and `min(cap, ...)` hides that for as
+    // long as the cap is already at or below the true worst — so a sync test
+    // alone passes while the count is wrong, and the error only surfaces later
+    // as a cap set one line looser than the worst file.
+    const result = ratchetCheck();
+    expect(result.worstFile).toBeTruthy();
+
+    const text = fs.readFileSync(path.join(REPO_ROOT, result.worstFile!), "utf8");
+    const newlineTerminatedLines = text.endsWith("\n")
+      ? text.split("\n").length - 1
+      : text.split("\n").length;
+
+    expect(result.worstLines).toBe(newlineTerminatedLines);
+    // And the stored cap sits exactly at it, which is the config's stated rule.
+    expect(result.stored).toBe(result.worstLines);
   });
 });
 

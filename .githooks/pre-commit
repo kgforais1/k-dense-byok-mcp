@@ -1,0 +1,30 @@
+#!/bin/sh
+# Auto-sync the max-lines ratchet before each commit.
+# If the cap was lowered, stage server/.ratchets.json so it lands in the
+# commit. Never blocks the commit.
+#
+# Resolve the repo root from git so this works regardless of the working
+# directory.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+RATCHETS="$REPO_ROOT/server/.ratchets.json"
+
+read_maxlines() {
+  node -e 'const fs=require("fs");const p=process.argv[1];try{const j=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(String(j.maxLines));}catch(e){}' "$1"
+}
+
+PREV="$(read_maxlines "$RATCHETS")"
+
+cd "$REPO_ROOT" && node scripts/repo.mjs ratchet:sync >/dev/null
+
+if [ -f "$RATCHETS" ]; then
+  NEXT="$(read_maxlines "$RATCHETS")"
+  if [ "$NEXT" != "$PREV" ]; then
+    echo >&2 "ratchet:sync lowered max-lines from $PREV to $NEXT; staging $RATCHETS"
+    git add -- "$RATCHETS"
+  fi
+  # Silent when nothing moved: a hook that speaks on every commit gets tuned
+  # out, and then it is not heard on the commit where it matters.
+fi
+
+exit 0

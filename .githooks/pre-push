@@ -12,6 +12,11 @@ url="$2"
 case "$url" in
   *github.com/kgforais1/k-dense-byok-mcp|*github.com/kgforais1/k-dense-byok-mcp.git|\
 *github.com:kgforais1/k-dense-byok-mcp|*github.com:kgforais1/k-dense-byok-mcp.git)
+    # Fork guard passed. A stale max-lines cap must not ride along with the
+    # push, so check it here — the only path that lets a push through.
+    repo_root="$(git rev-parse --show-toplevel)" || exit 1
+    cd "$repo_root" || exit 1
+    node scripts/repo.mjs ratchet:check || exit 1
     exit 0
     ;;
 esac

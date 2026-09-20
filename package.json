@@ -10,6 +10,8 @@
     "docs:check": "npm run verify -- docs",
     "handoff:check": "node scripts/repo.mjs handoff:check",
     "release:check": "node scripts/repo.mjs release:check",
+    "ratchet:sync": "node scripts/repo.mjs ratchet:sync",
+    "ratchet:check": "node scripts/repo.mjs ratchet:check",
     "work:plan": "node scripts/repo.mjs work:plan",
     "work:handoff": "node scripts/repo.mjs work:handoff",
     "work:maintenance": "node scripts/repo.mjs work:maintenance"

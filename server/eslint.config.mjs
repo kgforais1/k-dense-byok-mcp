@@ -1,4 +1,5 @@
 import tseslint from "typescript-eslint";
+import ratchets from "./.ratchets.json" with { type: "json" };
 
 /**
  * Backend lint configuration.
@@ -12,6 +13,12 @@ import tseslint from "typescript-eslint";
  * new code from getting worse, not to claim the tree is already clean. Bringing
  * them down is tracked in
  * `dev-docs/plans/2026-09-08-repo-quality-gates.md`.
+ *
+ * The `max-lines` cap is maintained by `npm run ratchet:sync`. Its value lives
+ * in `server/.ratchets.json` (key `maxLines`, floor `floor`). It only ever
+ * moves down and stops at the floor. Re-measure after touching the worst file:
+ * this config's own lint fix deleted a dead import from `manager.ts` and moved
+ * the number.
  */
 export default tseslint.config(
   {
@@ -52,7 +59,8 @@ export default tseslint.config(
 
       // Ceilings, not targets, set at exactly the current worst offender:
       // complexity 62 (`agent/notebook-export.ts` is now exempted per-function;
-      // see the FORK notes there), 1467 lines (`modal/manager.ts`, grown by the
+      // see the FORK notes there), the ratcheted `max-lines` cap (stored in
+      // `.ratchets.json`, currently 1467 — `modal/manager.ts`, grown by the
       // upstream v0.10.0 hardening series), and a 672-line function
       // (`api/sandbox.ts`, grown by merged routes). Re-measure after touching
       // those files: this config's own lint fix deleted a dead import from
@@ -79,7 +87,7 @@ export default tseslint.config(
       // keeps the number honest, and this codebase should never be discouraged
       // from adding a comment.
       complexity: ["error", 62],
-      "max-lines": ["error", 1467],
+      "max-lines": ["error", ratchets.maxLines],
       "max-lines-per-function": ["error", 672],
     },
   },

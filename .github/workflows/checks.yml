@@ -67,6 +67,11 @@ jobs:
           }
 
           const hasHeading = body.includes("## PR closing checklist");
+          // An actual checkbox line is the one signal that is hard to produce
+          // by accident. Without it, a body that merely *discusses* the
+          // checklist ("I skipped the PR closing checklist because
+          // npm run verify -- docs fails") satisfied the gate.
+          const hasCheckbox = /^\s*- \[[ xX]\]/m.test(body);
           // A couple of the most distinctive items from the template. Be
           // pragmatic: items get reworded, so we only require enough to prove
           // the checklist was intentionally included rather than mentioned in
@@ -78,7 +83,7 @@ jobs:
             "npm run verify -- docs",
           ].some((phrase) => body.includes(phrase));
 
-          if (!hasHeading || !hasItems) {
+          if (!hasHeading || !hasItems || !hasCheckbox) {
             console.error("FAIL: PR body is missing the closing checklist.");
             console.error(
               "`gh pr create --body` discards the PR template. Copy the closing " +

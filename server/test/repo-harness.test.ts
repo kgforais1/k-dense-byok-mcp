@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_PATH,
@@ -580,6 +580,21 @@ describe("the ratchet against this repository", () => {
     expect(worst.startsWith("server/")).toBe(true);
   });
 
+  it("measures the index, not the working tree", () => {
+    // Found by a kimi-k3 review. The pre-commit hook lowers the cap from this
+    // number and the commit contains the index, so reading from disk let an
+    // unstaged shrink lower the cap while the committed file was still long —
+    // CI then failed lint on a file nobody touched in that commit.
+    const worst = ratchetCheck().worstFile!;
+    const fromIndex = execFileSync("git", ["grep", "--cached", "-I", "-c", "", "--", worst], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+    const indexLines = Number(fromIndex.trim().split(":").pop());
+
+    expect(ratchetCheck().worstLines).toBe(indexLines);
+  });
+
   it("counts lines the way ESLint does", () => {
     // The assertion that matters. `split("\n").length` overcounts a
     // newline-terminated file by one, and `min(cap, ...)` hides that for as
@@ -737,6 +752,57 @@ describe("changelogDuplicateCategoryIssues", () => {
       "```",
     ].join("\n");
     expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("ignores a ~~~ fence, not only a backtick one", () => {
+    // Found by a kimi-k3 review. CommonMark allows both, and only backticks
+    // were blanked — so a tilde-fenced example invented a duplicate and would
+    // have blocked a legitimate PR.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "~~~",
+      "### Fixed",
+      "~~~",
+      "",
+      "### Fixed",
+      "- the only real one",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("treats a marker of the other kind inside a fence as content", () => {
+    // A fence closes only on its own marker.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "~~~",
+      "### Fixed",
+      "```",
+      "~~~",
+      "",
+      "### Fixed",
+      "- the only real one",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("reports an unclosed fence rather than going quiet", () => {
+    // The worse half of the two failure modes: an unclosed fence blanked the
+    // rest of the file, so a real duplicate after it passed silently.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "```",
+      "### Fixed",
+      "- a",
+      "",
+      "### Fixed",
+      "- b",
+    ].join("\n");
+    const issues = changelogDuplicateCategoryIssues(text);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("unclosed code fence");
   });
 
   it("returns no errors for the repository's actual CHANGELOG.md", () => {

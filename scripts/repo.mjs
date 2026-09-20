@@ -721,19 +721,35 @@ export function changelogDuplicateCategoryIssues(rawText) {
   // A fenced example — release-policy.md documents the changelog shape as one —
   // must not read as real headings. A false positive here blocks a legitimate
   // PR, which is worse than the duplicate this is looking for.
-  let fenced = false;
+  // CommonMark allows both ``` and ~~~, and a fence is closed only by its own
+  // marker — a ``` line inside a ~~~ block is content, not a delimiter.
+  let openMarker = null;
   const text = rawText
     .split("\n")
     .map((line) => {
-      if (/^\s*```/.test(line)) {
-        fenced = !fenced;
+      const fence = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        const marker = fence[1][0];
+        if (openMarker === null) {
+          openMarker = marker;
+          return "";
+        }
+        if (marker === openMarker) openMarker = null;
         return "";
       }
-      return fenced ? "" : line;
+      return openMarker === null ? line : "";
     })
     .join("\n");
 
   const errors = [];
+  // An unclosed fence blanks everything after it, which would hide a real
+  // duplicate rather than report one. Silently passing on malformed input is
+  // the worse half of the two failure modes, so say so instead.
+  if (openMarker !== null) {
+    errors.push(
+      "CHANGELOG.md has an unclosed code fence; categories after it cannot be checked",
+    );
+  }
   // Find every release heading (lines starting with "## ").
   const headingRe = /^## .+$/gm;
   const headings = [];
@@ -877,7 +893,50 @@ function countFileLines(filePath) {
  * `dist`, `node_modules`, `coverage`, and `src/helpers/.venv`.
  * Returns `{ file, lines }` for the worst offender, or null when no files.
  */
+/**
+ * Line counts for everything ESLint lints, read from the git index.
+ *
+ * Deliberately not the working tree. The pre-commit hook lowers the cap from
+ * this, and what gets committed is the index — so reading from disk lets an
+ * unstaged shrink lower the cap while the committed file is still long, and CI
+ * then fails lint on a file nobody touched in that commit. One `git grep` over
+ * the index costs about 12ms and cannot disagree with what is committed.
+ *
+ * Returns null when git is unavailable, so the caller can fall back to disk.
+ */
+function indexedFileLines() {
+  const out = spawnSync(
+    "git",
+    ["grep", "--cached", "-I", "-c", "", "--", "server/*.ts", "server/*.tsx",
+     "server/*.mts", "server/*.cts", "server/*.js", "server/*.mjs", "server/*.cjs"],
+    { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+  );
+  // Exit 1 means "no matches", which for an empty pattern means no files.
+  if (out.error || (out.status !== 0 && out.status !== 1)) return null;
+  const skip = /(^|\/)(dist|node_modules|coverage|\.venv)\//;
+  const files = [];
+  for (const line of (out.stdout || "").split("\n")) {
+    if (!line) continue;
+    const at = line.lastIndexOf(":");
+    if (at <= 0) continue;
+    const file = line.slice(0, at);
+    if (skip.test(file)) continue;
+    const lines = Number(line.slice(at + 1));
+    if (Number.isFinite(lines)) files.push({ file: path.join(REPO_ROOT, file), lines });
+  }
+  return files;
+}
+
 function findWorstFile() {
+  const indexed = indexedFileLines();
+  if (indexed && indexed.length > 0) {
+    let best = null;
+    for (const entry of indexed) {
+      if (!best || entry.lines > best.lines) best = entry;
+    }
+    return best;
+  }
+
   // Scan what ESLint lints, not a subset of it. `eslint .` runs from `server/`
   // and covers everything but the four ignores in `server/eslint.config.mjs`,
   // so scanning only `src` and `test` left `pi-packages/**` and the config
@@ -926,7 +985,8 @@ export function ratchetSync() {
   const changed = next < currentCap;
 
   if (changed) {
-    saveRatchets({ maxLines: next, floor });
+    // Spread, so a key someone adds later is not deleted by the next commit.
+    saveRatchets({ ...stored, maxLines: next });
   }
 
   return {

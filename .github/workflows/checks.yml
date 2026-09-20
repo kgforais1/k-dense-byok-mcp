@@ -94,35 +94,60 @@ jobs:
           // list somewhere else — a plan, a set of follow-ups — would
           // otherwise satisfy a gate whose whole question is whether the
           // checklist itself is present.
-          const afterHeading = hasHeading
-            ? body.slice(headingAt + "## PR closing checklist".length)
-            : "";
-          const nextHeading = afterHeading.search(/^#{1,6} /m);
-          const section =
-            nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
+          // Blank fenced blocks before looking for the next heading. A `#`
+          // line inside a fence is content, and cutting the section there
+          // drops the checkboxes below it — the same mistake the changelog
+          // check makes a point of not making.
+          const deFence = (text) => {
+            let open = null;
+            return text
+              .split("\n")
+              .map((line) => {
+                const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+                if (!fence) return open === null ? line : "";
+                const marker = fence[1][0];
+                if (open === null) open = marker;
+                else if (marker === open) open = null;
+                return "";
+              })
+              .join("\n");
+          };
 
-          // An actual checkbox line is the one signal that is hard to produce
-          // by accident. Without it, a body that merely *discusses* the
-          // checklist ("I skipped the PR closing checklist because
-          // npm run verify -- docs fails") satisfied the gate.
-          const hasCheckbox = /^\s*- \[[ xX]\]/m.test(section);
-          // A couple of the most distinctive items from the template. Be
-          // pragmatic: items get reworded, so we only require enough to prove
-          // the checklist was intentionally included rather than mentioned in
-          // passing.
-          const matchedPhrases = [
-            "Handoff archived or removed from",
-            "Plan moved to",
-            "dev-docs/maintenance-log.md",
-            "npm run verify -- docs",
-          ].filter((phrase) => section.includes(phrase)).length;
-          // Two, not one. A single prose mention plus an unrelated todo
-          // ("- [ ] follow up later") satisfied the gate with no checklist
-          // present. A real body copies the whole template, so the cost of
-          // requiring two is nil.
-          const hasItems = matchedPhrases >= 2;
+          // Every occurrence, not just the first: a copy-pasted duplicate
+          // heading would otherwise slice at the second one and never see the
+          // checkboxes it contains.
+          const HEADING = "## PR closing checklist";
+          const sections = [];
+          for (let at = body.indexOf(HEADING); at !== -1; at = body.indexOf(HEADING, at + 1)) {
+            const after = body.slice(at + HEADING.length);
+            const masked = deFence(after);
+            const next = masked.search(/^#{1,6} /m);
+            sections.push(next === -1 ? after : after.slice(0, next));
+          }
 
-          if (!hasHeading || !hasItems || !hasCheckbox) {
+          const satisfies = (section) => {
+            // An actual checkbox line is the one signal that is hard to
+            // produce by accident. Without it, a body that merely *discusses*
+            // the checklist ("I skipped it because npm run verify -- docs
+            // fails") satisfied the gate.
+            const hasCheckbox = /^\s*- \[[ xX]\]/m.test(section);
+            // The most distinctive items from the template. Pragmatic on
+            // purpose: items get reworded, and a gate that breaks on a
+            // rewording is one that gets deleted.
+            const matchedPhrases = [
+              "Handoff archived or removed from",
+              "Plan moved to",
+              "dev-docs/maintenance-log.md",
+              "npm run verify -- docs",
+            ].filter((phrase) => section.includes(phrase)).length;
+            // Two, not one. A single prose mention plus an unrelated todo
+            // ("- [ ] follow up later") satisfied the gate with no checklist
+            // present. A real body copies the whole template, so the cost of
+            // requiring two is nil.
+            return hasCheckbox && matchedPhrases >= 2;
+          };
+
+          if (!hasHeading || !sections.some(satisfies)) {
             console.error("FAIL: PR body is missing the closing checklist.");
             console.error(
               "`gh pr create --body` discards the PR template. Copy the closing " +

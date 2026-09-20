@@ -911,12 +911,12 @@ function countFileLines(filePath) {
  *
  * Returns null when git is unavailable, so the caller can fall back to disk.
  */
-function indexedFileLines() {
+function indexedFileLines(repoRoot = REPO_ROOT) {
   const out = spawnSync(
     "git",
     ["grep", "--cached", "-I", "-c", "", "--", "server/*.ts", "server/*.tsx",
      "server/*.mts", "server/*.cts", "server/*.js", "server/*.mjs", "server/*.cjs"],
-    { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
   );
   // Exit 1 means "no matches", which for an empty pattern means no files.
   if (out.error || (out.status !== 0 && out.status !== 1)) return null;
@@ -929,7 +929,7 @@ function indexedFileLines() {
     const file = line.slice(0, at);
     if (skip.test(file)) continue;
     const lines = Number(line.slice(at + 1));
-    if (Number.isFinite(lines)) files.push({ file: path.join(REPO_ROOT, file), lines });
+    if (Number.isFinite(lines)) files.push({ file: path.join(repoRoot, file), lines });
   }
   return files;
 }
@@ -939,10 +939,13 @@ function indexedFileLines() {
  * a test can assert it agrees with what ESLint lints, rather than asserting
  * something adjacent and being named as though it checked that.
  */
-export function measuredFileLines() {
-  const indexed = indexedFileLines();
+export function measuredFileLines(repoRoot = REPO_ROOT) {
+  const indexed = indexedFileLines(repoRoot);
   if (!indexed) return [];
-  return indexed.map((entry) => ({ file: rel(entry.file), lines: entry.lines }));
+  return indexed.map((entry) => ({
+    file: path.relative(repoRoot, entry.file).split(path.sep).join("/"),
+    lines: entry.lines,
+  }));
 }
 
 function findWorstFile() {

@@ -581,18 +581,38 @@ describe("the ratchet against this repository", () => {
   });
 
   it("measures the index, not the working tree", () => {
-    // Found by a kimi-k3 review. The pre-commit hook lowers the cap from this
-    // number and the commit contains the index, so reading from disk let an
-    // unstaged shrink lower the cap while the committed file was still long —
-    // CI then failed lint on a file nobody touched in that commit.
-    const worst = ratchetCheck().worstFile!;
-    const fromIndex = execFileSync("git", ["grep", "--cached", "-I", "-c", "", "--", worst], {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-    });
-    const indexLines = Number(fromIndex.trim().split(":").pop());
+    // Found by a kimi-k3 review; rewritten after the same reviewer pointed
+    // out the first version proved nothing. It compared the measured count
+    // against `git grep --cached` on a clean tree — where disk and index are
+    // identical, so reverting the code to read from disk still passed.
+    //
+    // This builds the divergence instead: a scratch repo whose staged file is
+    // long and whose working copy is short. Reading disk gives 20; reading
+    // the index gives 900, which is what the commit would contain and what
+    // CI would lint.
+    const repo = freshDir("kady-ratchet-index-");
+    try {
+      const run = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      run("init", "-q");
+      run("config", "user.email", "test@example.com");
+      run("config", "user.name", "test");
+      fs.mkdirSync(path.join(repo, "server", "src"), { recursive: true });
+      const file = path.join(repo, "server", "src", "big.ts");
 
-    expect(ratchetCheck().worstLines).toBe(indexLines);
+      fs.writeFileSync(file, "// x\n".repeat(900));
+      run("add", "server/src/big.ts");
+      // Shrink on disk only. The index still holds the 900-line version.
+      fs.writeFileSync(file, "// x\n".repeat(20));
+
+      const measured = measuredFileLines(repo);
+      const big = measured.find((f) => f.file === "server/src/big.ts");
+
+      expect(big?.lines).toBe(900);
+      expect(big?.lines).not.toBe(20);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   it("counts lines the way wc -l does, which is what ESLint agrees with", () => {
@@ -631,7 +651,9 @@ describe("the PR checklist phrases the CI job looks for", () => {
       "utf8",
     );
 
-    const phrases = [...workflow.matchAll(/^\s{12}"([^"]+)",$/gm)].map((m) => m[1]);
+    // Indent-agnostic: this broke once when the job was restructured and the
+    // phrases shifted two columns, which is noise rather than drift.
+    const phrases = [...workflow.matchAll(/^\s+"([^"]+)",$/gm)].map((m) => m[1]);
     expect(phrases.length).toBeGreaterThanOrEqual(3);
 
     expect(template).toContain("## PR closing checklist");

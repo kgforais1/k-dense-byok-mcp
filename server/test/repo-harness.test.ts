@@ -558,6 +558,28 @@ describe("the ratchet against this repository", () => {
     expect(fs.readFileSync(RATCHETS_FILE, "utf8")).toBe(before);
   });
 
+  it("scans every directory ESLint lints, not just src and test", () => {
+    // Found by a kimi-k3 review: `eslint .` runs from `server/` and covers
+    // everything but its four ignores, while the scan looked only at `src` and
+    // `test`. `pi-packages/**` was invisible, so the cap could be lowered
+    // underneath a file there and the next lint run would fail on a file
+    // nobody touched. The 750 floor happens to hide this today, which is not a
+    // property worth depending on.
+    const ignored = new Set(["dist", "node_modules", "coverage", ".venv"]);
+    const serverRoot = path.join(REPO_ROOT, "server");
+    const topLevel = fs
+      .readdirSync(serverRoot, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !ignored.has(e.name))
+      .map((e) => e.name);
+
+    // pi-packages is the directory that was actually missed; assert it is
+    // present so this test fails if the layout changes underneath it.
+    expect(topLevel).toContain("pi-packages");
+
+    const worst = ratchetCheck().worstFile!;
+    expect(worst.startsWith("server/")).toBe(true);
+  });
+
   it("counts lines the way ESLint does", () => {
     // The assertion that matters. `split("\n").length` overcounts a
     // newline-terminated file by one, and `min(cap, ...)` hides that for as

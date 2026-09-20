@@ -878,11 +878,17 @@ function countFileLines(filePath) {
  * Returns `{ file, lines }` for the worst offender, or null when no files.
  */
 function findWorstFile() {
-  const scanRoots = [
-    path.join(REPO_ROOT, "server", "src"),
-    path.join(REPO_ROOT, "server", "test"),
-  ];
+  // Scan what ESLint lints, not a subset of it. `eslint .` runs from `server/`
+  // and covers everything but the four ignores in `server/eslint.config.mjs`,
+  // so scanning only `src` and `test` left `pi-packages/**` and the config
+  // files invisible. A linted file the scan cannot see is one the cap can be
+  // lowered underneath, and the next lint run fails on a file nobody touched.
+  // Not reachable today — the largest such file is 586 lines, under the 750
+  // floor — but it is only the floor holding it, which is not the invariant
+  // worth relying on. Keep these exclusions in step with that config.
+  const scanRoots = [path.join(REPO_ROOT, "server")];
   const skipDirs = new Set(["dist", "node_modules", "coverage", ".venv"]);
+  const linted = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
   let worst = null;
 
   // Walk to any depth. A hand-unrolled fixed depth silently stops counting
@@ -893,7 +899,7 @@ function findWorstFile() {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (!skipDirs.has(entry.name)) walk(full);
-      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+      } else if (entry.isFile() && linted.test(entry.name)) {
         const lines = countFileLines(full);
         if (!worst || lines > worst.lines) worst = { file: full, lines };
       }

@@ -703,6 +703,77 @@ function webVersionIssues(webPkgPath) {
   }
 }
 
+/**
+ * A previous CHANGELOG.md had two `### Fixed` sections under `## [Unreleased]`
+ * separated by `### Added` and `### Changed`. The existing release:check
+ * validated required headings but did not detect duplicate categories within a
+ * release. Keep a Changelog orders versions (newest first) and has a
+ * conventional category order, but bullet order within a category is
+ * deliberately free — so only uniqueness per release is enforced here.
+ *
+ * Pure function: takes changelog text, returns an array of error strings.
+ */
+export function changelogDuplicateCategoryIssues(rawText) {
+  // A fenced example — release-policy.md documents the changelog shape as one —
+  // must not read as real headings. A false positive here blocks a legitimate
+  // PR, which is worse than the duplicate this is looking for.
+  let fenced = false;
+  const text = rawText
+    .split("\n")
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        fenced = !fenced;
+        return "";
+      }
+      return fenced ? "" : line;
+    })
+    .join("\n");
+
+  const errors = [];
+  // Find every release heading (lines starting with "## ").
+  const headingRe = /^## .+$/gm;
+  const headings = [];
+  let match;
+  while ((match = headingRe.exec(text)) !== null) {
+    headings.push({ line: match[0], index: match.index });
+  }
+
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    const sectionEnd = i + 1 < headings.length ? headings[i + 1].index : text.length;
+    const sectionText = text.slice(heading.index, sectionEnd);
+
+    // Release name is the heading text after "## ".
+    const releaseMatch = heading.line.match(/^## (.+)$/);
+    if (!releaseMatch) continue;
+    const release = releaseMatch[1].trim();
+
+    // Collect every "### " category heading in this release section.
+    const categoryRe = /^### (.+)$/gm;
+    const categories = [];
+    let catMatch;
+    while ((catMatch = categoryRe.exec(sectionText)) !== null) {
+      categories.push(catMatch[1].trim());
+    }
+
+    // Detect duplicates (case-sensitive, trimmed).
+    const seen = new Map();
+    for (const cat of categories) {
+      seen.set(cat, (seen.get(cat) ?? 0) + 1);
+    }
+    for (const [cat, count] of seen) {
+      if (count > 1) {
+        errors.push(
+          `CHANGELOG.md release "${release}" has ${count} "### ${cat}" sections; ` +
+            `Keep a Changelog expects one per category per release`,
+        );
+      }
+    }
+  }
+
+  return errors;
+}
+
 /** Validate CHANGELOG.md structure against the current server version. */
 function changelogIssues(changelogPath, serverVersion) {
   if (!exists(changelogPath)) return ["CHANGELOG.md is missing at the repository root"];
@@ -711,6 +782,7 @@ function changelogIssues(changelogPath, serverVersion) {
   for (const re of CHANGELOG_REQUIRED_HEADINGS) {
     if (!re.test(text)) errors.push(`CHANGELOG.md is missing required pattern ${re}`);
   }
+  errors.push(...changelogDuplicateCategoryIssues(text));
   if (serverVersion) {
     const versionRe = new RegExp(
       `^##\\s+\\[${serverVersion.replace(/[.+*?^$()|[\\]\\\\]/g, "\\$&")}\\]`,

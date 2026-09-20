@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_PATH,
   __cli,
+  changelogDuplicateCategoryIssues,
   checkHandoffs,
   checkRelease,
   loadManifest,
@@ -520,6 +521,152 @@ describe("checkRelease", () => {
   it("returns no errors for the current repository state", () => {
     const result = checkRelease();
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("changelogDuplicateCategoryIssues", () => {
+  it("allows the same category in different releases", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- fix one",
+      "",
+      "## [0.9.12] - 2026-09-02",
+      "",
+      "### Fixed",
+      "- fix two",
+      "",
+      "### Added",
+      "- add one",
+      "",
+      "## [0.9.11] - 2026-09-01",
+      "",
+      "### Fixed",
+      "- fix three",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("flags two of the same category within one release", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- first fixed",
+      "",
+      "### Added",
+      "- added thing",
+      "",
+      "### Fixed",
+      "- second fixed",
+      "",
+      "## [0.9.12] - 2026-09-02",
+      "",
+      "### Added",
+      "- added thing",
+    ].join("\n");
+    const issues = changelogDuplicateCategoryIssues(text);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('release "[Unreleased]"');
+    expect(issues[0]).toContain('2 "### Fixed" sections');
+    expect(issues[0]).toContain("Keep a Changelog expects one per category per release");
+  });
+
+  it("reports the count when three of the same category appear in one release", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- first",
+      "",
+      "### Added",
+      "- added",
+      "",
+      "### Fixed",
+      "- second",
+      "",
+      "### Changed",
+      "- changed",
+      "",
+      "### Fixed",
+      "- third",
+    ].join("\n");
+    const issues = changelogDuplicateCategoryIssues(text);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('3 "### Fixed" sections');
+  });
+
+  it("returns no errors for an empty string", () => {
+    expect(changelogDuplicateCategoryIssues("")).toEqual([]);
+  });
+
+  it("returns no errors when no ## headings exist", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "### Fixed",
+      "- bullet",
+      "",
+      "### Added",
+      "- bullet",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("ignores ### headings before the first ## release heading", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "### Fixed",
+      "- preamble fixed",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- real fixed",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("ignores headings inside a fenced code block", () => {
+    // A false positive would block a legitimate PR, which is worse than the
+    // duplicate this check exists to find.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- a real entry",
+      "",
+      "Example of the shape:",
+      "```markdown",
+      "### Fixed",
+      "- not a real entry",
+      "```",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("returns no errors for the repository's actual CHANGELOG.md", () => {
+    const changelogPath = path.join(REPO_ROOT, "CHANGELOG.md");
+    const text = fs.readFileSync(changelogPath, "utf8");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
   });
 });
 

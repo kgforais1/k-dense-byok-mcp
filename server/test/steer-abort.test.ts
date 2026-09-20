@@ -165,6 +165,8 @@ import { recordRun } from "../src/cost/ledger.ts";
 import { runBroker } from "../src/agent/run-broker.ts";
 import { attachSessionObserver } from "../src/agent/session-observer.ts";
 import { resolvePaths } from "../src/projects.ts";
+import { waitFor } from "./helpers/timing.ts";
+import { pendingFollowUpWaiters } from "../src/agent/follow-up-receipts.ts";
 
 const app = await buildApp();
 
@@ -339,7 +341,7 @@ describe("persistent run routes", () => {
     });
 
     let running: any;
-    await vi.waitFor(async () => {
+    await waitFor(async () => {
       const response = await app.inject({
         method: "GET",
         url: "/sessions/s1/run/state",
@@ -428,7 +430,7 @@ describe("persistent run routes", () => {
       headers: { "x-project-id": "default", "content-type": "application/json" },
       payload: { message: "must not start", model: "openrouter/test-model" },
     });
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(runBroker.state("default", "s1").status).toBe("running");
     });
     expect(session.promptCalls).toHaveLength(0);
@@ -473,7 +475,7 @@ describe("persistent run routes", () => {
       headers: { "x-project-id": "default", "content-type": "application/json" },
       payload: { message: "second" },
     });
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(session.promptCalls).toHaveLength(1);
     });
     session.releasePrompt();
@@ -504,7 +506,7 @@ describe("persistent run routes", () => {
     expect(runBroker.state("default", "s1").status).toBe("running");
 
     session.releasePrompt();
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(runBroker.state("default", "s1").status).toBe("complete");
     });
     expect(session.aborted).toBe(false);
@@ -545,8 +547,9 @@ describe("system-initiated runs vs POST /sessions/:id/run", () => {
       s.emit({ type: "agent_end" });
       s.isStreaming = false;
       s.emit({ type: "agent_settled" });
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(runBroker.state("default", "s1").status).toBe("complete");
+      await waitFor(() => {
+        expect(runBroker.state("default", "s1").status).toBe("complete");
+      });
 
       const state = await app.inject({
         method: "GET",
@@ -610,13 +613,17 @@ describe("POST /sessions/:id/follow-up", () => {
     const first = followUp("s1", body);
     // The leader is parked inside session.followUp; the retry must attach as
     // a waiter rather than enqueueing a second copy.
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(s.followUps).toHaveLength(1);
     });
     const second = followUp("s1", body);
-    // Let the retry travel from inject dispatch to the reservation while the
-    // leader stays parked; then let the leader settle for both.
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // Wait for the retry to actually attach as a waiter before releasing the
+    // leader. Sleeping instead would let the retry arrive late and take the
+    // completed-receipt path, which satisfies every assertion below without
+    // exercising the waiter path this test is named for.
+    await waitFor(() => {
+      expect(pendingFollowUpWaiters("default", "s1", body.requestId)).toBe(1);
+    });
     s.releaseFollowUp();
     const [r1, r2] = await Promise.all([first, second]);
     expect(r1.statusCode).toBe(200);
@@ -637,11 +644,13 @@ describe("POST /sessions/:id/follow-up", () => {
     fakeSessions.set("s1", s);
     const body = { message: "late", requestId: "concurrent-follow-up-reject" };
     const first = followUp("s1", body);
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(s.followUps).toHaveLength(1);
     });
     const second = followUp("s1", body);
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await waitFor(() => {
+      expect(pendingFollowUpWaiters("default", "s1", body.requestId)).toBe(1);
+    });
     s.releaseFollowUp();
     const [r1, r2] = await Promise.all([first, second]);
     expect(r1.statusCode).toBe(409);

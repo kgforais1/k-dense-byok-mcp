@@ -29,6 +29,7 @@ import { buildApp } from "../src/index.ts";
 import { modalJobManager } from "../src/modal/manager.ts";
 import { ensureProjectExists, resolvePaths } from "../src/projects.ts";
 import { FakeModal } from "./helpers/fake-modal.ts";
+import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
 
 const properties = (schema: unknown) =>
   (schema as { properties?: Record<string, unknown> }).properties ?? {};
@@ -49,7 +50,7 @@ async function exec(
 
 const text = (result: ToolResult) => result.content[0]?.text ?? "";
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+async function waitUntil(predicate: () => boolean, timeoutMs = WAIT_BUDGET_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error("condition not met in time");
@@ -473,7 +474,7 @@ describe("kady-modal child package over the real HTTP API", () => {
     const jobId = modalJobManager.store.list("default")[0].id;
     expect(outcome.details).toMatchObject({ error: "ABORTED", job_id: jobId });
 
-    const job = await modalJobManager.wait("default", jobId, 3000);
+    const job = await modalJobManager.wait("default", jobId, WAIT_BUDGET_MS);
     expect(job.state).toBe("cancelled");
   });
 

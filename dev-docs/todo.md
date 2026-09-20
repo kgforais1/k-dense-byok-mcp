@@ -143,86 +143,30 @@ project scoping, cancellation, tool policy, and accounting.
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
 
-## 5. Timing-sensitive backend tests still fail on a loaded Windows runner
-
-PR #38 fixed two named files — `server/test/notebook-robustness.test.ts` and
-`web/src/components/pdf-viewer/pdfjs-integration.test.ts` — and both have been
-green since. That scope was too narrow. The underlying condition is that
-Windows CI runners intermittently run about three times slow, and *any* test
-leaning on a real timer is exposed.
-
-Observed 2026-09-20 on PR #41, run `35515576893` attempt 1, backend
-windows-latest only:
-
-- `test/steer-abort.test.ts` — 18 of 28 failed. The root failure is one
-  `Test timed out in 5000ms` at `steer-abort.test.ts:328`; the other 17 are
-  1ms cascades behind it.
-- `test/session-observer.test.ts` — 9 of 9 failed, and this one is the more
-  informative. It fails `expected 'running' to be 'complete'`, an async race
-  where the observer had not settled the run before the assertion, not a
-  timeout at all.
-
-The runner was badly loaded: 208s total with 114s of that in `import`, against
-~75s of actual test time. Both files pass locally in 4.33s together, and the
-attempt-2 rerun of the identical commit was green, so this is load, not logic.
-The commit under test touched no server runtime code.
-
-Between them the two files hold 11 real timer/wait constructs
-(`grep -cE "setTimeout|await new Promise|vi.waitFor"`). Two candidate fixes,
-and they are not equivalent:
-
-- Raise `testTimeout` for the timing-sensitive backend files, as
-  `notebook-robustness.test.ts` already does via `vi.setConfig`. Cheap, and
-  honest about the work being slow — but it does nothing for
-  `session-observer.test.ts`, which fails an assertion rather than a timeout.
-- Replace the real waits with `vi.waitFor`, so a test polls for the state it
-  needs instead of assuming it has arrived. Fixes both shapes, and is the only
-  one that addresses the race. More work per call site.
-
-Prefer the second for the race, and fall back to the first only where the work
-is genuinely slow rather than genuinely racy. Whichever is chosen, look for the
-same shape in the rest of the backend suite rather than fixing only the two
-files named above — that narrow approach is what left this open.
-
-## 6. A subagent on a local model cannot see the discovered context window
-
-`local-context.ts` holds the discovered figures in a module-level `Map`, which
-lives in the backend process. A subagent child runs in pi-subagents' detached
-runner, a separate process, and resolves its model through Pi rather than
-through `resolveModel`. Pi's composer defaults a definition with no window to
-128,000 (`provider-composer.js:72`), so a child pinned to a local model whose
-loaded window is genuinely small declares 128,000 while the lead correctly
-declares the smaller figure.
-
-That is the over-declaring direction, which is the one PR #35 exists to avoid.
-It is narrow in practice — the lead usually fails first on the same model, and
-the common case is lead and child sharing the cold 128,000 default — and it was
-not reproduced end to end, only derived from the process boundary.
-
-Worth deciding between seeding the runner with the resolved window at spawn
-time and accepting it as a documented limitation. Distinct from the restored-session fallback fixed in PR #39: that one was
-about the model *choice* changing, this one is about a correctly-pinned model
-carrying the wrong *window*.
-
-Found by muse-spark-1.3 reviewing PR #35.
-
-## 7. Ollama's architectural context figure is undocumented
+## 5. Ollama's architectural context figure is undocumented
 
 `/api/tags` → `details.context_length` is what PR #35 reads for a model's
 architectural maximum, and Ollama does not document it. The documented
 `details` fields are `format`, `family`, `families`, `parameter_size` and
-`quantization_level`. Ollama 0.33.2 does emit it. `/api/ps` →`context_length`,
+`quantization_level`. Ollama 0.33.2 does emit it. `/api/ps` → `context_length`,
 the loaded figure, *is* documented.
 
 Losing it degrades rather than breaks: a loaded model still reports correctly
 through `/api/ps`, and only an unloaded one falls through to the 128,000 floor
 — the over-declaring direction, but bounded and already accepted.
 
-Worth doing: decide whether `/api/show` — which does document a model's
-parameters — is a better architectural source, or a worse one because it costs
-a call per model rather than one call for the whole list. Not worth doing:
-tracing how far back the undocumented field goes. Old Ollama builds are not a
-supported target, and the degradation is benign.
+**Decided 2026-09-20:** keep `/api/tags` as the primary source and fall back to
+`/api/show` — which does document a model's parameters — only for rows whose
+`details.context_length` is missing. The two alternatives were both worse.
+Switching to `/api/show` outright costs a call per model against today's budget
+of two per picker open, which `test/ollama.test.ts` has a test guarding
+("stays within two calls per open"); doing nothing leaves the figure resting on
+an undocumented field. The fallback costs nothing while Ollama still emits it,
+and pays only in the failure this item is about. Keep the per-open budget
+assertion, and extend it to allow the extra calls only on the fallback path.
+
+Not worth doing: tracing how far back the undocumented field goes. Old Ollama
+builds are not a supported target, and the degradation is benign.
 
 The practical guard is re-checking the field after an Ollama upgrade. The
 version this was confirmed against is recorded in

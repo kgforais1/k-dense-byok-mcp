@@ -43,6 +43,8 @@ interface PendingAdmission {
   sessionId: string;
   promise: Promise<FollowUpAdmission>;
   resolve: (admission: FollowUpAdmission) => void;
+  /** Retries that attached to this leader instead of becoming one. */
+  waiters: number;
 }
 
 const pending = new Map<string, PendingAdmission>();
@@ -69,13 +71,32 @@ export function tryReserveFollowUpReceipt(
   const key = receiptKey(projectId, sessionId, requestId);
   if (receipts.has(key)) return { kind: "duplicate" };
   const existing = pending.get(key);
-  if (existing) return { kind: "pending", wait: existing.promise };
+  if (existing) {
+    existing.waiters += 1;
+    return { kind: "pending", wait: existing.promise };
+  }
   let resolve!: (admission: FollowUpAdmission) => void;
   const promise = new Promise<FollowUpAdmission>((r) => {
     resolve = r;
   });
-  pending.set(key, { projectId, sessionId, promise, resolve });
+  pending.set(key, { projectId, sessionId, promise, resolve, waiters: 0 });
   return { kind: "reserved" };
+}
+
+/**
+ * How many retries are currently attached to an in-flight leader for this
+ * key. Attaching is otherwise invisible: the leader already owns the
+ * reservation, so nothing about the map's shape changes, and a test covering
+ * the waiter path could only sleep and hope the retry had arrived. It would
+ * then pass just as happily on the completed-receipt or new-leader path,
+ * proving nothing about the behaviour it names.
+ */
+export function pendingFollowUpWaiters(
+  projectId: string,
+  sessionId: string,
+  requestId: string,
+): number {
+  return pending.get(receiptKey(projectId, sessionId, requestId))?.waiters ?? 0;
 }
 
 /**

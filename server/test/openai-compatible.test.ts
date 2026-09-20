@@ -21,6 +21,7 @@ import {
   makeSubagentLedgerExtension,
   pinInheritedChildModels,
 } from "../src/agent/subagent-bridge.ts";
+import { WAIT_BUDGET_MS } from "./helpers/timing.ts";
 
 // A local OpenAI-compatible server (LM Studio, vLLM, …) discovered through the
 // standard /v1/models endpoint. Everything here is local-only by design: the $0
@@ -231,7 +232,7 @@ describe("GET /openai-compatible/models", () => {
     configured: boolean;
     models: { context_length: number }[];
   }> {
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + WAIT_BUDGET_MS;
     for (;;) {
       const body = (await app.inject({ url: "/openai-compatible/models" })).json();
       if (predicate(body.models)) return body;
@@ -344,7 +345,7 @@ describe("GET /openai-compatible/models", () => {
     // keep their honest 0s. A cold cache also reads 0, so this cannot tell a
     // wiped cache from an empty one; it is here for the list, not the
     // figures. local-context.test.ts guards the cache itself.
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + WAIT_BUDGET_MS;
     while (!requestedPaths.includes("/api/v0/models") && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
     }

@@ -118,6 +118,13 @@ starts backend + frontend together; it is the only supported full-app path.
   (see `.github/workflows/tests.yml`).
 - For new test files, follow the existing `*.test.ts` naming
   and put fixtures under `test/fixtures/`. Do not introduce a second runner.
+- Never sleep for a fixed time before asserting on state another task
+  produces. Windows runners intermittently run about three times slow, so a
+  sleep that is long enough here is not long enough there, and the test fails
+  reading the state it was about to get. Poll with `waitFor` from
+  `test/helpers/timing.ts`, and pass `WAIT_BUDGET_MS` to any call that takes
+  a deadline. `quietFor` is the exception, for asserting something did *not*
+  happen — there is no state to poll for.
 
 ## Helper venv
 

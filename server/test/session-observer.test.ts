@@ -22,6 +22,7 @@ import { runBroker, type SequencedClientFrame } from "../src/agent/run-broker.ts
 import { claimRun, isRunClaimed } from "../src/agent/run-pipeline.ts";
 import { currentRunId } from "../src/agent/run-ids.ts";
 import { attachSessionObserver } from "../src/agent/session-observer.ts";
+import { quietFor, waitFor } from "./helpers/timing.ts";
 
 class FakeSession {
   sessionId = "obs-1";
@@ -65,11 +66,14 @@ class FakeSession {
 }
 
 const log = { warn: vi.fn(), error: vi.fn() };
-// FORK (upstream merge): 20 ms was upstream's value, but run finalization
-// (provenance flush + ledger + environment capture) takes 20–130 ms even
-// locally — upstream tip fails 5/7 identically. 250 ms keeps the test fast
-// while surviving a slow interpreter probe.
-const flush = () => new Promise((resolve) => setTimeout(resolve, 250));
+// FORK (upstream merge): upstream waits a flat 20 ms after every turn, which
+// is shorter than run finalization (provenance flush + ledger + environment
+// capture) takes even locally — upstream tip fails 5/7 identically. This
+// fork polled for 250 ms instead, which held until a loaded Windows runner
+// took longer still and every assertion here read `running` for `complete`.
+// Positive assertions now poll with `waitFor`; `quietFor` is left only where
+// the test asserts that nothing happened, which cannot be polled for.
+const quiet = () => quietFor(250);
 const frameTypes = (frames: SequencedClientFrame[]) => frames.map((f) => f.type);
 const costRows = (projectId: string, sessionId: string) => {
   const file = path.join(resolvePaths(projectId).sandbox, ".kady", "runs", sessionId, "costs.jsonl");
@@ -132,10 +136,9 @@ describe("session observer", () => {
     session.emit({ type: "agent_end" });
     session.isStreaming = false;
     session.emit({ type: "agent_settled" });
-    await flush();
+    await waitFor(() => expect(handle!.state().status).toBe("complete"));
 
     const state = handle!.state();
-    expect(state.status).toBe("complete");
     expect(state.run?.reason).toBe("subagent_supervisor_request");
     const types = frameTypes(state.run!.frames);
     expect(types.filter((t) => t === "agent_start")).toHaveLength(1);
@@ -162,7 +165,7 @@ describe("session observer", () => {
     attach(session);
     const claim = claimRun(projectId, session.sessionId)!;
     session.turn([{ type: "turn_end", message: { usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 } } }]);
-    await flush();
+    await quiet();
     expect(runBroker.get(projectId, session.sessionId)).toBeUndefined();
     expect(costRows(projectId, session.sessionId)).toHaveLength(0);
     claim.release();
@@ -180,7 +183,7 @@ describe("session observer", () => {
       kind: "turn",
     });
     session.turn([{ type: "turn_end", message: { usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 } } }]);
-    await flush();
+    await quiet();
     expect(runBroker.get(projectId, session.sessionId)).toBe(handle);
     expect(handle.state().status).toBe("running");
     expect(isRunClaimed(projectId, session.sessionId)).toBe(false);
@@ -218,11 +221,11 @@ describe("session observer", () => {
     session.emit({ type: "agent_end" });
     session.isStreaming = false;
     session.emit({ type: "agent_settled" });
-    await flush();
-    const handles = runBroker.activityForProject(projectId);
-    expect(handles).toHaveLength(1);
-    expect(runBroker.get(projectId, session.sessionId)!.state().status).toBe("complete");
-    expect(costRows(projectId, session.sessionId)).toHaveLength(1);
+    await waitFor(() => {
+      expect(runBroker.get(projectId, session.sessionId)!.state().status).toBe("complete");
+      expect(costRows(projectId, session.sessionId)).toHaveLength(1);
+    });
+    expect(runBroker.activityForProject(projectId)).toHaveLength(1);
   });
 
   it("publishes an idle custom message as a completed notice run with no ledger row", async () => {
@@ -267,8 +270,7 @@ describe("session observer", () => {
     session.emit({ type: "agent_start" });
     // Not inside the listener: nothing awaited yet.
     expect(session.aborted).toBe(0);
-    await flush();
-    expect(session.aborted).toBe(1);
+    await waitFor(() => expect(session.aborted).toBe(1));
     const handle = runBroker.get(capped.id, session.sessionId)!;
     expect(handle.activityState).toBe("blocked");
     expect(handle.state().run!.frames.some((f) => f.type === "error" && f.kind === "budget")).toBe(true);
@@ -278,9 +280,10 @@ describe("session observer", () => {
     session.emit({ type: "agent_end" });
     session.isStreaming = false;
     session.emit({ type: "agent_settled" });
-    await flush();
-    expect(handle.isComplete).toBe(true);
-    expect(costRows(capped.id, session.sessionId)).toHaveLength(1);
+    await waitFor(() => {
+      expect(handle.isComplete).toBe(true);
+      expect(costRows(capped.id, session.sessionId)).toHaveLength(1);
+    });
   });
 
   it("completes the handle and releases the claim when detached mid-run", async () => {
@@ -291,8 +294,7 @@ describe("session observer", () => {
     const handle = runBroker.get(projectId, session.sessionId)!;
     stop();
     detach = null;
-    await flush();
-    expect(handle.isComplete).toBe(true);
+    await waitFor(() => expect(handle.isComplete).toBe(true));
     const types = frameTypes(handle.state().run!.frames);
     expect(types).toContain("error");
     expect(types[types.length - 1]).toBe("done");
@@ -311,7 +313,6 @@ describe("session observer", () => {
     session.emit({ type: "agent_end" });
     session.isStreaming = false;
     session.emit({ type: "agent_settled" });
-    await flush();
-    expect(runBroker.get(projectId, session.sessionId)!.isComplete).toBe(true);
+    await waitFor(() => expect(runBroker.get(projectId, session.sessionId)!.isComplete).toBe(true));
   });
 });

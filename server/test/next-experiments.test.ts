@@ -21,6 +21,7 @@ import { deriveEvidenceThreads, notebookEntryKey } from "../../web/src/lib/noteb
 import { sessionCostSummary, emptySnapshot, recordRun } from "../src/cost/ledger.ts";
 import { experimentPlan, experimentSource as source } from "../../web/src/test/next-experiments-fixture.ts";
 import { ONE_SHOT_REASONING } from "../src/agent/one-shot-reasoning.ts";
+import { waitFor } from "./helpers/timing.ts";
 const project = "project-a";
 const model = "openrouter/openai/gpt-4o";
 function message(text: string, override: Partial<AssistantMessage> = {}): AssistantMessage { return { role: "assistant", content: [{ type: "text", text }], api: "openai-completions", provider: "openrouter", model: "openai/gpt-4o", usage: { input: 100, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 120, cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 } }, stopReason: "stop", timestamp: 0, ...override } as AssistantMessage; }
@@ -115,7 +116,7 @@ describe("source-linked next investigations", () => {
     setup(project, 0.01); let release!: (m: AssistantMessage) => void;
     const complete = vi.fn(() => new Promise<AssistantMessage>((r) => { release = r; })); const body = await input();
     const pending = generateNextExperiments(project, source, body, complete);
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
     await expect(generateNextExperiments(project, source, { ...body, requestId: crypto.randomUUID() }, good)).rejects.toMatchObject({ code: "GENERATION_ACTIVE" });
     release(message(JSON.stringify(experimentPlan))); await pending;
     recordRun({ projectId: project, sessionId: "spent", role: "agent", model, before: emptySnapshot(), after: { ...emptySnapshot(), costUsd: 1 } });

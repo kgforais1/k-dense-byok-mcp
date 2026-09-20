@@ -30,6 +30,25 @@ Still open:
   recomputes the worst offender and fails when the configured limit sits above
   it — that turns every shrink into a permanent one, and keeps a diff that needs
   lines in the worst file from buying them by raising the cap.
+- **Teach `release:check` the structural rules it is already trusted for.** It
+  validates that `CHANGELOG.md` has the `Changelog` heading, the
+  Keep-a-Changelog preamble and an `Unreleased` section
+  (`docs/development/release-policy.md`), but not that a category appears at
+  most once per release. Two `### Fixed` sections sat under `[Unreleased]`
+  for some time, separated by `### Added` and `### Changed`; greptile caught
+  it on PR #39, our own checker did not, and it was merged in PR #40. Keep a
+  Changelog orders versions and categories but says nothing about bullets
+  within a category, so uniqueness is the rule worth enforcing and bullet
+  order is deliberately not. A few lines in `scripts/repo.mjs`.
+
+- **Check the PR body carries the closing checklist.** `.github/pull_request_template.md`
+  ends with the archive-lifecycle checklist, but `gh pr create --body` discards
+  the template outright, so an agent-authored PR never sees it — which is how
+  #37 and #38 both shipped without it. `npm run verify -- docs` cannot catch
+  this because it cannot see a PR body; it wants a CI job reading the PR body
+  from the event payload. Pairs with the two checks above: all three are the
+  same shape, a rule we already believe in that nothing mechanically enforces.
+
 - **Raise the coverage floors**, particularly on the frontend (48.8% statements vs the backend's 72.1%, which now includes `server/pi-packages/**`).
 - **Semgrep rules for this repository's own invariants** — not a generic ruleset, which would duplicate CodeQL. Candidates are recorded in the plan.
 - **Required status checks before merge.** The branch ruleset gates on CodeQL today; the new `Checks` jobs are not yet in the required set.

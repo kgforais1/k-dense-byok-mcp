@@ -15,6 +15,8 @@
  *   verify [ladder]         run the verification ladder: fast | server | web | docs | all (default: fast)
  *   handoff:check           validate dev-docs/handoffs/active/ files for schema and branch consistency
  *   release:check           check server/package.json version and CHANGELOG.md structure
+ *   ratchet:sync            recompute and lower the max-lines ratchet in server/.ratchets.json
+ *   ratchet:check           fail when the stored max-lines ratchet is above the recomputed value
  *   work:plan --slug ...    scaffold a new plan under dev-docs/plans/ (refuses to overwrite)
  *   work:handoff --plan ... scaffold a new active handoff (refuses to overwrite)
  *   work:maintenance --pr ... scaffold a new maintenance-log entry (refuses to overwrite)
@@ -324,6 +326,8 @@ const VERIFY_LADDERS = {
             "repo:map",
             "handoff:check",
             "release:check",
+            "ratchet:sync",
+            "ratchet:check",
             "work:plan",
             "work:handoff",
             "work:maintenance",
@@ -703,6 +707,100 @@ function webVersionIssues(webPkgPath) {
   }
 }
 
+/**
+ * A previous CHANGELOG.md had two `### Fixed` sections under `## [Unreleased]`
+ * separated by `### Added` and `### Changed`. The existing release:check
+ * validated required headings but did not detect duplicate categories within a
+ * release. Keep a Changelog orders versions (newest first) and has a
+ * conventional category order, but bullet order within a category is
+ * deliberately free — so only uniqueness per release is enforced here.
+ *
+ * Pure function: takes changelog text, returns an array of error strings.
+ */
+export function changelogDuplicateCategoryIssues(rawText) {
+  // A fenced example — release-policy.md documents the changelog shape as one —
+  // must not read as real headings. A false positive here blocks a legitimate
+  // PR, which is worse than the duplicate this is looking for.
+  // CommonMark allows both ``` and ~~~, and a fence is closed only by its own
+  // marker — a ``` line inside a ~~~ block is content, not a delimiter.
+  let openMarker = null;
+  const text = rawText
+    .split("\n")
+    .map((line) => {
+      const fence = /^\s*(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        const marker = fence[1][0];
+        if (openMarker === null) {
+          openMarker = marker;
+          return "";
+        }
+        if (marker === openMarker) openMarker = null;
+        return "";
+      }
+      return openMarker === null ? line : "";
+    })
+    .join("\n");
+
+  const errors = [];
+  // An unclosed fence blanks everything after it, which would hide a real
+  // duplicate rather than report one. Silently passing on malformed input is
+  // the worse half of the two failure modes, so say so instead.
+  if (openMarker !== null) {
+    errors.push(
+      "CHANGELOG.md has an unclosed code fence; categories after it cannot be checked",
+    );
+  }
+  // Find every release heading (lines starting with "## ").
+  // Up to three leading spaces is still an ATX heading in CommonMark.
+  const headingRe = /^ {0,3}## .+$/gm;
+  const headings = [];
+  let match;
+  while ((match = headingRe.exec(text)) !== null) {
+    headings.push({ line: match[0], index: match.index });
+  }
+
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    const sectionEnd = i + 1 < headings.length ? headings[i + 1].index : text.length;
+    const sectionText = text.slice(heading.index, sectionEnd);
+
+    // Release name is the heading text after "## ".
+    const releaseMatch = heading.line.match(/^ {0,3}## (.+)$/);
+    if (!releaseMatch) continue;
+    const release = releaseMatch[1].trim();
+
+    // Collect every "### " category heading in this release section.
+    const categoryRe = /^ {0,3}### (.+)$/gm;
+    const categories = [];
+    let catMatch;
+    while ((catMatch = categoryRe.exec(sectionText)) !== null) {
+      categories.push(catMatch[1].trim());
+    }
+
+    // Keyed case-insensitively: `### fixed` and `### Fixed` render as the same
+    // category and are a duplicate in any reading that matters. The first
+    // spelling seen is what gets reported, so the message names something the
+    // author can search for.
+    const seen = new Map();
+    for (const cat of categories) {
+      const key = cat.toLowerCase();
+      const entry = seen.get(key);
+      if (entry) entry.count += 1;
+      else seen.set(key, { display: cat, count: 1 });
+    }
+    for (const { display, count } of seen.values()) {
+      if (count > 1) {
+        errors.push(
+          `CHANGELOG.md release "${release}" has ${count} "### ${display}" sections; ` +
+            `Keep a Changelog expects one per category per release`,
+        );
+      }
+    }
+  }
+
+  return errors;
+}
+
 /** Validate CHANGELOG.md structure against the current server version. */
 function changelogIssues(changelogPath, serverVersion) {
   if (!exists(changelogPath)) return ["CHANGELOG.md is missing at the repository root"];
@@ -711,6 +809,7 @@ function changelogIssues(changelogPath, serverVersion) {
   for (const re of CHANGELOG_REQUIRED_HEADINGS) {
     if (!re.test(text)) errors.push(`CHANGELOG.md is missing required pattern ${re}`);
   }
+  errors.push(...changelogDuplicateCategoryIssues(text));
   if (serverVersion) {
     const versionRe = new RegExp(
       `^##\\s+\\[${serverVersion.replace(/[.+*?^$()|[\\]\\\\]/g, "\\$&")}\\]`,
@@ -742,6 +841,205 @@ export function checkRelease() {
   errors.push(...webVersionIssues(webPkgPath));
   errors.push(...changelogIssues(changelogPath, server.version ?? ""));
   return { errors };
+}
+
+// --------------------------------------------------------------------------
+// ratchet:sync / ratchet:check
+// --------------------------------------------------------------------------
+//
+// Scope limit: only max-lines is ratcheted this cheaply. `complexity` and
+// `max-lines-per-function` need ESLint's own AST analysis, not a line count,
+// so they stay manual.
+
+/**
+ * Compute the next allowed max-lines cap.
+ *
+ * Policy (in order of application):
+ *   1. `min(currentCap, ...)` — the cap never rises.
+ *   2. `max(worstFileLines, floor)` — it tracks the worst file down, but
+ *      never below the floor.
+ *
+ * ESLint enforces `max-lines` strictly greater than the limit, so the worst
+ * file passes at its own size.
+ */
+export function nextMaxLines(currentCap, worstFileLines, floor) {
+  return Math.min(currentCap, Math.max(worstFileLines, floor));
+}
+
+const RATCHETS_PATH = path.join(REPO_ROOT, "server", ".ratchets.json");
+
+/** Load and return the stored ratchet object. */
+function loadRatchets() {
+  return JSON.parse(readText(RATCHETS_PATH));
+}
+
+/** Save the ratchet object back to disk. */
+function saveRatchets(ratchets) {
+  fs.writeFileSync(RATCHETS_PATH, JSON.stringify(ratchets, null, 2) + "\n");
+}
+
+/**
+ * Physical lines, counted the way ESLint's `max-lines` counts them.
+ *
+ * A trailing newline terminates the last line, it does not start a new empty
+ * one — so `split("\n").length` is one too many for the newline-terminated
+ * files that make up this tree. Measured: `manager.ts` is 1467 to both ESLint
+ * and `wc -l`, and 1468 to a naive split. Overcounting by one would set the
+ * cap a line looser than the worst file, quietly defeating the "exactly at the
+ * worst offender" rule the config comment insists on.
+ */
+function countFileLines(filePath) {
+  const text = readText(filePath);
+  if (text === "") return 0;
+  const lines = text.split("\n").length;
+  return text.endsWith("\n") ? lines - 1 : lines;
+}
+
+/**
+ * Scan `.ts` files under `server/src/` and `server/test/`, skipping
+ * `dist`, `node_modules`, `coverage`, and `src/helpers/.venv`.
+ * Returns `{ file, lines }` for the worst offender, or null when no files.
+ */
+/**
+ * Line counts for everything ESLint lints, read from the git index.
+ *
+ * Deliberately not the working tree. The pre-commit hook lowers the cap from
+ * this, and what gets committed is the index — so reading from disk lets an
+ * unstaged shrink lower the cap while the committed file is still long, and CI
+ * then fails lint on a file nobody touched in that commit. One `git grep` over
+ * the index costs about 12ms and cannot disagree with what is committed.
+ *
+ * Returns null when git is unavailable, so the caller can fall back to disk.
+ */
+function indexedFileLines(repoRoot = REPO_ROOT) {
+  const out = spawnSync(
+    "git",
+    ["grep", "--cached", "-I", "-c", "", "--", "server/*.ts", "server/*.tsx",
+     "server/*.mts", "server/*.cts", "server/*.js", "server/*.mjs", "server/*.cjs"],
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+  );
+  // Exit 1 means "no matches", which for an empty pattern means no files.
+  if (out.error || (out.status !== 0 && out.status !== 1)) return null;
+  const skip = /(^|\/)(dist|node_modules|coverage|\.venv)\//;
+  const files = [];
+  for (const line of (out.stdout || "").split("\n")) {
+    if (!line) continue;
+    const at = line.lastIndexOf(":");
+    if (at <= 0) continue;
+    const file = line.slice(0, at);
+    if (skip.test(file)) continue;
+    const lines = Number(line.slice(at + 1));
+    if (Number.isFinite(lines)) files.push({ file: path.join(repoRoot, file), lines });
+  }
+  return files;
+}
+
+/**
+ * The measured set, repo-relative: every file the ratchet counts. Exported so
+ * a test can assert it agrees with what ESLint lints, rather than asserting
+ * something adjacent and being named as though it checked that.
+ */
+export function measuredFileLines(repoRoot = REPO_ROOT) {
+  const indexed = indexedFileLines(repoRoot);
+  if (!indexed) return [];
+  return indexed.map((entry) => ({
+    file: path.relative(repoRoot, entry.file).split(path.sep).join("/"),
+    lines: entry.lines,
+  }));
+}
+
+function findWorstFile() {
+  const indexed = indexedFileLines();
+  if (indexed && indexed.length > 0) {
+    let best = null;
+    for (const entry of indexed) {
+      if (!best || entry.lines > best.lines) best = entry;
+    }
+    return best;
+  }
+
+  // Scan what ESLint lints, not a subset of it. `eslint .` runs from `server/`
+  // and covers everything but the four ignores in `server/eslint.config.mjs`,
+  // so scanning only `src` and `test` left `pi-packages/**` and the config
+  // files invisible. A linted file the scan cannot see is one the cap can be
+  // lowered underneath, and the next lint run fails on a file nobody touched.
+  // Not reachable today — the largest such file is 586 lines, under the 750
+  // floor — but it is only the floor holding it, which is not the invariant
+  // worth relying on. Keep these exclusions in step with that config.
+  const scanRoots = [path.join(REPO_ROOT, "server")];
+  const skipDirs = new Set(["dist", "node_modules", "coverage", ".venv"]);
+  const linted = /\.(ts|tsx|mts|cts|js|mjs|cjs)$/;
+  let worst = null;
+
+  // Walk to any depth. A hand-unrolled fixed depth silently stops counting
+  // below it, and a file the scan cannot see is one the cap can be lowered
+  // underneath — which turns into a lint failure nobody asked for.
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!skipDirs.has(entry.name)) walk(full);
+      } else if (entry.isFile() && linted.test(entry.name)) {
+        const lines = countFileLines(full);
+        if (!worst || lines > worst.lines) worst = { file: full, lines };
+      }
+    }
+  };
+
+  for (const root of scanRoots) {
+    if (exists(root)) walk(root);
+  }
+  return worst;
+}
+
+/**
+ * Recompute the max-lines ratchet and write it when it would go down.
+ * Returns `{ changed, previous, next, worstFile, worstLines }`.
+ */
+export function ratchetSync() {
+  const stored = loadRatchets();
+  const currentCap = stored.maxLines;
+  const floor = stored.floor;
+  const worst = findWorstFile();
+  const worstLines = worst ? worst.lines : 0;
+  const next = nextMaxLines(currentCap, worstLines, floor);
+  const changed = next < currentCap;
+
+  if (changed) {
+    // Spread, so a key someone adds later is not deleted by the next commit.
+    saveRatchets({ ...stored, maxLines: next });
+  }
+
+  return {
+    changed,
+    previous: currentCap,
+    next,
+    worstFile: worst ? rel(worst.file) : null,
+    worstLines,
+  };
+}
+
+/**
+ * Return whether the stored ratchet matches what sync would produce.
+ * Also returns the recomputed values for messaging.
+ */
+export function ratchetCheck() {
+  const stored = loadRatchets();
+  const currentCap = stored.maxLines;
+  const floor = stored.floor;
+  const worst = findWorstFile();
+  const worstLines = worst ? worst.lines : 0;
+  const expected = nextMaxLines(currentCap, worstLines, floor);
+  const outOfDate = expected < currentCap;
+
+  return {
+    outOfDate,
+    stored: currentCap,
+    expected,
+    floor,
+    worstFile: worst ? rel(worst.file) : null,
+    worstLines,
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -1065,6 +1363,8 @@ Subcommands:
                           Default: fast. (npm run docs:check aliases verify -- docs.)
   handoff:check           Validate dev-docs/handoffs/active/ files.
   release:check           Check server/package.json version and CHANGELOG.md structure.
+  ratchet:sync            Recompute and lower the max-lines ratchet in server/.ratchets.json.
+  ratchet:check           Fail when the stored max-lines ratchet is above the recomputed value.
   work:plan --slug <s>    Scaffold a new plan under dev-docs/plans/ (refuses overwrite).
   work:handoff --plan <p> Scaffold a new active handoff (refuses overwrite).
                           Optional: --slug <s>, --branch <name> (default: current).
@@ -1137,6 +1437,35 @@ function cmdReleaseCheck() {
   return 1;
 }
 
+function cmdRatchetSync() {
+  const result = ratchetSync();
+  if (result.changed) {
+    process.stdout.write(
+      `ratchet:sync: lowered max-lines from ${result.previous} to ${result.next} ` +
+        `(worst file: ${result.worstFile}, ${result.worstLines} lines)\n`,
+    );
+    return 0;
+  }
+  process.stdout.write(
+    `ratchet:sync: no change (cap ${result.previous}, worst ${result.worstLines} lines)\n`,
+  );
+  return 0;
+}
+
+function cmdRatchetCheck() {
+  const result = ratchetCheck();
+  if (!result.outOfDate) {
+    process.stdout.write(`ratchet:check: ok (cap ${result.stored})\n`);
+    return 0;
+  }
+  process.stderr.write(
+    `ratchet:check: stored max-lines ${result.stored} is above recomputed ${result.expected} ` +
+      `(worst file: ${result.worstFile}, ${result.worstLines} lines, floor ${result.floor})\n`,
+  );
+  process.stderr.write(`Run: npm run ratchet:sync\n`);
+  return 1;
+}
+
 function cmdWorkPlan(rest) {
   try {
     const target = scaffoldPlan({
@@ -1187,6 +1516,8 @@ const COMMANDS = {
   verify: cmdVerify,
   "handoff:check": cmdHandoffCheck,
   "release:check": cmdReleaseCheck,
+  "ratchet:sync": cmdRatchetSync,
+  "ratchet:check": cmdRatchetCheck,
   "work:plan": cmdWorkPlan,
   "work:handoff": cmdWorkHandoff,
   "work:maintenance": cmdWorkMaintenance,

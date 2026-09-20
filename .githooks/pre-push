@@ -12,6 +12,20 @@ url="$2"
 case "$url" in
   *github.com/kgforais1/k-dense-byok-mcp|*github.com/kgforais1/k-dense-byok-mcp.git|\
 *github.com:kgforais1/k-dense-byok-mcp|*github.com:kgforais1/k-dense-byok-mcp.git)
+    # Fork guard passed. Check the cap against the git index, which on a clean
+    # tree is what you are pushing. It does not read the pushed ref range, so
+    # this is a "did you shrink something and not sync?" check rather than
+    # true push-level enforcement; CI lint is the backstop that sees the
+    # committed tree.
+    # Fail open when node is missing. A GUI git client inherits launchd's
+    # PATH, which usually has no node, and blocking every push from one with
+    # `command not found` — while the remedy also needs node — is how a hook
+    # gets disabled. The fork guard above is the one that must never yield.
+    if command -v node >/dev/null 2>&1; then
+      repo_root="$(git rev-parse --show-toplevel)" || exit 1
+      cd "$repo_root" || exit 1
+      node scripts/repo.mjs ratchet:check || exit 1
+    fi
     exit 0
     ;;
 esac

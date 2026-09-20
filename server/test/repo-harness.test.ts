@@ -1,14 +1,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MANIFEST_PATH,
   __cli,
+  changelogDuplicateCategoryIssues,
   checkHandoffs,
   checkRelease,
   loadManifest,
+  measuredFileLines,
+  nextMaxLines,
+  ratchetCheck,
   runVerify,
   scaffoldHandoff,
   scaffoldMaintenance,
@@ -17,6 +21,7 @@ import {
 import { commandDiagnostics } from "./helpers/command-diagnostics";
 
 const REPO_ROOT = path.resolve(path.dirname(MANIFEST_PATH), "..");
+const RATCHETS_FILE = path.join(REPO_ROOT, "server", ".ratchets.json");
 
 function freshDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -520,6 +525,340 @@ describe("checkRelease", () => {
   it("returns no errors for the current repository state", () => {
     const result = checkRelease();
     expect(result.errors).toEqual([]);
+  });
+});
+
+describe("nextMaxLines", () => {
+  // Table: [currentCap, worstFileLines, floor, expected]
+  const cases = [
+    [1467, 1467, 750, 1467],
+    [1467, 1402, 750, 1402],
+    [1467, 600, 750, 750],
+    [750, 400, 750, 750],
+    [1467, 1500, 750, 1467],
+  ];
+  for (const [cap, worst, floor, expected] of cases) {
+    it(`nextMaxLines(${cap}, ${worst}, ${floor}) === ${expected}`, () => {
+      expect(nextMaxLines(cap, worst, floor)).toBe(expected);
+    });
+  }
+});
+
+describe("the ratchet against this repository", () => {
+  // Read-only on purpose. An earlier version of this called `ratchetSync()`,
+  // which writes `.ratchets.json` — a test that edits checked-in config, and
+  // one that proved nothing, since it then compared the file against the value
+  // it had just written.
+  it("stores a cap that is in sync, and does not move it to find out", () => {
+    const before = fs.readFileSync(RATCHETS_FILE, "utf8");
+
+    const result = ratchetCheck();
+
+    expect(result.outOfDate).toBe(false);
+    expect(result.stored).toBe(result.expected);
+    expect(fs.readFileSync(RATCHETS_FILE, "utf8")).toBe(before);
+  });
+
+  it("measures files ESLint lints that live outside src and test", () => {
+    // Found by a kimi-k3 review: `eslint .` runs from `server/` and covers
+    // everything but its four ignores, while the scan looked only at `src`
+    // and `test`. A linted file the scan cannot see is one the cap can be
+    // lowered underneath, and the next lint run fails on a file nobody
+    // touched.
+    //
+    // Renamed and rewritten after a glm-5.3 review pointed out the earlier
+    // version asserted neither the scan's coverage nor lint/scan agreement,
+    // while being named as though it did. This asserts the actual property:
+    // a file outside src/test is in the measured set.
+    const measured = measuredFileLines().map((f) => f.file);
+
+    expect(measured.some((f) => f.startsWith("server/pi-packages/"))).toBe(true);
+    expect(measured).toContain("server/vitest.config.ts");
+    // And nothing from the directories the lint config ignores.
+    for (const ignored of ["node_modules", "dist", "coverage", ".venv"]) {
+      expect(measured.some((f) => f.includes(`/${ignored}/`))).toBe(false);
+    }
+  });
+
+  it("measures the index, not the working tree", () => {
+    // Found by a kimi-k3 review; rewritten after the same reviewer pointed
+    // out the first version proved nothing. It compared the measured count
+    // against `git grep --cached` on a clean tree — where disk and index are
+    // identical, so reverting the code to read from disk still passed.
+    //
+    // This builds the divergence instead: a scratch repo whose staged file is
+    // long and whose working copy is short. Reading disk gives 20; reading
+    // the index gives 900, which is what the commit would contain and what
+    // CI would lint.
+    const repo = freshDir("kady-ratchet-index-");
+    try {
+      const run = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      run("init", "-q");
+      run("config", "user.email", "test@example.com");
+      run("config", "user.name", "test");
+      fs.mkdirSync(path.join(repo, "server", "src"), { recursive: true });
+      const file = path.join(repo, "server", "src", "big.ts");
+
+      fs.writeFileSync(file, "// x\n".repeat(900));
+      run("add", "server/src/big.ts");
+      // Shrink on disk only. The index still holds the 900-line version.
+      fs.writeFileSync(file, "// x\n".repeat(20));
+
+      const measured = measuredFileLines(repo);
+      const big = measured.find((f) => f.file === "server/src/big.ts");
+
+      expect(big?.lines).toBe(900);
+      expect(big?.lines).not.toBe(20);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("counts lines the way wc -l does, which is what ESLint agrees with", () => {
+    // The assertion that matters. `split("\n").length` overcounts a
+    // newline-terminated file by one, and `min(cap, ...)` hides that for as
+    // long as the cap is already at or below the true worst — so a sync test
+    // alone passes while the count is wrong, and the error only surfaces later
+    // as a cap set one line looser than the worst file.
+    const result = ratchetCheck();
+    expect(result.worstFile).toBeTruthy();
+
+    const text = fs.readFileSync(path.join(REPO_ROOT, result.worstFile!), "utf8");
+    const newlineTerminatedLines = text.endsWith("\n")
+      ? text.split("\n").length - 1
+      : text.split("\n").length;
+
+    expect(result.worstLines).toBe(newlineTerminatedLines);
+    // And the stored cap sits exactly at it, which is the config's stated rule.
+    expect(result.stored).toBe(result.worstLines);
+  });
+});
+
+describe("the PR checklist phrases the CI job looks for", () => {
+  it("have not all gone stale against the PR template", () => {
+    // Found by a glm-5.3 review. `.github/workflows/checks.yml` hardcodes
+    // phrases copied from the template. Reword the template and every
+    // subsequent PR body — copied from the new template — fails the gate, one
+    // PR after the change and far from its cause. This fails at the edit
+    // instead.
+    const workflow = fs.readFileSync(
+      path.join(REPO_ROOT, ".github", "workflows", "checks.yml"),
+      "utf8",
+    );
+    const template = fs.readFileSync(
+      path.join(REPO_ROOT, ".github", "pull_request_template.md"),
+      "utf8",
+    );
+
+    // Indent-agnostic: this broke once when the job was restructured and the
+    // phrases shifted two columns, which is noise rather than drift.
+    const phrases = [...workflow.matchAll(/^\s+"([^"]+)",$/gm)].map((m) => m[1]);
+    expect(phrases.length).toBeGreaterThanOrEqual(3);
+
+    expect(template).toContain("## PR closing checklist");
+    // The gate requires two matches, so two must survive a template reword.
+    // This asserts that, rather than the stronger "all four" the older name
+    // implied and never checked.
+    const surviving = phrases.filter((phrase) => template.includes(phrase));
+    expect(surviving.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("changelogDuplicateCategoryIssues", () => {
+  it("allows the same category in different releases", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- fix one",
+      "",
+      "## [0.9.12] - 2026-09-02",
+      "",
+      "### Fixed",
+      "- fix two",
+      "",
+      "### Added",
+      "- add one",
+      "",
+      "## [0.9.11] - 2026-09-01",
+      "",
+      "### Fixed",
+      "- fix three",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("flags two of the same category within one release", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- first fixed",
+      "",
+      "### Added",
+      "- added thing",
+      "",
+      "### Fixed",
+      "- second fixed",
+      "",
+      "## [0.9.12] - 2026-09-02",
+      "",
+      "### Added",
+      "- added thing",
+    ].join("\n");
+    const issues = changelogDuplicateCategoryIssues(text);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('release "[Unreleased]"');
+    expect(issues[0]).toContain('2 "### Fixed" sections');
+    expect(issues[0]).toContain("Keep a Changelog expects one per category per release");
+  });
+
+  it("reports the count when three of the same category appear in one release", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- first",
+      "",
+      "### Added",
+      "- added",
+      "",
+      "### Fixed",
+      "- second",
+      "",
+      "### Changed",
+      "- changed",
+      "",
+      "### Fixed",
+      "- third",
+    ].join("\n");
+    const issues = changelogDuplicateCategoryIssues(text);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('3 "### Fixed" sections');
+  });
+
+  it("returns no errors for an empty string", () => {
+    expect(changelogDuplicateCategoryIssues("")).toEqual([]);
+  });
+
+  it("returns no errors when no ## headings exist", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "### Fixed",
+      "- bullet",
+      "",
+      "### Added",
+      "- bullet",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("ignores ### headings before the first ## release heading", () => {
+    const text = [
+      "# Changelog",
+      "",
+      "All notable changes to this project will be documented in this file.",
+      "",
+      "### Fixed",
+      "- preamble fixed",
+      "",
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- real fixed",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("ignores headings inside a fenced code block", () => {
+    // A false positive would block a legitimate PR, which is worse than the
+    // duplicate this check exists to find.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "### Fixed",
+      "- a real entry",
+      "",
+      "Example of the shape:",
+      "```markdown",
+      "### Fixed",
+      "- not a real entry",
+      "```",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("ignores a ~~~ fence, not only a backtick one", () => {
+    // Found by a kimi-k3 review. CommonMark allows both, and only backticks
+    // were blanked — so a tilde-fenced example invented a duplicate and would
+    // have blocked a legitimate PR.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "~~~",
+      "### Fixed",
+      "~~~",
+      "",
+      "### Fixed",
+      "- the only real one",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("treats a marker of the other kind inside a fence as content", () => {
+    // A fence closes only on its own marker.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "~~~",
+      "### Fixed",
+      "```",
+      "~~~",
+      "",
+      "### Fixed",
+      "- the only real one",
+    ].join("\n");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
+  });
+
+  it("reports an unclosed fence rather than going quiet", () => {
+    // The worse half of the two failure modes: an unclosed fence blanked the
+    // rest of the file, so a real duplicate after it passed silently.
+    const text = [
+      "## [Unreleased]",
+      "",
+      "```",
+      "### Fixed",
+      "- a",
+      "",
+      "### Fixed",
+      "- b",
+    ].join("\n");
+    const issues = changelogDuplicateCategoryIssues(text);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("unclosed code fence");
+  });
+
+  it("returns no errors for the repository's actual CHANGELOG.md", () => {
+    const changelogPath = path.join(REPO_ROOT, "CHANGELOG.md");
+    const text = fs.readFileSync(changelogPath, "utf8");
+    expect(changelogDuplicateCategoryIssues(text)).toEqual([]);
   });
 });
 

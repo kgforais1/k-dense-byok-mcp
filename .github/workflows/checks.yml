@@ -34,6 +34,131 @@ jobs:
       - name: Run documentation checks
         run: npm run docs:check
 
+  # The ratchet's hooks are local, and `core.hooksPath` is only set when
+  # `start.mjs` runs — so a contributor who has never launched the app can
+  # shrink the worst file, leave the cap high, and push a green build. ESLint
+  # enforces the cap's value but not its freshness: a stale-high cap passes
+  # lint by definition. This is the server-side half.
+  ratchet:
+    name: max-lines ratchet
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout populates the index, which is what `ratchet:check` measures.
+      - uses: actions/checkout@v5
+      - name: Check the max-lines ratchet is in sync
+        run: node scripts/repo.mjs ratchet:check
+
+  # `gh pr create --body` replaces the PR template wholesale, so the closing
+  # checklist from `.github/pull_request_template.md` never reaches the PR
+  # description. This job catches that: it reads the body from the event
+  # payload and fails when the checklist is absent.
+  pr-checklist:
+    name: PR closing checklist
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    # Bots do not use the PR template — dependabot writes its own body — so
+    # gating them would red three PRs a week that nobody can fix, and would
+    # block them outright once Checks joins the required set. Exactly the
+    # broken-gate shape this job exists to prevent.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot' }}
+    steps:
+      # No checkout and no Node setup: this reads one environment variable and
+      # nothing from the tree, and ubuntu-latest ships node. A gate that runs on
+      # every PR should cost seconds.
+      - name: Check PR closing checklist
+        env:
+          # Pass the body through an environment variable, never by shell
+          # interpolation. A PR body is attacker-controllable text; inserting
+          # it directly into a `run:` line is a script-injection vector.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          node - <<'NODE'
+          const body = process.env.PR_BODY || "";
+
+          if (!body) {
+            console.error("FAIL: PR body is empty.");
+            console.error(
+              "`gh pr create --body` discards the PR template. Copy the closing " +
+              "checklist from .github/pull_request_template.md into the PR description."
+            );
+            process.exit(1);
+          }
+
+          const headingAt = body.indexOf("## PR closing checklist");
+          const hasHeading = headingAt !== -1;
+
+          // Everything from the heading to the next one, or to the end. The
+          // checks below run on that slice rather than the whole body: a PR
+          // that names the heading in one place and happens to carry a task
+          // list somewhere else — a plan, a set of follow-ups — would
+          // otherwise satisfy a gate whose whole question is whether the
+          // checklist itself is present.
+          // Blank fenced blocks before looking for the next heading. A `#`
+          // line inside a fence is content, and cutting the section there
+          // drops the checkboxes below it — the same mistake the changelog
+          // check makes a point of not making.
+          const deFence = (text) => {
+            let open = null;
+            return text
+              .split("\n")
+              .map((line) => {
+                const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+                if (!fence) return open === null ? line : "";
+                const marker = fence[1][0];
+                if (open === null) open = marker;
+                else if (marker === open) open = null;
+                return "";
+              })
+              .join("\n");
+          };
+
+          // Every occurrence, not just the first: a copy-pasted duplicate
+          // heading would otherwise slice at the second one and never see the
+          // checkboxes it contains.
+          const HEADING = "## PR closing checklist";
+          const sections = [];
+          for (let at = body.indexOf(HEADING); at !== -1; at = body.indexOf(HEADING, at + 1)) {
+            const after = body.slice(at + HEADING.length);
+            const masked = deFence(after);
+            const next = masked.search(/^#{1,6} /m);
+            sections.push(next === -1 ? after : after.slice(0, next));
+          }
+
+          const satisfies = (section) => {
+            // An actual checkbox line is the one signal that is hard to
+            // produce by accident. Without it, a body that merely *discusses*
+            // the checklist ("I skipped it because npm run verify -- docs
+            // fails") satisfied the gate.
+            const hasCheckbox = /^\s*- \[[ xX]\]/m.test(section);
+            // The most distinctive items from the template. Pragmatic on
+            // purpose: items get reworded, and a gate that breaks on a
+            // rewording is one that gets deleted.
+            const matchedPhrases = [
+              "Handoff archived or removed from",
+              "Plan moved to",
+              "dev-docs/maintenance-log.md",
+              "npm run verify -- docs",
+            ].filter((phrase) => section.includes(phrase)).length;
+            // Two, not one. A single prose mention plus an unrelated todo
+            // ("- [ ] follow up later") satisfied the gate with no checklist
+            // present. A real body copies the whole template, so the cost of
+            // requiring two is nil.
+            return hasCheckbox && matchedPhrases >= 2;
+          };
+
+          if (!hasHeading || !sections.some(satisfies)) {
+            console.error("FAIL: PR body is missing the closing checklist.");
+            console.error(
+              "`gh pr create --body` discards the PR template. Copy the closing " +
+              "checklist from .github/pull_request_template.md into the PR description."
+            );
+            process.exit(1);
+          }
+
+          console.log("PR closing checklist: present");
+          NODE
+
   secrets:
     name: gitleaks
     timeout-minutes: 10

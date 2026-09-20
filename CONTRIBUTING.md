@@ -183,7 +183,10 @@ gh pr create --repo kgforais1/k-dense-byok-mcp --base main --head sync/upstream-
 
 Record the outcome in [`dev-docs/maintenance-log.md`](dev-docs/maintenance-log.md)
 in the same PR (counts merged, conflicts resolved, verification evidence).
-The pre-push hook already blocks pushes to any remote that is not the fork,
+The pre-push hook blocks pushes to any remote that is not the fork, and then
+verifies the `max-lines` ratchet is in sync — that second check runs only when
+`node` is on `PATH` and is skipped otherwise, so a git GUI with a minimal
+environment can still push; only the fork guard is fail-closed,
 so a mistaken `git push upstream` fails locally before it can do harm.
 
 ### Fork-overlay rule: stay additive

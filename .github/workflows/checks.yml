@@ -34,6 +34,21 @@ jobs:
       - name: Run documentation checks
         run: npm run docs:check
 
+  # The ratchet's hooks are local, and `core.hooksPath` is only set when
+  # `start.mjs` runs — so a contributor who has never launched the app can
+  # shrink the worst file, leave the cap high, and push a green build. ESLint
+  # enforces the cap's value but not its freshness: a stale-high cap passes
+  # lint by definition. This is the server-side half.
+  ratchet:
+    name: max-lines ratchet
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout populates the index, which is what `ratchet:check` measures.
+      - uses: actions/checkout@v5
+      - name: Check the max-lines ratchet is in sync
+        run: node scripts/repo.mjs ratchet:check
+
   # `gh pr create --body` replaces the PR template wholesale, so the closing
   # checklist from `.github/pull_request_template.md` never reaches the PR
   # description. This job catches that: it reads the body from the event
@@ -95,12 +110,17 @@ jobs:
           // pragmatic: items get reworded, so we only require enough to prove
           // the checklist was intentionally included rather than mentioned in
           // passing.
-          const hasItems = [
+          const matchedPhrases = [
             "Handoff archived or removed from",
             "Plan moved to",
             "dev-docs/maintenance-log.md",
             "npm run verify -- docs",
-          ].some((phrase) => section.includes(phrase));
+          ].filter((phrase) => section.includes(phrase)).length;
+          // Two, not one. A single prose mention plus an unrelated todo
+          // ("- [ ] follow up later") satisfied the gate with no checklist
+          // present. A real body copies the whole template, so the cost of
+          // requiring two is nil.
+          const hasItems = matchedPhrases >= 2;
 
           if (!hasHeading || !hasItems || !hasCheckbox) {
             console.error("FAIL: PR body is missing the closing checklist.");

@@ -6,6 +6,11 @@
 # Resolve the repo root from git so this works regardless of the working
 # directory.
 
+# Without node there is nothing to sync, and printing a stack trace on every
+# commit is exactly the noise this hook's own comment warns about. The fork
+# guard in pre-push is the one that must never yield; this may.
+command -v node >/dev/null 2>&1 || exit 0
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 RATCHETS="$REPO_ROOT/server/.ratchets.json"
 

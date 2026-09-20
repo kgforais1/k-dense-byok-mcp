@@ -751,7 +751,8 @@ export function changelogDuplicateCategoryIssues(rawText) {
     );
   }
   // Find every release heading (lines starting with "## ").
-  const headingRe = /^## .+$/gm;
+  // Up to three leading spaces is still an ATX heading in CommonMark.
+  const headingRe = /^ {0,3}## .+$/gm;
   const headings = [];
   let match;
   while ((match = headingRe.exec(text)) !== null) {
@@ -764,27 +765,33 @@ export function changelogDuplicateCategoryIssues(rawText) {
     const sectionText = text.slice(heading.index, sectionEnd);
 
     // Release name is the heading text after "## ".
-    const releaseMatch = heading.line.match(/^## (.+)$/);
+    const releaseMatch = heading.line.match(/^ {0,3}## (.+)$/);
     if (!releaseMatch) continue;
     const release = releaseMatch[1].trim();
 
     // Collect every "### " category heading in this release section.
-    const categoryRe = /^### (.+)$/gm;
+    const categoryRe = /^ {0,3}### (.+)$/gm;
     const categories = [];
     let catMatch;
     while ((catMatch = categoryRe.exec(sectionText)) !== null) {
       categories.push(catMatch[1].trim());
     }
 
-    // Detect duplicates (case-sensitive, trimmed).
+    // Keyed case-insensitively: `### fixed` and `### Fixed` render as the same
+    // category and are a duplicate in any reading that matters. The first
+    // spelling seen is what gets reported, so the message names something the
+    // author can search for.
     const seen = new Map();
     for (const cat of categories) {
-      seen.set(cat, (seen.get(cat) ?? 0) + 1);
+      const key = cat.toLowerCase();
+      const entry = seen.get(key);
+      if (entry) entry.count += 1;
+      else seen.set(key, { display: cat, count: 1 });
     }
-    for (const [cat, count] of seen) {
+    for (const { display, count } of seen.values()) {
       if (count > 1) {
         errors.push(
-          `CHANGELOG.md release "${release}" has ${count} "### ${cat}" sections; ` +
+          `CHANGELOG.md release "${release}" has ${count} "### ${display}" sections; ` +
             `Keep a Changelog expects one per category per release`,
         );
       }

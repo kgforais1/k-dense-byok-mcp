@@ -595,7 +595,7 @@ describe("the ratchet against this repository", () => {
     expect(ratchetCheck().worstLines).toBe(indexLines);
   });
 
-  it("counts lines the way ESLint does", () => {
+  it("counts lines the way wc -l does, which is what ESLint agrees with", () => {
     // The assertion that matters. `split("\n").length` overcounts a
     // newline-terminated file by one, and `min(cap, ...)` hides that for as
     // long as the cap is already at or below the true worst — so a sync test
@@ -616,7 +616,7 @@ describe("the ratchet against this repository", () => {
 });
 
 describe("the PR checklist phrases the CI job looks for", () => {
-  it("still appear in the PR template", () => {
+  it("have not all gone stale against the PR template", () => {
     // Found by a glm-5.3 review. `.github/workflows/checks.yml` hardcodes
     // phrases copied from the template. Reword the template and every
     // subsequent PR body — copied from the new template — fails the gate, one
@@ -635,9 +635,11 @@ describe("the PR checklist phrases the CI job looks for", () => {
     expect(phrases.length).toBeGreaterThanOrEqual(3);
 
     expect(template).toContain("## PR closing checklist");
-    // Any one of them is enough for the gate to pass, so any one going stale
-    // is survivable — all of them going stale is not.
-    expect(phrases.some((phrase) => template.includes(phrase))).toBe(true);
+    // The gate requires two matches, so two must survive a template reword.
+    // This asserts that, rather than the stronger "all four" the older name
+    // implied and never checked.
+    const surviving = phrases.filter((phrase) => template.includes(phrase));
+    expect(surviving.length).toBeGreaterThanOrEqual(2);
   });
 });
 

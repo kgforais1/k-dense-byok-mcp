@@ -927,6 +927,17 @@ function indexedFileLines() {
   return files;
 }
 
+/**
+ * The measured set, repo-relative: every file the ratchet counts. Exported so
+ * a test can assert it agrees with what ESLint lints, rather than asserting
+ * something adjacent and being named as though it checked that.
+ */
+export function measuredFileLines() {
+  const indexed = indexedFileLines();
+  if (!indexed) return [];
+  return indexed.map((entry) => ({ file: rel(entry.file), lines: entry.lines }));
+}
+
 function findWorstFile() {
   const indexed = indexedFileLines();
   if (indexed && indexed.length > 0) {

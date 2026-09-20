@@ -34,7 +34,6 @@ Still open:
 - **Raise the coverage floors**, particularly on the frontend (48.8% statements vs the backend's 72.1%, which now includes `server/pi-packages/**`).
 - **Semgrep rules for this repository's own invariants** — not a generic ruleset, which would duplicate CodeQL. Candidates are recorded in the plan.
 - **Required status checks before merge.** The branch ruleset gates on CodeQL today; the new `Checks` jobs are not yet in the required set.
-- **Pre-commit hook coverage** beyond the fork push guard (`.githooks/`).
 
 ## 2. Code scanning, security alerts, and Dependabot
 

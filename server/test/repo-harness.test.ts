@@ -10,6 +10,7 @@ import {
   checkHandoffs,
   checkRelease,
   loadManifest,
+  measuredFileLines,
   nextMaxLines,
   ratchetCheck,
   runVerify,
@@ -558,26 +559,25 @@ describe("the ratchet against this repository", () => {
     expect(fs.readFileSync(RATCHETS_FILE, "utf8")).toBe(before);
   });
 
-  it("scans every directory ESLint lints, not just src and test", () => {
+  it("measures files ESLint lints that live outside src and test", () => {
     // Found by a kimi-k3 review: `eslint .` runs from `server/` and covers
-    // everything but its four ignores, while the scan looked only at `src` and
-    // `test`. `pi-packages/**` was invisible, so the cap could be lowered
-    // underneath a file there and the next lint run would fail on a file
-    // nobody touched. The 750 floor happens to hide this today, which is not a
-    // property worth depending on.
-    const ignored = new Set(["dist", "node_modules", "coverage", ".venv"]);
-    const serverRoot = path.join(REPO_ROOT, "server");
-    const topLevel = fs
-      .readdirSync(serverRoot, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && !ignored.has(e.name))
-      .map((e) => e.name);
+    // everything but its four ignores, while the scan looked only at `src`
+    // and `test`. A linted file the scan cannot see is one the cap can be
+    // lowered underneath, and the next lint run fails on a file nobody
+    // touched.
+    //
+    // Renamed and rewritten after a glm-5.3 review pointed out the earlier
+    // version asserted neither the scan's coverage nor lint/scan agreement,
+    // while being named as though it did. This asserts the actual property:
+    // a file outside src/test is in the measured set.
+    const measured = measuredFileLines().map((f) => f.file);
 
-    // pi-packages is the directory that was actually missed; assert it is
-    // present so this test fails if the layout changes underneath it.
-    expect(topLevel).toContain("pi-packages");
-
-    const worst = ratchetCheck().worstFile!;
-    expect(worst.startsWith("server/")).toBe(true);
+    expect(measured.some((f) => f.startsWith("server/pi-packages/"))).toBe(true);
+    expect(measured).toContain("server/vitest.config.ts");
+    // And nothing from the directories the lint config ignores.
+    for (const ignored of ["node_modules", "dist", "coverage", ".venv"]) {
+      expect(measured.some((f) => f.includes(`/${ignored}/`))).toBe(false);
+    }
   });
 
   it("measures the index, not the working tree", () => {
@@ -612,6 +612,32 @@ describe("the ratchet against this repository", () => {
     expect(result.worstLines).toBe(newlineTerminatedLines);
     // And the stored cap sits exactly at it, which is the config's stated rule.
     expect(result.stored).toBe(result.worstLines);
+  });
+});
+
+describe("the PR checklist phrases the CI job looks for", () => {
+  it("still appear in the PR template", () => {
+    // Found by a glm-5.3 review. `.github/workflows/checks.yml` hardcodes
+    // phrases copied from the template. Reword the template and every
+    // subsequent PR body — copied from the new template — fails the gate, one
+    // PR after the change and far from its cause. This fails at the edit
+    // instead.
+    const workflow = fs.readFileSync(
+      path.join(REPO_ROOT, ".github", "workflows", "checks.yml"),
+      "utf8",
+    );
+    const template = fs.readFileSync(
+      path.join(REPO_ROOT, ".github", "pull_request_template.md"),
+      "utf8",
+    );
+
+    const phrases = [...workflow.matchAll(/^\s{12}"([^"]+)",$/gm)].map((m) => m[1]);
+    expect(phrases.length).toBeGreaterThanOrEqual(3);
+
+    expect(template).toContain("## PR closing checklist");
+    // Any one of them is enough for the gate to pass, so any one going stale
+    // is survivable — all of them going stale is not.
+    expect(phrases.some((phrase) => template.includes(phrase))).toBe(true);
   });
 });
 

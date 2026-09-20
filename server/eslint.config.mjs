@@ -59,12 +59,14 @@ export default tseslint.config(
 
       // Ceilings, not targets, set at exactly the current worst offender:
       // complexity 62 (`agent/notebook-export.ts` is now exempted per-function;
-      // see the FORK notes there), the ratcheted `max-lines` cap (stored in
-      // `.ratchets.json`, currently 1467 — `modal/manager.ts`, grown by the
-      // upstream v0.10.0 hardening series), and a 672-line function
-      // (`api/sandbox.ts`, grown by merged routes). Re-measure after touching
-      // those files: this config's own lint fix deleted a dead import from
-      // `manager.ts` and moved the number.
+      // see the FORK notes there), the ratcheted `max-lines` cap (in
+      // `.ratchets.json`; `modal/manager.ts` is the file that sets it), and a
+      // 672-line function (`api/sandbox.ts`, grown by merged routes).
+      //
+      // No number is written here for `max-lines` on purpose: the ratchet
+      // moves it, so any figure in this comment would be a lie after the
+      // first shrink. Read `.ratchets.json`. The other two are still
+      // hand-measured, so re-measure those after touching their worst file.
       //
       // The number only ever moves *down*. A change that needs lines in the
       // worst file pays for them there: rewriting `manager.ts`'s `wait` cost

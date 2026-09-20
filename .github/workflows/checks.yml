@@ -42,7 +42,11 @@ jobs:
     name: PR closing checklist
     timeout-minutes: 10
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' }}
+    # Bots do not use the PR template — dependabot writes its own body — so
+    # gating them would red three PRs a week that nobody can fix, and would
+    # block them outright once Checks joins the required set. Exactly the
+    # broken-gate shape this job exists to prevent.
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot' }}
     steps:
       # No checkout and no Node setup: this reads one environment variable and
       # nothing from the tree, and ubuntu-latest ships node. A gate that runs on

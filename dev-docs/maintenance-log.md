@@ -35,6 +35,13 @@
   not derived from these three build it with `fs.mkdtempSync` under
   `os.tmpdir()`, so nothing reaches real data without importing `config.ts`.
   Server suite 1445 passed / 5 skipped, lint and typecheck clean.
+- **The deliberate escape hatch, for the record:** `server/vitest.config.ts`
+  honours `VITEST_PROJECTS_ROOT`, `VITEST_PI_AGENT_DIR` and
+  `VITEST_SKILLS_CACHE_DIR` — all three, not just the first — and the guard
+  accepts whatever they name. Pointing one at real data would still let the
+  suite delete it. That takes a `VITEST_`-prefixed variable set on purpose,
+  which is a different act from the accident this entry is about.
+
 - **Why the guard is in `src/config.ts` and not a vitest setup file:** a setup
   file is configuration, and configuration not being loaded is the whole
   failure. The check has to live in the module the tests import.

@@ -116,29 +116,32 @@ describe("the real-directory guard", () => {
     expect(output).toContain("KADY_PROJECTS_ROOT is blank");
   });
 
-  it("refuses a symlink whose target is a real directory", () => {
+  it("refuses a symlink whose target is a production directory", () => {
     // A path is what it points at, not how it is spelled. Nothing stops a temp
-    // root from being a link to the production one — on macOS `/tmp` is itself
-    // a link to `/private/tmp` — and a string comparison would admit it.
-    const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-guard-link-"));
-    const link = path.join(linkDir, "projects");
-    fs.symlinkSync(path.join(serverDir, "..", "projects"), link);
-    try {
+    // root from being a link to a production one — on macOS `/tmp` is itself a
+    // link to `/private/tmp` — and a string comparison would admit it.
+    //
+    // The link points at the skills cache while being fed to
+    // `KADY_PROJECTS_ROOT`, which exercises the cross-variable check in the
+    // same breath. It deliberately does not point at the repository's own
+    // `projects/`: that directory is gitignored and does not exist on a fresh
+    // checkout, so the link would dangle, canonicalise to nothing, and the
+    // test would pass or fail depending on whose machine it ran on. It failed
+    // exactly that way in CI.
+    withTempHome((home) => {
+      const realCache = path.join(home, ".kady", "skills-cache");
+      fs.mkdirSync(realCache, { recursive: true });
+      const link = path.join(home, "link-to-cache");
+      fs.symlinkSync(realCache, link);
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
+        HOME: home,
         KADY_PROJECTS_ROOT: link,
       });
       expect(status).not.toBe(0);
       expect(output).toContain("KADY_PROJECTS_ROOT resolves to");
-    } finally {
-      // Remove the link, never what it points at. `rmSync` on a symlink
-      // unlinks it, but the recursive form would follow a directory link on
-      // some platforms, which in this test is the repository's own projects
-      // directory.
-      fs.unlinkSync(link);
-      fs.rmSync(linkDir, { recursive: true, force: true });
-    }
+    });
   });
 
   it("refuses a symlinked Pi agent directory too, not just the projects root", () => {

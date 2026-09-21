@@ -124,6 +124,11 @@ if (process.env.VITEST) {
       // be read, and quietly degrading to a lexical comparison would restore
       // the alias hole this exists to close. Fail closed instead.
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // One case the fallback does admit: a symlink to a production directory
+      // that does not exist yet canonicalises to nothing on either side, so
+      // the comparison is lexical and the link is accepted. Left alone
+      // deliberately — a directory that does not exist holds nothing to lose,
+      // and by the time it does, the guard has long since run.
       return path.resolve(candidate);
     }
   };

@@ -54,7 +54,7 @@ export const KADY_SKILLS_CACHE_DIR = path.resolve(
 );
 
 /**
- * Refuse to hand a test run the real user directories.
+ * FORK: refuse to hand a test run the real user directories.
  *
  * Sixty-three test files begin with `fs.rmSync(PROJECTS_ROOT, { recursive:
  * true, force: true })`, and `skills-install.test.ts` does the same to the
@@ -74,6 +74,11 @@ export const KADY_SKILLS_CACHE_DIR = path.resolve(
  * three overrides into requirements. A test run that reaches this line without
  * them is one config away from destroying real data, and failing at import is
  * the only warning that arrives before the first `rmSync`.
+ *
+ * Marked because `config.ts` is upstream-owned and this is an in-place
+ * insertion, so a future `git merge upstream/main` has a seam to resolve
+ * against. The block is self-contained: it reads three environment variables
+ * and throws, and nothing upstream depends on it.
  */
 if (process.env.VITEST) {
   const missing = (
@@ -90,9 +95,9 @@ if (process.env.VITEST) {
       `Refusing to run tests against the real user directories: ${missing.join(", ")} ` +
         `${missing.length === 1 ? "is" : "are"} unset, so this run would use ` +
         `${PROJECTS_ROOT} and ${KADY_PI_AGENT_DIR}, which the suite deletes. ` +
-        `server/vitest.config.ts sets all three — run tests with "npm test" from ` +
-        `server/, or "npm run verify -- server" from the repository root, rather ` +
-        `than invoking vitest somewhere that config is not loaded.`,
+        'server/vitest.config.ts sets all three — run tests with "npm test" from ' +
+        'server/, or "npm run verify -- server" from the repository root, rather ' +
+        "than invoking vitest somewhere that config is not loaded.",
     );
   }
 }

@@ -121,10 +121,10 @@ if (process.env.VITEST) {
   if (unsafe.length > 0) {
     throw new Error(
       `Refusing to run tests against the real user directories: ${unsafe.join("; ")}, ` +
-        `which the suite deletes. server/vitest.config.ts points all three at the ` +
-        `OS temp dir — run tests with "npm test" from server/, or ` +
-        `"npm run verify -- server" from the repository root, rather than invoking ` +
-        `vitest somewhere that config is not loaded.`,
+        "which the suite deletes. server/vitest.config.ts points all three at the " +
+        'OS temp dir — run tests with "npm test" from server/, or ' +
+        '"npm run verify -- server" from the repository root, rather than invoking ' +
+        "vitest somewhere that config is not loaded.",
     );
   }
 }

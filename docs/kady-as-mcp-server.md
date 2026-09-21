@@ -22,6 +22,9 @@ The inbound server is off by default. Start Kady with:
 KADY_MCP_ENABLED=1 npm start
 ```
 
+That opens the browser UI as well. Add `-- --no-browser` if you only want the
+server: `KADY_MCP_ENABLED=1 npm start -- --no-browser`.
+
 The endpoint is then:
 
 ```
@@ -103,8 +106,8 @@ manage what the others leave behind.
 |---|---|
 | `list_projects` | Lists the local Kady projects and their ids. Start here if you do not know your `X-Project-Id`. |
 | `create_research_session` | Creates one research session and returns its `sessionId`. Call it **once per research thread**. |
-| `start_research_run` | Sends a prompt to that session and returns a `runId` immediately. The run keeps going server-side. |
-| `poll_run` | Returns the run's status and any new frames. Call it until the status is no longer `running`. |
+| `start_research_run` | Sends a prompt to that session and returns a `runId` immediately. The run keeps going server-side. Takes an optional `model` (and `thinkingLevel`) to override the session's current one for this run. |
+| `poll_run` | Returns the run's status and any new frames. Takes **both** `sessionId` and `runId` — a run id alone does not identify a run. Call it until the status is no longer `running`. |
 | `get_session_history` | Returns the whole stored transcript for a session. |
 | `list_research_sessions` | Lists this project's stored sessions, newest first, with `sessionId`, `name`, `created`, `modified`, `messageCount`, `firstMessage` and `headless`. |
 | `delete_research_session` | Permanently deletes a session and its notebook, provenance and stored run results. Refused while a run is in flight. |
@@ -113,6 +116,10 @@ A minimal loop is: `create_research_session` → `start_research_run` → `poll_
 until it stops saying `running`.
 
 ### Reading `poll_run`
+
+Pass both ids. `start_research_run` returns `sessionId` and `runId` together,
+and `poll_run` wants both: runs are scoped to their session, so a `runId` on
+its own is not enough and the call is rejected as a validation error.
 
 `poll_run` returns a `status`:
 
@@ -157,7 +164,10 @@ menu, and can be reopened there like any other chat. They are not hidden, and
 they are not cleaned up automatically. `list_research_sessions` shows you the
 same set the browser does — `headless: true` marks the ones created over MCP —
 and `delete_research_session` removes one, from either interface's point of
-view. Deleting is permanent and takes the notebook and provenance with it; the
+view. A session appears there once it has a stored transcript, so a session
+you created but have not run yet is absent from both. That is not a failed
+create: hold the `sessionId` that `create_research_session` gave you and use
+it. Deleting is permanent and takes the notebook and provenance with it; the
 project's cost ledger is kept, because the money was spent.
 
 Each project keeps at most 10 *live* sessions in memory. Older ones are closed

@@ -27,9 +27,25 @@ function importConfigWith(env: Record<string, string | undefined>) {
 }
 
 /**
+ * Relocate the home directory for a child process. `os.homedir()` reads
+ * `HOME` on POSIX and `USERPROFILE` on Windows, so a test that sets only the
+ * first silently does nothing on a Windows runner: the production paths stay
+ * at the real `~/.kady`, the temp ones never overlap them, and every
+ * assertion of a refusal fails. That is exactly how this file broke CI.
+ */
+const homeEnv = (home: string) => ({ HOME: home, USERPROFILE: home });
+
+/**
+ * A directory symlink that works without privileges on Windows, where the
+ * plain form needs developer mode or an elevated shell. A junction is
+ * resolved by `realpathSync` the same way, which is all these tests need.
+ */
+const linkDir = (target: string, link: string): void =>
+  fs.symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+
+/**
  * A throwaway home directory, so a test can exercise the production paths
- * without going anywhere near the real ones. `os.homedir()` follows `HOME` on
- * POSIX, which is what makes `~/.kady/...` relocatable for the child.
+ * without going anywhere near the real ones.
  */
 function withTempHome(body: (home: string) => void): void {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "kady-guard-home-"));
@@ -132,11 +148,11 @@ describe("the real-directory guard", () => {
       const realCache = path.join(home, ".kady", "skills-cache");
       fs.mkdirSync(realCache, { recursive: true });
       const link = path.join(home, "link-to-cache");
-      fs.symlinkSync(realCache, link);
+      linkDir(realCache, link);
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
-        HOME: home,
+        ...homeEnv(home),
         KADY_PROJECTS_ROOT: link,
       });
       expect(status).not.toBe(0);
@@ -152,11 +168,11 @@ describe("the real-directory guard", () => {
       const realPi = path.join(home, ".kady", "pi-agent");
       fs.mkdirSync(realPi, { recursive: true });
       const link = path.join(home, "link-to-pi");
-      fs.symlinkSync(realPi, link);
+      linkDir(realPi, link);
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
-        HOME: home,
+        ...homeEnv(home),
         PI_CODING_AGENT_DIR: link,
       });
       expect(status).not.toBe(0);
@@ -173,7 +189,7 @@ describe("the real-directory guard", () => {
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
-        HOME: home,
+        ...homeEnv(home),
         KADY_PROJECTS_ROOT: path.join(home, ".kady"),
       });
       expect(status).not.toBe(0);
@@ -188,7 +204,7 @@ describe("the real-directory guard", () => {
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
-        HOME: home,
+        ...homeEnv(home),
         PI_CODING_AGENT_DIR: scratch,
       });
       expect(status).not.toBe(0);
@@ -204,7 +220,7 @@ describe("the real-directory guard", () => {
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
-        HOME: home,
+        ...homeEnv(home),
         KADY_PROJECTS_ROOT: sibling,
       });
       expect(output).toContain("imported");

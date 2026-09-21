@@ -112,8 +112,14 @@ starts backend + frontend together; it is the only supported full-app path.
 
 ## Tests
 
-- Vitest, in `test/`. `KADY_PROJECTS_ROOT` is pointed at a temp dir via
-  `vitest.config.ts` so tests do not touch user projects.
+- Vitest, in `test/`. `KADY_PROJECTS_ROOT`, `PI_CODING_AGENT_DIR` and
+  `KADY_SKILLS_CACHE_DIR` are pointed at temp dirs via `vitest.config.ts` so
+  tests do not touch user data. Run the suite with `npm test` from `server/`
+  or `npm run verify -- server` from the repository root. Invoking vitest
+  where that config is not loaded — from the repository root, say — would
+  otherwise point the suite at the real directories, which dozens of test
+  files delete in `beforeEach`; `src/config.ts` throws rather than let that
+  run.
 - Backend tests are also run in CI on `ubuntu-latest` and `windows-latest`
   (see `.github/workflows/tests.yml`).
 - For new test files, follow the existing `*.test.ts` naming

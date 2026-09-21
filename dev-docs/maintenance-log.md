@@ -1,5 +1,36 @@
 # Maintenance Log
 
+### 2026-09-21 — Tests can no longer delete the real user directories (PR #44)
+
+- **Category:** test infrastructure / data safety
+- **Summary:** Sixty-three backend test files open with
+  `fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true })`, and
+  `skills-install.test.ts` does the same to `KADY_SKILLS_CACHE_DIR` and two
+  directories under `KADY_PI_AGENT_DIR`. That is safe only because
+  `server/vitest.config.ts` points all three at the OS temp dir. A vitest run
+  that does not load that config gets the production defaults instead, and
+  running a test file from the repository root is enough to miss it — there is
+  no config there, so vitest uses its own defaults and the `env` block never
+  applies. The failure mode is not a red test; it is the user's `projects/`
+  directory, sandboxes and venvs included, deleted in a `beforeEach`.
+  `src/config.ts` now treats `VITEST` as making the three overrides mandatory
+  and throws at import when any is missing or blank.
+- **Evidence this already happened:** `projects/` held a project named
+  `Observed` (created 2026-09-15T00:19:07Z) containing a session directory
+  `obs-1`. Both are fixture names from `test/session-observer.test.ts`. The
+  `default` project's `createdAt` is 2026-09-18, later than the stray one,
+  which is consistent with the directory having been wiped and rebuilt.
+  Reproduced directly: `npx vitest run --root . server/test/<file>` reports
+  `VITEST=true` with `KADY_PROJECTS_ROOT` undefined.
+- **Verification:** the guard fires from the repository root and the suite
+  still passes from `server/`. `test/config-guard.test.ts` covers five cases
+  in child processes, including that a blank value is not an answer and that
+  an unset `VITEST` — the running application — is left alone. Server suite
+  1443 passed / 5 skipped, lint and typecheck clean.
+- **Why the guard is in `src/config.ts` and not a vitest setup file:** a setup
+  file is configuration, and configuration not being loaded is the whole
+  failure. The check has to live in the module the tests import.
+
 ### 2026-09-20 — Real-time waits across the backend suite (PR #42)
 
 - **Category:** CI / test infrastructure

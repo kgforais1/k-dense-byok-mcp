@@ -53,6 +53,50 @@ export const KADY_SKILLS_CACHE_DIR = path.resolve(
     path.join(os.homedir(), ".kady", "skills-cache"),
 );
 
+/**
+ * Refuse to hand a test run the real user directories.
+ *
+ * Sixty-three test files begin with `fs.rmSync(PROJECTS_ROOT, { recursive:
+ * true, force: true })`, and `skills-install.test.ts` does the same to the
+ * skills cache and the installed-skills directories under `~/.kady`. That is
+ * safe only because `server/vitest.config.ts` points all three at the OS temp
+ * dir — and a vitest run that does not load that config gets the production
+ * defaults instead. Running a test file from the repository root is enough to
+ * miss it: there is no config there, so `vitest` uses its own defaults and the
+ * env block never applies. The result is not a failing test. It is the user's
+ * projects directory, sandboxes and venvs included, deleted in a `beforeEach`.
+ *
+ * That has already happened once here, on 2026-09-14: `projects/` was wiped
+ * and left holding a project named `Observed` with a session directory called
+ * `obs-1`, which are the fixture names in `test/session-observer.test.ts`.
+ *
+ * So `VITEST` — which vitest sets whether or not it found a config — turns the
+ * three overrides into requirements. A test run that reaches this line without
+ * them is one config away from destroying real data, and failing at import is
+ * the only warning that arrives before the first `rmSync`.
+ */
+if (process.env.VITEST) {
+  const missing = (
+    [
+      ["KADY_PROJECTS_ROOT", process.env.KADY_PROJECTS_ROOT],
+      ["PI_CODING_AGENT_DIR", process.env.PI_CODING_AGENT_DIR],
+      ["KADY_SKILLS_CACHE_DIR", process.env.KADY_SKILLS_CACHE_DIR],
+    ] as const
+  )
+    .filter(([, value]) => !value?.trim())
+    .map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(
+      `Refusing to run tests against the real user directories: ${missing.join(", ")} ` +
+        `${missing.length === 1 ? "is" : "are"} unset, so this run would use ` +
+        `${PROJECTS_ROOT} and ${KADY_PI_AGENT_DIR}, which the suite deletes. ` +
+        `server/vitest.config.ts sets all three — run tests with "npm test" from ` +
+        `server/, or "npm run verify -- server" from the repository root, rather ` +
+        `than invoking vitest somewhere that config is not loaded.`,
+    );
+  }
+}
+
 export const DEFAULT_PROJECT_ID = "default";
 
 /** HTTP port for the backend (matches the old ADK server). */

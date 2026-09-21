@@ -22,7 +22,16 @@
   The comparison is on canonical paths: a symlink whose target is the
   production directory *is* that directory, and comparing strings would admit
   it. `realpathSync` throws on a path that does not exist yet, so both sides
-  fall back to lexical resolution there. Raised by CodeRabbit.
+  fall back to lexical resolution there — but only for `ENOENT`, because any
+  other failure means the path could not be read and degrading to a string
+  comparison would reopen the hole. Raised by CodeRabbit.
+- **Overlap, not equality, and against every production path:** a directory
+  inside the production tree would be deleted from within, and one containing
+  it is worse — a `KADY_PROJECTS_ROOT` of `~/.kady` takes the Pi auth store
+  and the skills cache with it. Each variable is checked against all three
+  production paths rather than its own, which is what catches that case, since
+  `~/.kady` looks nothing like the projects root it stands in for. Raised by a
+  `stepfun/step-3.7-flash:free` review.
 - **Evidence this already happened:** `projects/` held a project named
   `Observed` (created 2026-09-15T00:19:07Z) containing a session directory
   `obs-1`. Both are fixture names from `test/session-observer.test.ts`. The

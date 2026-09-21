@@ -26,6 +26,20 @@ function importConfigWith(env: Record<string, string | undefined>) {
   return { status: child.status, output: `${child.stdout}${child.stderr}` };
 }
 
+/**
+ * A throwaway home directory, so a test can exercise the production paths
+ * without going anywhere near the real ones. `os.homedir()` follows `HOME` on
+ * POSIX, which is what makes `~/.kady/...` relocatable for the child.
+ */
+function withTempHome(body: (home: string) => void): void {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "kady-guard-home-"));
+  try {
+    body(home);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 const NO_OVERRIDES = {
   KADY_PROJECTS_ROOT: undefined,
   PI_CODING_AGENT_DIR: undefined,
@@ -128,38 +142,81 @@ describe("the real-directory guard", () => {
   });
 
   it("refuses a symlinked Pi agent directory too, not just the projects root", () => {
-    const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-guard-link-pi-"));
-    const link = path.join(linkDir, "pi-agent");
-    const realPi = path.join(os.homedir(), ".kady", "pi-agent");
-    // Skipped rather than created when it is absent. Creating it would mean a
-    // test writing into the very directory this guard exists to protect, and
-    // a dangling link cannot canonicalise to anything: `realpathSync` throws
-    // and both sides fall back to lexical resolution, which is the behaviour
-    // the other cases already cover.
-    if (!fs.existsSync(realPi)) {
-      fs.rmSync(linkDir, { recursive: true, force: true });
-      return;
-    }
-    fs.symlinkSync(realPi, link);
-    try {
+    // Relocated rather than skipped. This used to bail out when
+    // `~/.kady/pi-agent` was absent, which is most machines and every CI
+    // runner — so the one case it named was the one it never ran.
+    withTempHome((home) => {
+      const realPi = path.join(home, ".kady", "pi-agent");
+      fs.mkdirSync(realPi, { recursive: true });
+      const link = path.join(home, "link-to-pi");
+      fs.symlinkSync(realPi, link);
       const { status, output } = importConfigWith({
         VITEST: "true",
         ...SAFE,
+        HOME: home,
         PI_CODING_AGENT_DIR: link,
       });
       expect(status).not.toBe(0);
       expect(output).toContain("PI_CODING_AGENT_DIR resolves to");
-    } finally {
-      fs.unlinkSync(link);
-      fs.rmSync(linkDir, { recursive: true, force: true });
-    }
+    });
+  });
+
+  it("refuses a directory that contains a production one", () => {
+    // The dangerous direction. `~/.kady` is not equal to `~/.kady/pi-agent`,
+    // so an equality check admits it — and then a `beforeEach` that removes
+    // the tree takes the Pi auth store and the skills cache with it.
+    withTempHome((home) => {
+      fs.mkdirSync(path.join(home, ".kady", "pi-agent"), { recursive: true });
+      const { status, output } = importConfigWith({
+        VITEST: "true",
+        ...SAFE,
+        HOME: home,
+        KADY_PROJECTS_ROOT: path.join(home, ".kady"),
+      });
+      expect(status).not.toBe(0);
+      expect(output).toContain("KADY_PROJECTS_ROOT resolves to");
+    });
+  });
+
+  it("refuses a directory inside a production one", () => {
+    withTempHome((home) => {
+      const scratch = path.join(home, ".kady", "pi-agent", "scratch");
+      fs.mkdirSync(scratch, { recursive: true });
+      const { status, output } = importConfigWith({
+        VITEST: "true",
+        ...SAFE,
+        HOME: home,
+        PI_CODING_AGENT_DIR: scratch,
+      });
+      expect(status).not.toBe(0);
+      expect(output).toContain("PI_CODING_AGENT_DIR resolves to");
+    });
+  });
+
+  it("allows a sibling of a production directory, not just anything under home", () => {
+    // The containment check must not become "refuse everything near home".
+    withTempHome((home) => {
+      const sibling = path.join(home, ".kady-tests", "projects");
+      fs.mkdirSync(sibling, { recursive: true });
+      const { status, output } = importConfigWith({
+        VITEST: "true",
+        ...SAFE,
+        HOME: home,
+        KADY_PROJECTS_ROOT: sibling,
+      });
+      expect(output).toContain("imported");
+      expect(status).toBe(0);
+    });
   });
 
   it("allows a temp directory that is not a link to anything real", () => {
-    // The converse of the two above: canonicalising must not turn an ordinary
-    // temp root into a false positive. On macOS `os.tmpdir()` sits under
-    // `/var`, itself a link to `/private/var`, so this path canonicalises to
-    // something quite different from how it was spelled.
+    // The converse of the cases above: canonicalising must not turn an
+    // ordinary temp root into a false positive, which would throw at import
+    // and take the whole suite with it. It does not catch a regression back
+    // to string comparison — a temp path is lexically unrelated to a
+    // production one, so both comparisons accept it — and it is not meant
+    // to. It guards the direction where this check fails dangerously: by
+    // refusing work that was fine.
     const realTemp = fs.mkdtempSync(path.join(os.tmpdir(), "kady-guard-real-"));
     try {
       const { status, output } = importConfigWith({

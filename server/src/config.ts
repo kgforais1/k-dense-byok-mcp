@@ -118,18 +118,37 @@ if (process.env.VITEST) {
   const canonical = (candidate: string): string => {
     try {
       return fs.realpathSync(candidate);
-    } catch {
+    } catch (error) {
+      // "Not there yet" is the only acceptable reason to fall back. Anything
+      // else — a permission error, a symlink loop — means the path could not
+      // be read, and quietly degrading to a lexical comparison would restore
+      // the alias hole this exists to close. Fail closed instead.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return path.resolve(candidate);
     }
   };
+  // Equality is not enough in either direction. A directory inside the
+  // production tree is one the suite would delete from within
+  // (`~/.kady/pi-agent/scratch`), and a directory containing it is worse: a
+  // `KADY_PROJECTS_ROOT` of `~/.kady` takes the Pi auth store and the skills
+  // cache with it when a `beforeEach` removes the tree.
+  const overlaps = (a: string, b: string): boolean =>
+    a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+  // Every production path, checked against every variable — not each variable
+  // against its own default. `~/.kady` is nothing like the projects root it
+  // would be standing in for, which is exactly why pointing
+  // `KADY_PROJECTS_ROOT` at it has to be caught by the Pi and skills paths.
+  const productionPaths = guarded.map(({ production }) => canonical(production));
   // A blank value is reported separately rather than resolved. `PROJECTS_ROOT`
   // treats `"   "` as a path, so it lands somewhere harmless-looking that is
   // neither the production directory nor a temp one, and saying it "resolves
   // to /…/server/   " would send the reader looking for a directory instead of
   // at their own environment.
   const unsafe = guarded
-    .filter(({ raw, resolved, production }) =>
-      raw !== undefined && !raw.trim() ? true : canonical(resolved) === canonical(production),
+    .filter(({ raw, resolved }) =>
+      raw !== undefined && !raw.trim()
+        ? true
+        : productionPaths.some((production) => overlaps(canonical(resolved), production)),
     )
     .map(({ name, raw, resolved }) =>
       raw !== undefined && !raw.trim() ? `${name} is blank` : `${name} resolves to ${resolved}`,

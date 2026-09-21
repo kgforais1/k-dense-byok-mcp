@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +31,12 @@ const NO_OVERRIDES = {
   KADY_SKILLS_CACHE_DIR: undefined,
 };
 
+const SAFE = {
+  KADY_PROJECTS_ROOT: "/tmp/kady-guard-projects",
+  PI_CODING_AGENT_DIR: "/tmp/kady-guard-pi",
+  KADY_SKILLS_CACHE_DIR: "/tmp/kady-guard-skills",
+};
+
 describe("the real-directory guard", () => {
   it("refuses a vitest run that has no directory overrides, naming all three", () => {
     const { status, output } = importConfigWith({ VITEST: "true", ...NO_OVERRIDES });
@@ -44,36 +51,58 @@ describe("the real-directory guard", () => {
     expect(output).toContain("npm test");
   });
 
+  it("refuses a variable that is set, but set to the real directory", () => {
+    // Being set is not the same as being safe. `env.ts` assigns
+    // `PI_CODING_AGENT_DIR` the real `~/.kady/pi-agent` whenever it is unset,
+    // so anything that imports it before `config.ts` would satisfy a presence
+    // check while pointing the suite at the user's Pi credentials.
+    const { status, output } = importConfigWith({
+      VITEST: "true",
+      ...SAFE,
+      PI_CODING_AGENT_DIR: path.join(os.homedir(), ".kady", "pi-agent"),
+    });
+    expect(status).not.toBe(0);
+    expect(output).toContain("PI_CODING_AGENT_DIR resolves to");
+    expect(output).not.toContain("KADY_PROJECTS_ROOT resolves to");
+  });
+
+  it("refuses a projects root pointed at the repository's own directory", () => {
+    const { status, output } = importConfigWith({
+      VITEST: "true",
+      ...SAFE,
+      KADY_PROJECTS_ROOT: path.join(serverDir, "..", "projects"),
+    });
+    expect(status).not.toBe(0);
+    expect(output).toContain("KADY_PROJECTS_ROOT resolves to");
+  });
+
   it("refuses when only one override is missing, and names only that one", () => {
     const { status, output } = importConfigWith({
       VITEST: "true",
       ...NO_OVERRIDES,
-      PI_CODING_AGENT_DIR: "/tmp/kady-guard-pi",
-      KADY_SKILLS_CACHE_DIR: "/tmp/kady-guard-skills",
+      PI_CODING_AGENT_DIR: SAFE.PI_CODING_AGENT_DIR,
+      KADY_SKILLS_CACHE_DIR: SAFE.KADY_SKILLS_CACHE_DIR,
     });
     expect(status).not.toBe(0);
-    expect(output).toContain("KADY_PROJECTS_ROOT is unset");
-    expect(output).not.toContain("PI_CODING_AGENT_DIR,");
+    expect(output).toContain("KADY_PROJECTS_ROOT resolves to");
+    expect(output).not.toContain("PI_CODING_AGENT_DIR resolves to");
   });
 
   it("treats a blank override as missing, not as an answer", () => {
     const { status, output } = importConfigWith({
       VITEST: "true",
+      ...SAFE,
       KADY_PROJECTS_ROOT: "   ",
-      PI_CODING_AGENT_DIR: "/tmp/kady-guard-pi",
-      KADY_SKILLS_CACHE_DIR: "/tmp/kady-guard-skills",
     });
     expect(status).not.toBe(0);
-    expect(output).toContain("KADY_PROJECTS_ROOT is unset");
+    // Reported as blank rather than resolved: `"   "` is a legal relative path,
+    // so resolving it would name a directory nobody meant and send the reader
+    // looking for it instead of at their environment.
+    expect(output).toContain("KADY_PROJECTS_ROOT is blank");
   });
 
   it("allows the overridden run the suite actually uses", () => {
-    const { status, output } = importConfigWith({
-      VITEST: "true",
-      KADY_PROJECTS_ROOT: "/tmp/kady-guard-projects",
-      PI_CODING_AGENT_DIR: "/tmp/kady-guard-pi",
-      KADY_SKILLS_CACHE_DIR: "/tmp/kady-guard-skills",
-    });
+    const { status, output } = importConfigWith({ VITEST: "true", ...SAFE });
     expect(output).toContain("imported");
     expect(status).toBe(0);
   });

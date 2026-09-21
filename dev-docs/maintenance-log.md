@@ -13,8 +13,12 @@
   no config there, so vitest uses its own defaults and the `env` block never
   applies. The failure mode is not a red test; it is the user's `projects/`
   directory, sandboxes and venvs included, deleted in a `beforeEach`.
-  `src/config.ts` now treats `VITEST` as making the three overrides mandatory
-  and throws at import when any is missing or blank.
+  `src/config.ts` now throws at import when `VITEST` is set and any of the
+  three resolves to its production path. The check is on the resolved value
+  rather than on whether the variable was set: `env.ts` assigns
+  `PI_CODING_AGENT_DIR` the real `~/.kady/pi-agent` when it is unset, so a
+  presence check would have accepted that from anything importing `env.ts`
+  first. Found by a `nvidia/moonshotai/kimi-k3` review of the first version.
 - **Evidence this already happened:** `projects/` held a project named
   `Observed` (created 2026-09-15T00:19:07Z) containing a session directory
   `obs-1`. Both are fixture names from `test/session-observer.test.ts`. The
@@ -22,11 +26,15 @@
   which is consistent with the directory having been wiped and rebuilt.
   Reproduced directly: `npx vitest run --root . server/test/<file>` reports
   `VITEST=true` with `KADY_PROJECTS_ROOT` undefined.
-- **Verification:** the guard fires from the repository root and the suite
-  still passes from `server/`. `test/config-guard.test.ts` covers five cases
-  in child processes, including that a blank value is not an answer and that
-  an unset `VITEST` — the running application — is left alone. Server suite
-  1443 passed / 5 skipped, lint and typecheck clean.
+- **Verification:** the guard fires from the repository root, naming all three
+  real paths, and the suite still passes from `server/`.
+  `test/config-guard.test.ts` covers seven cases in child processes, including
+  a variable set to the real directory, a projects root pointed at the
+  repository's own, a blank value, and an unset `VITEST` — the running
+  application — which is left alone. The only test files that delete a path
+  not derived from these three build it with `fs.mkdtempSync` under
+  `os.tmpdir()`, so nothing reaches real data without importing `config.ts`.
+  Server suite 1445 passed / 5 skipped, lint and typecheck clean.
 - **Why the guard is in `src/config.ts` and not a vitest setup file:** a setup
   file is configuration, and configuration not being loaded is the whole
   failure. The check has to live in the module the tests import.

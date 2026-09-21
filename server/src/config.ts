@@ -58,46 +58,73 @@ export const KADY_SKILLS_CACHE_DIR = path.resolve(
  *
  * Sixty-three test files begin with `fs.rmSync(PROJECTS_ROOT, { recursive:
  * true, force: true })`, and `skills-install.test.ts` does the same to the
- * skills cache and the installed-skills directories under `~/.kady`. That is
- * safe only because `server/vitest.config.ts` points all three at the OS temp
- * dir — and a vitest run that does not load that config gets the production
- * defaults instead. Running a test file from the repository root is enough to
- * miss it: there is no config there, so `vitest` uses its own defaults and the
- * env block never applies. The result is not a failing test. It is the user's
+ * skills cache and two directories under `KADY_PI_AGENT_DIR`. That is safe
+ * only because `server/vitest.config.ts` points all three at the OS temp dir —
+ * and a vitest run that does not load that config gets the production defaults
+ * instead. Running a test file from the repository root is enough to miss it:
+ * there is no config there, so `vitest` uses its own defaults and the env
+ * block never applies. The result is not a failing test. It is the user's
  * projects directory, sandboxes and venvs included, deleted in a `beforeEach`.
  *
  * That has already happened once here, on 2026-09-14: `projects/` was wiped
  * and left holding a project named `Observed` with a session directory called
  * `obs-1`, which are the fixture names in `test/session-observer.test.ts`.
  *
- * So `VITEST` — which vitest sets whether or not it found a config — turns the
- * three overrides into requirements. A test run that reaches this line without
- * them is one config away from destroying real data, and failing at import is
- * the only warning that arrives before the first `rmSync`.
+ * So `VITEST` — which vitest sets whether or not it found a config — turns a
+ * production path into a startup error. The check is on the resolved value
+ * rather than on whether the variable was set, because "set" is not the same
+ * as "safe": `env.ts` assigns `PI_CODING_AGENT_DIR` the real `~/.kady/pi-agent`
+ * when it is unset, so a presence check would accept it from anything that
+ * imported `env.ts` first. Comparing paths covers that, covers a variable
+ * deliberately pointed at real data, and still covers the unset case, which
+ * resolves to the default by definition.
  *
  * Marked because `config.ts` is upstream-owned and this is an in-place
  * insertion, so a future `git merge upstream/main` has a seam to resolve
- * against. The block is self-contained: it reads three environment variables
- * and throws, and nothing upstream depends on it.
+ * against. The block is self-contained: it reads three resolved paths and
+ * throws, and nothing upstream depends on it.
  */
 if (process.env.VITEST) {
-  const missing = (
-    [
-      ["KADY_PROJECTS_ROOT", process.env.KADY_PROJECTS_ROOT],
-      ["PI_CODING_AGENT_DIR", process.env.PI_CODING_AGENT_DIR],
-      ["KADY_SKILLS_CACHE_DIR", process.env.KADY_SKILLS_CACHE_DIR],
-    ] as const
-  )
-    .filter(([, value]) => !value?.trim())
-    .map(([name]) => name);
-  if (missing.length > 0) {
+  const home = os.homedir();
+  const guarded = [
+    {
+      name: "KADY_PROJECTS_ROOT",
+      raw: process.env.KADY_PROJECTS_ROOT,
+      resolved: PROJECTS_ROOT,
+      production: path.join(REPO_ROOT, "projects"),
+    },
+    {
+      name: "PI_CODING_AGENT_DIR",
+      raw: process.env.PI_CODING_AGENT_DIR,
+      resolved: KADY_PI_AGENT_DIR,
+      production: path.join(home, ".kady", "pi-agent"),
+    },
+    {
+      name: "KADY_SKILLS_CACHE_DIR",
+      raw: process.env.KADY_SKILLS_CACHE_DIR,
+      resolved: KADY_SKILLS_CACHE_DIR,
+      production: path.join(home, ".kady", "skills-cache"),
+    },
+  ];
+  // A blank value is reported separately rather than resolved. `PROJECTS_ROOT`
+  // treats `"   "` as a path, so it lands somewhere harmless-looking that is
+  // neither the production directory nor a temp one, and saying it "resolves
+  // to /…/server/   " would send the reader looking for a directory instead of
+  // at their own environment.
+  const unsafe = guarded
+    .filter(({ raw, resolved, production }) =>
+      raw !== undefined && !raw.trim() ? true : resolved === path.resolve(production),
+    )
+    .map(({ name, raw, resolved }) =>
+      raw !== undefined && !raw.trim() ? `${name} is blank` : `${name} resolves to ${resolved}`,
+    );
+  if (unsafe.length > 0) {
     throw new Error(
-      `Refusing to run tests against the real user directories: ${missing.join(", ")} ` +
-        `${missing.length === 1 ? "is" : "are"} unset, so this run would use ` +
-        `${PROJECTS_ROOT} and ${KADY_PI_AGENT_DIR}, which the suite deletes. ` +
-        'server/vitest.config.ts sets all three — run tests with "npm test" from ' +
-        'server/, or "npm run verify -- server" from the repository root, rather ' +
-        "than invoking vitest somewhere that config is not loaded.",
+      `Refusing to run tests against the real user directories: ${unsafe.join("; ")}, ` +
+        `which the suite deletes. server/vitest.config.ts points all three at the ` +
+        `OS temp dir — run tests with "npm test" from server/, or ` +
+        `"npm run verify -- server" from the repository root, rather than invoking ` +
+        `vitest somewhere that config is not loaded.`,
     );
   }
 }

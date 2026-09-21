@@ -1,5 +1,64 @@
 # Maintenance Log
 
+### 2026-09-21 — Tests can no longer delete the real user directories (PR #44)
+
+- **Category:** test infrastructure / data safety
+- **Summary:** Sixty-three backend test files open with
+  `fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true })`, and
+  `skills-install.test.ts` does the same to `KADY_SKILLS_CACHE_DIR` and two
+  directories under `KADY_PI_AGENT_DIR`. That is safe only because
+  `server/vitest.config.ts` points all three at the OS temp dir. A vitest run
+  that does not load that config gets the production defaults instead, and
+  running a test file from the repository root is enough to miss it — there is
+  no config there, so vitest uses its own defaults and the `env` block never
+  applies. The failure mode is not a red test; it is the user's `projects/`
+  directory, sandboxes and venvs included, deleted in a `beforeEach`.
+  `src/config.ts` now throws at import when `VITEST` is set and any of the
+  three resolves to its production path. The check is on the resolved value
+  rather than on whether the variable was set: `env.ts` assigns
+  `PI_CODING_AGENT_DIR` the real `~/.kady/pi-agent` when it is unset, so a
+  presence check would have accepted that from anything importing `env.ts`
+  first. Found by a `nvidia/moonshotai/kimi-k3` review of the first version.
+  The comparison is on canonical paths: a symlink whose target is the
+  production directory *is* that directory, and comparing strings would admit
+  it. `realpathSync` throws on a path that does not exist yet, so both sides
+  fall back to lexical resolution there — but only for `ENOENT`, because any
+  other failure means the path could not be read and degrading to a string
+  comparison would reopen the hole. Raised by CodeRabbit.
+- **Overlap, not equality, and against every production path:** a directory
+  inside the production tree would be deleted from within, and one containing
+  it is worse — a `KADY_PROJECTS_ROOT` of `~/.kady` takes the Pi auth store
+  and the skills cache with it. Each variable is checked against all three
+  production paths rather than its own, which is what catches that case, since
+  `~/.kady` looks nothing like the projects root it stands in for. Raised by a
+  `stepfun/step-3.7-flash:free` review.
+- **Evidence this already happened:** `projects/` held a project named
+  `Observed` (created 2026-09-15T00:19:07Z) containing a session directory
+  `obs-1`. Both are fixture names from `test/session-observer.test.ts`. The
+  `default` project's `createdAt` is 2026-09-18, later than the stray one,
+  which is consistent with the directory having been wiped and rebuilt.
+  Reproduced directly: `npx vitest run --root . server/test/<file>` reports
+  `VITEST=true` with `KADY_PROJECTS_ROOT` undefined.
+- **Verification:** the guard fires from the repository root, naming all three
+  real paths, and the suite still passes from `server/`.
+  `test/config-guard.test.ts` covers seven cases in child processes, including
+  a variable set to the real directory, a projects root pointed at the
+  repository's own, a blank value, and an unset `VITEST` — the running
+  application — which is left alone. The only test files that delete a path
+  not derived from these three build it with `fs.mkdtempSync` under
+  `os.tmpdir()`, so nothing reaches real data without importing `config.ts`.
+  Server suite 1445 passed / 5 skipped, lint and typecheck clean.
+- **The deliberate escape hatch, for the record:** `server/vitest.config.ts`
+  honours `VITEST_PROJECTS_ROOT`, `VITEST_PI_AGENT_DIR` and
+  `VITEST_SKILLS_CACHE_DIR` — all three, not just the first — and the guard
+  accepts whatever they name. Pointing one at real data would still let the
+  suite delete it. That takes a `VITEST_`-prefixed variable set on purpose,
+  which is a different act from the accident this entry is about.
+
+- **Why the guard is in `src/config.ts` and not a vitest setup file:** a setup
+  file is configuration, and configuration not being loaded is the whole
+  failure. The check has to live in the module the tests import.
+
 ### 2026-09-20 — Real-time waits across the backend suite (PR #42)
 
 - **Category:** CI / test infrastructure

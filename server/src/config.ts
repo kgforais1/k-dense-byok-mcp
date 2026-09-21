@@ -5,6 +5,7 @@
  * on-disk `projects/` layout (so existing user data is preserved) but drops the
  * Gemini-CLI / LiteLLM / MCP machinery.
  */
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +53,121 @@ export const KADY_SKILLS_CACHE_DIR = path.resolve(
   process.env.KADY_SKILLS_CACHE_DIR?.trim() ||
     path.join(os.homedir(), ".kady", "skills-cache"),
 );
+
+/**
+ * FORK: refuse to hand a test run the real user directories.
+ *
+ * Sixty-three test files begin with `fs.rmSync(PROJECTS_ROOT, { recursive:
+ * true, force: true })`, and `skills-install.test.ts` does the same to the
+ * skills cache and two directories under `KADY_PI_AGENT_DIR`. That is safe
+ * only because `server/vitest.config.ts` points all three at the OS temp dir —
+ * and a vitest run that does not load that config gets the production defaults
+ * instead. Running a test file from the repository root is enough to miss it:
+ * there is no config there, so `vitest` uses its own defaults and the env
+ * block never applies. The result is not a failing test. It is the user's
+ * projects directory, sandboxes and venvs included, deleted in a `beforeEach`.
+ *
+ * That has already happened once here, on 2026-09-14: `projects/` was wiped
+ * and left holding a project named `Observed` with a session directory called
+ * `obs-1`, which are the fixture names in `test/session-observer.test.ts`.
+ *
+ * So `VITEST` — which vitest sets whether or not it found a config — turns a
+ * production path into a startup error. The check is on the resolved value
+ * rather than on whether the variable was set, because "set" is not the same
+ * as "safe": `env.ts` assigns `PI_CODING_AGENT_DIR` the real `~/.kady/pi-agent`
+ * when it is unset, so a presence check would accept it from anything that
+ * imported `env.ts` first. Comparing paths covers that, covers a variable
+ * deliberately pointed at real data, and still covers the unset case, which
+ * resolves to the default by definition.
+ *
+ * Marked because `config.ts` is upstream-owned and this is an in-place
+ * insertion, so a future `git merge upstream/main` has a seam to resolve
+ * against. The block is self-contained: it reads three resolved paths and
+ * throws, and nothing upstream depends on it.
+ */
+if (process.env.VITEST) {
+  const home = os.homedir();
+  const guarded = [
+    {
+      name: "KADY_PROJECTS_ROOT",
+      raw: process.env.KADY_PROJECTS_ROOT,
+      resolved: PROJECTS_ROOT,
+      production: path.join(REPO_ROOT, "projects"),
+    },
+    {
+      name: "PI_CODING_AGENT_DIR",
+      raw: process.env.PI_CODING_AGENT_DIR,
+      resolved: KADY_PI_AGENT_DIR,
+      production: path.join(home, ".kady", "pi-agent"),
+    },
+    {
+      name: "KADY_SKILLS_CACHE_DIR",
+      raw: process.env.KADY_SKILLS_CACHE_DIR,
+      resolved: KADY_SKILLS_CACHE_DIR,
+      production: path.join(home, ".kady", "skills-cache"),
+    },
+  ];
+  // Compare what the paths actually point at, not how they are spelled. A
+  // symlink whose target is the production directory is that directory, and a
+  // string comparison would wave it through; `/tmp` being a link to
+  // `/private/tmp` on macOS is the everyday reminder that the two differ.
+  // `realpathSync` throws on a path that does not exist yet — a temp root
+  // about to be created, or `~/.kady/skills-cache` on a fresh machine — so
+  // fall back to lexical resolution there, which is all a nonexistent path
+  // can support.
+  const canonical = (candidate: string): string => {
+    try {
+      return fs.realpathSync(candidate);
+    } catch (error) {
+      // "Not there yet" is the only acceptable reason to fall back. Anything
+      // else — a permission error, a symlink loop — means the path could not
+      // be read, and quietly degrading to a lexical comparison would restore
+      // the alias hole this exists to close. Fail closed instead.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // One case the fallback does admit: a symlink to a production directory
+      // that does not exist yet canonicalises to nothing on either side, so
+      // the comparison is lexical and the link is accepted. Left alone
+      // deliberately — a directory that does not exist holds nothing to lose,
+      // and by the time it does, the guard has long since run.
+      return path.resolve(candidate);
+    }
+  };
+  // Equality is not enough in either direction. A directory inside the
+  // production tree is one the suite would delete from within
+  // (`~/.kady/pi-agent/scratch`), and a directory containing it is worse: a
+  // `KADY_PROJECTS_ROOT` of `~/.kady` takes the Pi auth store and the skills
+  // cache with it when a `beforeEach` removes the tree.
+  const overlaps = (a: string, b: string): boolean =>
+    a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+  // Every production path, checked against every variable — not each variable
+  // against its own default. `~/.kady` is nothing like the projects root it
+  // would be standing in for, which is exactly why pointing
+  // `KADY_PROJECTS_ROOT` at it has to be caught by the Pi and skills paths.
+  const productionPaths = guarded.map(({ production }) => canonical(production));
+  // A blank value is reported separately rather than resolved. `PROJECTS_ROOT`
+  // treats `"   "` as a path, so it lands somewhere harmless-looking that is
+  // neither the production directory nor a temp one, and saying it "resolves
+  // to /…/server/   " would send the reader looking for a directory instead of
+  // at their own environment.
+  const unsafe = guarded
+    .filter(({ raw, resolved }) =>
+      raw !== undefined && !raw.trim()
+        ? true
+        : productionPaths.some((production) => overlaps(canonical(resolved), production)),
+    )
+    .map(({ name, raw, resolved }) =>
+      raw !== undefined && !raw.trim() ? `${name} is blank` : `${name} resolves to ${resolved}`,
+    );
+  if (unsafe.length > 0) {
+    throw new Error(
+      `Refusing to run tests against the real user directories: ${unsafe.join("; ")}, ` +
+        "which the suite deletes. server/vitest.config.ts points all three at the " +
+        'OS temp dir — run tests with "npm test" from server/, or ' +
+        '"npm run verify -- server" from the repository root, rather than invoking ' +
+        "vitest somewhere that config is not loaded.",
+    );
+  }
+}
 
 export const DEFAULT_PROJECT_ID = "default";
 

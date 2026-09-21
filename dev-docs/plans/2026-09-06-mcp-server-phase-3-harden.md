@@ -38,16 +38,16 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 ## Implementation sequence
 
 - [x] Write `docs/kady-as-mcp-server.md` and register it per `docs/development/workflow.md` (Adding a new document) and `scripts/repo-manifest.json`.
-- [ ] Validate that doc with a fresh-client walkthrough. Unchecked deliberately: the transcript that backs the "installable by a third party" claim does not exist yet, and the doc is written from the code rather than from a run.
+- [x] Validate that doc with a fresh-client walkthrough. Done 2026-09-20 — see [Walkthrough record](#walkthrough-record-2026-09-20). Three doc defects found and fixed; no server defect.
 - [x] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts. Decided below: the documented HTTP endpoint, with no npx package.
 - [x] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`. Both are built; the rest of §10 is still expand-as-needed.
 - [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
 
-The two unticked items above are deliberately still open: the CLI reuse map,
-and the fresh-client walkthrough transcript that backs the "installable by a
-third party" acceptance measure. Do not archive this plan until they are done.
+One unticked item is deliberately still open: the CLI reuse map. Do not
+archive this plan until it is done. The fresh-client walkthrough that backs the
+"installable by a third party" acceptance measure is recorded below.
 The documentation item, the carried-in review work, the two session-management
 tools below and the packaging decision have landed.
 
@@ -291,3 +291,53 @@ and every test while breaking only the MCP path.
    The rest stays expand-as-needed, which is the standing answer rather than an
    open question.
 3. Does anything in Phase 2 force an SDK upgrade (deliberate, test-gated path)?
+
+## Walkthrough record (2026-09-20)
+
+Run against `main` at `ef8403a`, on macOS, with a client that had only this
+repository's `docs/kady-as-mcp-server.md` to work from. Transport exercised
+directly over Streamable HTTP rather than through a vendor client, so every
+request and response was inspectable; a vendor client adds a config file and
+nothing else to the protocol.
+
+**What was exercised.** `KADY_MCP_ENABLED=1 npm start -- --no-browser`;
+`initialize` (server answered `protocolVersion 2025-06-18`, `serverInfo
+kady/0.10.0`, and issued an `Mcp-Session-Id`); `notifications/initialized`
+(202); `tools/list` (seven tools, exactly the seven the doc names);
+`list_projects`; `create_research_session` (returned `interviewDisabled: true`,
+as documented); `start_research_run`; `poll_run` to `done`;
+`get_session_history`; `list_research_sessions` (`headless: true`, as
+documented); `delete_research_session`, then a list confirming it was gone;
+and `poll_run` against a made-up run id, which answered `status: "unknown"`
+rather than failing.
+
+The run used `ollama/qwen3:0.6b` through the `model` override, so the
+walkthrough cost nothing. It returned `status: "done"`, `producedOutput:
+true`, `lastSeq: 84`, and the model's reply — `pong` — was in the frames.
+
+The loopback guard was checked separately and behaves exactly as the doc
+claims: `KADY_MCP_ENABLED=1 KADY_HOST=0.0.0.0` and `KADY_HOST=localhost` both
+refuse to start, with `KADY_MCP_ENABLED requires a loopback KADY_HOST`
+(`server/src/config.ts:79`).
+
+**Three defects found, all in the documentation.**
+
+1. **`poll_run` takes `sessionId` as well as `runId`.** The doc described it by
+   run id alone, so following it produced a validation error on the third step
+   of the five-step loop — the first thing a new client would hit, and it reads
+   like the server is broken. Fixed in the tool table and in *Reading
+   `poll_run`*.
+2. **`start_research_run` accepts `model` and `thinkingLevel`.** Neither was
+   documented, though the model override is exactly what a client needs to pin
+   a run to a cheap or local model. It is what kept this walkthrough free.
+   Added to the tool table.
+3. **`list_research_sessions` is empty until a session has run.** True to the
+   doc's claim that it shows what the browser shows, but a client that calls
+   create and then list sees nothing and concludes the create failed. Now said
+   outright.
+
+**No server defect was found.** Two apparent protocol faults during the
+walkthrough — a JSON parse failure on an SSE frame, and an empty tool response
+— were both artefacts of the ad-hoc shell client, not of Kady. The bytes on
+the wire were valid in every case. Recorded because the next person to do this
+will hit the same two and should not spend the time twice.

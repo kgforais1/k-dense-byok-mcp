@@ -105,14 +105,20 @@ Decided and built, so no longer open questions:
   the five-tool research loop plus `list_research_sessions` and
   `delete_research_session`. The rest of the §10 surface is expand-as-needed.
 
+Done 2026-09-20: the setup doc is validated. A client working only from
+`docs/kady-as-mcp-server.md` drove the whole seven-tool surface over
+Streamable HTTP, including a completed run, and the loopback guard was
+confirmed to refuse both `0.0.0.0` and `localhost`. Three documentation
+defects came out of it and are fixed; the server itself needed no change. The
+transcript is the [walkthrough
+record](plans/2026-09-06-mcp-server-phase-3-harden.md#walkthrough-record-2026-09-20).
+
 Still open, tracked in the
 [Phase 3 plan](plans/2026-09-06-mcp-server-phase-3-harden.md):
 
-- Validate the setup doc with a fresh-client walkthrough. The doc is written
-  from the code rather than from a run, and no transcript backs the
-  "installable by a third party" claim.
 - Record the CLI entry point — which adapter modules a future CLI reuses — so
-  the deferred CLI does not redesign the tool core.
+  the deferred CLI does not redesign the tool core. This is the last item
+  before the plan can be archived.
 
 ## 4. Alternate coding-agent engines
 

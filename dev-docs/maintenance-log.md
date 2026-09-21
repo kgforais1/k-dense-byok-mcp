@@ -19,6 +19,10 @@
   `PI_CODING_AGENT_DIR` the real `~/.kady/pi-agent` when it is unset, so a
   presence check would have accepted that from anything importing `env.ts`
   first. Found by a `nvidia/moonshotai/kimi-k3` review of the first version.
+  The comparison is on canonical paths: a symlink whose target is the
+  production directory *is* that directory, and comparing strings would admit
+  it. `realpathSync` throws on a path that does not exist yet, so both sides
+  fall back to lexical resolution there. Raised by CodeRabbit.
 - **Evidence this already happened:** `projects/` held a project named
   `Observed` (created 2026-09-15T00:19:07Z) containing a session directory
   `obs-1`. Both are fixture names from `test/session-observer.test.ts`. The

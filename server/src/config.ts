@@ -5,6 +5,7 @@
  * on-disk `projects/` layout (so existing user data is preserved) but drops the
  * Gemini-CLI / LiteLLM / MCP machinery.
  */
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,6 +107,21 @@ if (process.env.VITEST) {
       production: path.join(home, ".kady", "skills-cache"),
     },
   ];
+  // Compare what the paths actually point at, not how they are spelled. A
+  // symlink whose target is the production directory is that directory, and a
+  // string comparison would wave it through; `/tmp` being a link to
+  // `/private/tmp` on macOS is the everyday reminder that the two differ.
+  // `realpathSync` throws on a path that does not exist yet — a temp root
+  // about to be created, or `~/.kady/skills-cache` on a fresh machine — so
+  // fall back to lexical resolution there, which is all a nonexistent path
+  // can support.
+  const canonical = (candidate: string): string => {
+    try {
+      return fs.realpathSync(candidate);
+    } catch {
+      return path.resolve(candidate);
+    }
+  };
   // A blank value is reported separately rather than resolved. `PROJECTS_ROOT`
   // treats `"   "` as a path, so it lands somewhere harmless-looking that is
   // neither the production directory nor a temp one, and saying it "resolves
@@ -113,7 +129,7 @@ if (process.env.VITEST) {
   // at their own environment.
   const unsafe = guarded
     .filter(({ raw, resolved, production }) =>
-      raw !== undefined && !raw.trim() ? true : resolved === path.resolve(production),
+      raw !== undefined && !raw.trim() ? true : canonical(resolved) === canonical(production),
     )
     .map(({ name, raw, resolved }) =>
       raw !== undefined && !raw.trim() ? `${name} is blank` : `${name} resolves to ${resolved}`,

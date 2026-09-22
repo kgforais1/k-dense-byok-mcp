@@ -497,6 +497,42 @@ describe("GET /ollama/models", () => {
     await app.close();
   });
 
+  // The nastier half of the same problem: the row had a figure from
+  // `/api/tags` on an earlier open, then the daemon stopped emitting the
+  // undocumented field *and* the tag was re-pulled. `recordArchitectural`
+  // no-ops on the missing value, so the old figure survives and now describes
+  // a different model.
+  it("re-asks when /api/tags stops carrying the field for a re-pulled tag", async () => {
+    let digest = "sha256:aaa";
+    let details: Record<string, unknown> | undefined = { context_length: 40960 };
+    respondTags = (res) =>
+      okJson(res, { models: [{ name: "q:latest", digest, details }] });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (_model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "qwen3",
+          "qwen3.context_length": 8192,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    const first = (await app.inject({ url: "/ollama/models" })).json();
+    expect(first.models[0].context_length).toBe(40960);
+    expect(shownModels).toEqual([]);
+
+    // Upgrade drops the field, and the tag is re-pulled to a smaller model.
+    details = {};
+    digest = "sha256:bbb";
+    const body = await waitForModels(
+      app,
+      (models) => models[0]?.context_length === 8192,
+    );
+    expect(body.models[0]!.context_length).toBe(8192);
+    expect(shownModels).toContain("q:latest");
+    await app.close();
+  });
+
   it("leaves a row at the fallback figure when /api/show does not answer", async () => {
     respondTags = (res) =>
       okJson(res, { models: [{ name: "missing:latest", details: {} }] });

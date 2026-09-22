@@ -131,14 +131,16 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           typeof m.details?.context_length === "number"
             ? m.details.context_length
             : undefined;
+        // The digest identifies this pull of the tag, and is recorded with
+        // the figure so a later open can tell a current figure from one left
+        // over from a different model of the same name.
+        const digest = typeof m.digest === "string" ? m.digest : "";
         recordArchitectural(
           cacheKey("ollama", OLLAMA_BASE_URL, name),
           architectural,
+          digest,
         );
-        listed.push({
-          id: name,
-          digest: typeof m.digest === "string" ? m.digest : undefined,
-        });
+        listed.push({ id: name, digest });
         return [
           {
             id: `ollama/${name}`,

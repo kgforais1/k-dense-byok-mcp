@@ -43,16 +43,25 @@ const pending = new Map<string, Promise<void>>();
 const showInFlight = new Set<string>();
 
 /**
- * Cache key → the `/api/tags` digest that the last `/api/show` call for it was
- * made against (`""` where the row carried none). This is what stops a
- * show-sourced figure from freezing for the life of the process: the tags path
- * rewrites its figure on every picker open, so a re-pull under the same name
- * corrects itself there, while this path is asked once. Re-pulling changes the
- * digest, which is the exact signal that the answer we hold describes a
- * different model — and it costs nothing when nothing has changed, unlike a
- * TTL.
+ * Cache key → the `/api/tags` digest the architectural figure we currently
+ * hold was obtained at (`""` where the row carried none). Written by whichever
+ * path wrote the figure, which is what makes it a description of the figure
+ * rather than of one probe.
+ *
+ * This is how a stale figure is noticed without a TTL. Re-pulling a tag under
+ * the same name changes its digest, and that is the exact signal that the
+ * number we hold describes a different model. It costs nothing when nothing
+ * has moved.
+ *
+ * It has to cover the tags path too, not just `/api/show`. `recordArchitectural`
+ * no-ops on a missing value, so a row that carried `details.context_length`
+ * on one open and not the next — an Ollama upgrade that dropped the
+ * undocumented field, which is the whole premise of the fallback — keeps its
+ * old figure rather than losing it. If only `/api/show` answers were dated,
+ * that surviving figure would look current forever, and a smaller replacement
+ * model would run over-declared.
  */
-const showDigests = new Map<string, string>();
+const architecturalDigests = new Map<string, string>();
 
 /** Fan-out ceiling for the `/api/show` fallback, shared across calls rather
  * than per call. It runs once per model, so a daemon that stopped emitting
@@ -125,10 +134,18 @@ export function getContextWindow(
 
 /** Writes only a positive integer; anything else (including `undefined`) is a
  * no-op that leaves an existing entry alone. A failed refresh is therefore a
- * no-op, never a downgrade. */
+ * no-op, never a downgrade.
+ *
+ * `digest` dates the figure — Ollama callers pass the `/api/tags` digest of
+ * the pull it describes, so `needsShow` can tell a current figure from one
+ * left over from a different model of the same name. Omitting it leaves any
+ * existing date alone, which is what the OpenAI-compatible path wants: it has
+ * no equivalent and never consults the map. A rejected value dates nothing,
+ * because the figure it would have dated was not written. */
 export function recordArchitectural(
   key: string,
   value: number | undefined,
+  digest?: string,
 ): void {
   if (!isPositiveInt(value)) return;
   let entry = cache.get(key);
@@ -137,6 +154,7 @@ export function recordArchitectural(
     cache.set(key, entry);
   }
   entry.architectural = value;
+  if (digest !== undefined) architecturalDigests.set(key, digest);
 }
 
 /**
@@ -322,12 +340,15 @@ export function probeArchitecturalOllama(
 /**
  * Two reasons to call, and no others. Either we hold no figure for the model
  * — including the case where one arrived and was rejected as unusable — or we
- * hold one that `/api/show` gave us for a different digest, meaning the tag
- * was re-pulled under the same name and may now be a smaller model.
+ * hold one dated to a different pull, meaning the tag was re-pulled under the
+ * same name and may now be a smaller model.
  *
- * A figure we have never used `/api/show` for came from `/api/tags`, which
- * rewrites it on every open, so it is current by construction and this path
- * stays out of it.
+ * The date is what makes the second case sound, and it is why the tags path
+ * dates its writes too. `/api/tags` answering this open is not something this
+ * function can observe: `recordArchitectural` no-ops on a missing value, so a
+ * figure that survived an open where the row carried none is indistinguishable
+ * from one just written. The date distinguishes them, because the route
+ * records it in the same call as the figure.
  *
  * Note what this deliberately does not do: give up. A model `/api/show`
  * cannot answer for is asked again on the next open, so the cost of a
@@ -338,8 +359,7 @@ export function probeArchitecturalOllama(
  */
 function needsShow(key: string, digest: string): boolean {
   if (cache.get(key)?.architectural === undefined) return true;
-  const asked = showDigests.get(key);
-  return asked !== undefined && asked !== digest;
+  return architecturalDigests.get(key) !== digest;
 }
 
 /** Tops the shared worker pool back up to `SHOW_CONCURRENCY`. Safe to call
@@ -358,13 +378,12 @@ async function runShowWorker(): Promise<void> {
       const job = showQueue.shift();
       if (!job) return;
       try {
-        await showOne(job.root, job.modelId, job.key);
+        await showOne(job);
       } catch {
         // Never rejects — one failed model is a no-op, not an error, and
         // must not abandon the rest of the queue.
       } finally {
         showInFlight.delete(job.key);
-        showDigests.set(job.key, job.digest);
         job.done();
       }
     }
@@ -377,17 +396,13 @@ async function runShowWorker(): Promise<void> {
   }
 }
 
-async function showOne(
-  root: string,
-  modelId: string,
-  key: string,
-): Promise<void> {
-  const body = await getJson(`${root}/api/show`, {
+async function showOne(job: ShowJob): Promise<void> {
+  const body = await getJson(`${job.root}/api/show`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: modelId }),
+    body: JSON.stringify({ model: job.modelId }),
   });
-  recordArchitectural(key, architecturalFromShow(body));
+  recordArchitectural(job.key, architecturalFromShow(body), job.digest);
 }
 
 /**

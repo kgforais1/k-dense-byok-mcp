@@ -365,6 +365,23 @@ describe("probeArchitecturalOllama", () => {
     expect(getContextWindow("ollama", base, "llama3:8b")).toBe(131072);
   });
 
+  it("uses the architecture to disambiguate several context_length keys", async () => {
+    const base = freshBase();
+    // A multimodal model carries one per submodel. `general.architecture` is
+    // the only thing that says which is the text window, so an implementation
+    // that only scans for a lone `*.context_length` key would record nothing
+    // here and leave the model on the 128,000 floor.
+    stubShow(() =>
+      showBody({
+        "general.architecture": "llama",
+        "llama.context_length": 32768,
+        "clip.context_length": 512,
+      }),
+    );
+    await probeArchitecturalOllama(base, [{ id: "llava:13b" }]);
+    expect(getContextWindow("ollama", base, "llava:13b")).toBe(32768);
+  });
+
   it("records nothing when several keys could be the one", async () => {
     const base = freshBase();
     stubShow(() =>
@@ -417,7 +434,12 @@ describe("probeArchitecturalOllama", () => {
   it("skips a model whose figure is already cached, and duplicates in one batch", async () => {
     const base = freshBase();
     const seen: { url: string; model: unknown }[] = [];
-    recordArchitectural(cacheKey("ollama", base, "known:latest"), 4096);
+    // Dated to the same pull the batch below names, which is what a figure
+    // written from this open's /api/tags payload looks like. An *undated*
+    // figure is deliberately not treated as current: nothing vouches for it,
+    // and one wasted call beats holding a number that may describe a
+    // different model.
+    recordArchitectural(cacheKey("ollama", base, "known:latest"), 4096, "");
     stubShow(
       () =>
         showBody({ "general.architecture": "llama", "llama.context_length": 8192 }),
@@ -487,16 +509,37 @@ describe("probeArchitecturalOllama", () => {
     expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
   });
 
-  it("leaves a tags-sourced figure alone even as the digest moves", async () => {
+  it("re-asks when /api/tags drops the field on a re-pulled tag", async () => {
     const base = freshBase();
     const seen: { url: string; model: unknown }[] = [];
-    // What the discovery route writes inline from the /api/tags payload. That
-    // path rewrites the figure on every open, so it is current by
-    // construction and owes no call at any digest.
-    recordArchitectural(cacheKey("ollama", base, "q:latest"), 4096);
+    // Open 1: /api/tags carried the figure, dated to that pull. This is what
+    // the discovery route writes inline.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960, "sha256:aaa");
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "qwen3", "qwen3.context_length": 8192 }),
+      seen,
+    );
+    // Open 2, same pull: nothing has moved, so nothing is owed.
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(seen).toEqual([]);
+
+    // Open 3: the tag was re-pulled *and* this Ollama no longer emits
+    // `details.context_length`. `recordArchitectural` no-ops on the missing
+    // value, so the 40960 from the old pull survives — and it now describes a
+    // different model. Left alone it would over-declare a smaller one.
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    expect(seen.map((s) => s.model)).toEqual(["q:latest"]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+  });
+
+  it("leaves a tags-sourced figure alone while its digest holds", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 4096, "sha256:aaa");
     stubShow(() => showBody({ "llama.context_length": 8192 }), seen);
     await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
-    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
     expect(seen).toEqual([]);
     expect(getContextWindow("ollama", base, "q:latest")).toBe(4096);
   });

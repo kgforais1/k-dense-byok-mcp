@@ -999,7 +999,7 @@ function indexedFileLines(pkg, repoRoot = REPO_ROOT) {
  */
 export function measuredFileLines(packageName = "server", repoRoot = REPO_ROOT) {
   return packageFileLines(ratchetPackage(packageName), repoRoot).map((entry) => ({
-    file: path.relative(repoRoot, entry.file).split(path.sep).join("/"),
+    file: relativeTo(repoRoot, entry.file),
     lines: entry.lines,
   }));
 }
@@ -1042,6 +1042,16 @@ function packageFileLines(pkg, repoRoot = REPO_ROOT) {
   return files;
 }
 
+/**
+ * Repo-relative, against the root that was actually measured. `rel()` is
+ * hardcoded to this checkout, which is right for the CLI and wrong the moment
+ * a caller passes its own `repoRoot` — it reported a scratch repo's worst file
+ * as `../../../../var/folders/...`. The violation list already resolved paths
+ * this way; this makes `worstFile` agree with it.
+ */
+const relativeTo = (repoRoot, file) =>
+  path.relative(repoRoot, file).split(path.sep).join("/");
+
 /** The longest measured file in the package, or null when there are none. */
 function findWorstFile(pkg, repoRoot = REPO_ROOT) {
   let worst = null;
@@ -1078,7 +1088,7 @@ export function ratchetSync(packageName = "server", repoRoot = REPO_ROOT) {
     changed,
     previous: currentCap,
     next,
-    worstFile: worst ? rel(worst.file) : null,
+    worstFile: worst ? relativeTo(repoRoot, worst.file) : null,
     worstLines,
   };
 }
@@ -1109,7 +1119,7 @@ export function ratchetCheck(packageName = "server", repoRoot = REPO_ROOT) {
   const violations = measured
     .filter((entry) => entry.lines > currentCap)
     .sort((a, b) => b.lines - a.lines)
-    .map((entry) => ({ file: path.relative(repoRoot, entry.file).split(path.sep).join("/"), lines: entry.lines }));
+    .map((entry) => ({ file: relativeTo(repoRoot, entry.file), lines: entry.lines }));
 
   return {
     package: pkg.name,
@@ -1118,7 +1128,7 @@ export function ratchetCheck(packageName = "server", repoRoot = REPO_ROOT) {
     stored: currentCap,
     expected,
     floor,
-    worstFile: worst ? rel(worst.file) : null,
+    worstFile: worst ? relativeTo(repoRoot, worst.file) : null,
     worstLines,
   };
 }

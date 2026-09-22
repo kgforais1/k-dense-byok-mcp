@@ -786,6 +786,9 @@ describe("the ratchet against a scratch repository", () => {
 
       expect(result.next).toBe(750);
       expect(result.worstLines).toBe(300);
+      // Relative to the repo that was measured, not to this checkout. It
+      // reported `../../../../var/folders/...` before.
+      expect(result.worstFile).toBe("server/src/big.ts");
       expect(storedCap(repo).maxLines).toBe(750);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });

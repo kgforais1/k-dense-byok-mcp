@@ -21,7 +21,7 @@ branch: mcp-work
 > its closing checklist â€” never after merge. See
 > `docs/development/workflow.md#archive-lifecycle`.
 
-**Goal:** Answer the master plan's open questions with a timeboxed spike so Phase 2 has a decided transport, process model, and tool subset. Part of the [master plan](../2026-09-06-mcp-server.md).
+**Goal:** Answer the master plan's open questions with a timeboxed spike so Phase 2 has a decided transport, process model, and tool subset. Part of the [master plan](2026-09-06-mcp-server.md).
 
 ## Why this work
 
@@ -39,7 +39,7 @@ Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE â†
 server/test/mcp-phase1-spike.test.ts              SDK + headless-session evidence
 server/test/mcp-run-mapping-spike.test.ts         broker poll-contract evidence
 dev-docs/plans/completed/2026-09-06-mcp-server-phase-1-research.md  THIS FILE (+ Decisions)
-dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
+dev-docs/plans/completed/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
 ```
 
 ## Implementation sequence

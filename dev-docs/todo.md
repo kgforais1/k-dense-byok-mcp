@@ -2,8 +2,7 @@
 
 ## Next Up
 
-- [ ] **Finish MCP server work** → [3. Finish MCP server work](#3-finish-mcp-server-work)
-- [ ] **Evaluate alternate coding-agent engines** → [4. Alternate coding-agent engines](#4-alternate-coding-agent-engines)
+- [ ] **Evaluate alternate coding-agent engines** → [3. Alternate coding-agent engines](#3-alternate-coding-agent-engines)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
 
 ---
@@ -84,41 +83,7 @@ Ideas:
 - Rate limiting (PR #7) is scoped to sandbox routes only, so UI polling can no longer be throttled; the frontend 429-handling idea for `apiFetch` is moot unless per-route limits are ever tightened
 - Consider exempting `/health` from rate limits if external monitoring ever polls it (currently unthrottled anyway, since the limiter is sandbox-scoped)
 
-## 3. Finish MCP server work
-
-Kady exposes itself as an MCP server so an external coding agent can delegate
-research to it. Phases 1 and 2 shipped, and Phase 3 is partly done. Background
-and the CLI-vs-MCP rationale are in
-[kady-architecture-and-integration-notes.md](kady-architecture-and-integration-notes.md)
-§§ 9–11 and §13 (recommendations 7–8).
-
-Decided and built, so no longer open questions:
-
-- Transport is Streamable HTTP on the existing backend listener, not stdio.
-  Scoping is the `X-Project-Id` header the REST API already uses, and the
-  endpoint refuses to start on a non-loopback host because it has no auth.
-- The tools call the same functions the REST routes call. The adapter
-  translates and never reimplements.
-- Seven tools, documented in [Kady as an MCP server](../docs/kady-as-mcp-server.md):
-  the five-tool research loop plus `list_research_sessions` and
-  `delete_research_session`. The rest of the §10 surface is expand-as-needed.
-
-Done 2026-09-20: the setup doc is validated. A client working only from
-`docs/kady-as-mcp-server.md` drove the whole seven-tool surface over
-Streamable HTTP, including a completed run, and the loopback guard was
-confirmed to refuse both `0.0.0.0` and `localhost`. Three documentation
-defects came out of it and are fixed; the server itself needed no change. The
-transcript is the [walkthrough
-record](plans/2026-09-06-mcp-server-phase-3-harden.md#walkthrough-record-2026-09-20).
-
-Still open, tracked in the
-[Phase 3 plan](plans/2026-09-06-mcp-server-phase-3-harden.md):
-
-- Record the CLI entry point — which adapter modules a future CLI reuses — so
-  the deferred CLI does not redesign the tool core. This is the last item
-  before the plan can be archived.
-
-## 4. Alternate coding-agent engines
+## 3. Alternate coding-agent engines
 
 These are exploratory integrations, not API-key replacements already supported by
 Kady's Pi OAuth providers. Any adapter must retain Kady's local-only boundary,
@@ -147,7 +112,7 @@ project scoping, cancellation, tool policy, and accounting.
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
 
-## 5. Ollama's architectural context figure is undocumented
+## 4. Ollama's architectural context figure is undocumented
 
 `/api/tags` → `details.context_length` is what PR #35 reads for a model's
 architectural maximum, and Ollama does not document it. The documented

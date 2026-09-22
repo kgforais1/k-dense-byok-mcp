@@ -904,8 +904,9 @@ function ratchetPackage(name) {
 }
 
 /** Where a package keeps its stored cap. */
-const ratchetsPath = (pkg, repoRoot = REPO_ROOT) =>
-  path.join(repoRoot, pkg.name, ".ratchets.json");
+function ratchetsPath(pkg, repoRoot = REPO_ROOT) {
+  return path.join(repoRoot, pkg.name, ".ratchets.json");
+}
 
 /** Load and return the stored ratchet object. */
 function loadRatchets(pkg) {

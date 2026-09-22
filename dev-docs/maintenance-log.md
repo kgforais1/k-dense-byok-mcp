@@ -21,10 +21,13 @@
   for a reason that may not apply to a CLI that can prompt.
 - **Not decided:** whether to build a CLI at all. Nothing in the MCP work
   needs one. The map exists to keep that question cheap to answer later.
-- **Link surgery:** archiving the set moved four files and required rewriting
-  cross-links in five, plus the `mcp-server-plan` manifest entry. The master
-  plan's own archive note warned about exactly this. `docs:check` caught every
-  broken link, one round at a time.
+- **Link surgery:** archiving the set moved **two** files — the master plan and
+  Phase 3 — and required rewriting cross-links in three more (the phase 1 and
+  phase 2 plans, already archived, plus the master's own links), along with the
+  `mcp-server-plan` manifest entry. The master plan's own archive note warned
+  about exactly this. `docs:check` caught every broken link, one round at a
+  time. An earlier version of this entry said four files moved; a reviewer
+  counted.
 
 ### 2026-09-21 — The frontend gets a max-lines ratchet (PR #45)
 

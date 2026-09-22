@@ -371,7 +371,7 @@ it is MCP-specific:
 | Concern | Module | Used for |
 |---|---|---|
 | Project list and paths | `projects.ts` | `listProjects`, `activePaths` |
-| Request scoping | `scope.ts` | `withActiveProject`, `currentProjectId` |
+| Request scoping | `scope.ts` | `currentProjectId` (the tool bodies read it; see trap 1 for who has to set it) |
 | Session lifecycle | `agent/session-registry.ts` | `createSession`, `getSession`, `deleteSession`, `listSessionsLabelled` |
 | Transcript | `agent/session-history.ts` | `toHistory` |
 | Session file lookup | `agent/session-export.ts` | `findSessionFile` |
@@ -382,17 +382,26 @@ it is MCP-specific:
 
 **Three things a CLI has to get right, because the MCP adapter already does.**
 
-1. **Scoping is `AsyncLocalStorage`, not a parameter.** `scope.ts` holds the
-   active project in an `AsyncLocalStorage` store, and everything downstream
-   reads `currentProjectId()` rather than taking an id. The HTTP layer wraps
-   each request in `withActiveProject`. A CLI must do the same around each
-   command; calling a tool body outside that store resolves the wrong project.
+1. **Scoping is `AsyncLocalStorage`, and setting it is the harness's job.**
+   `scope.ts` holds the active project in an `AsyncLocalStorage` store, and
+   everything downstream reads `currentProjectId()` rather than taking an id.
+   No tool body calls `withActiveProject` — the global Fastify hook at
+   `index.ts:138` wraps each request, which is why it does not appear in the
+   table above. A CLI has to do that wrapping itself, around each command.
+   Forget it and nothing fails: `currentProjectId()` is
+   `storage.getStore()?.projectId ?? DEFAULT_PROJECT_ID` (`scope.ts:18`), so
+   it silently returns `"default"` and the command operates on the wrong
+   project while looking entirely successful. That is the failure mode to
+   design against — not a crash, a plausible wrong answer.
 2. **`beginRun` lives in `api/sessions.ts`, the REST route module.** That is
    the one place the tool core reaches into the HTTP layer, and it is the
    seam worth watching: it is shared today only because MCP imports it
-   directly. If a CLI wants it too, move `beginRun` out of `api/` into a
-   neutral module rather than importing a route module from a terminal
-   program.
+   directly. The coupling is not only conceptual — its third parameter is
+   typed `FastifyRequest["log"]` (`api/sessions.ts:578`), so every caller
+   takes a Fastify type dependency whether or not it serves HTTP. If a CLI
+   wants it too, move `beginRun` out of `api/` into a neutral module and give
+   it a narrower logger type, rather than importing a route module from a
+   terminal program.
 3. **Headless sessions disable `interview`.** `create_research_session` passes
    `includeInterview: false`, because `interview` blocks a run until a human
    answers it in the browser, and nobody is watching. The same reasoning

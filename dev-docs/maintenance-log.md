@@ -1,5 +1,31 @@
 # Maintenance Log
 
+### 2026-09-22 — MCP server plans archived, CLI entry point recorded (PR #46)
+
+- **Category:** documentation / plan lifecycle
+- **Summary:** the last open item on the MCP Phase 3 plan was the CLI reuse
+  map — which modules a future CLI would share with the MCP adapter, recorded
+  so that whoever builds one extends the core instead of writing a second one.
+  It is now in the plan as [CLI reuse
+  map](plans/completed/2026-09-06-mcp-server-phase-3-harden.md#cli-reuse-map-2026-09-22).
+  With that and the 2026-09-20 fresh-client walkthrough both done, Phase 3 and
+  the master plan are archived, and `dev-docs/todo.md` §3 is deleted.
+- **What the map says:** `mcp-server/http.ts` is entirely transport and should
+  not be reused. `mcp-server/server.ts` is two things in one file — seven tool
+  bodies, which are the core, and their MCP registrations, which are
+  presentation; a CLI wants the first and needs its own second. The nine
+  modules the tool bodies call are listed with what each is used for. Three
+  traps are called out: scoping lives in an `AsyncLocalStorage` store rather
+  than a parameter, `beginRun` sits in the REST route module and is the one
+  place the core reaches into HTTP, and headless sessions disable `interview`
+  for a reason that may not apply to a CLI that can prompt.
+- **Not decided:** whether to build a CLI at all. Nothing in the MCP work
+  needs one. The map exists to keep that question cheap to answer later.
+- **Link surgery:** archiving the set moved four files and required rewriting
+  cross-links in five, plus the `mcp-server-plan` manifest entry. The master
+  plan's own archive note warned about exactly this. `docs:check` caught every
+  broken link, one round at a time.
+
 ### 2026-09-21 — The frontend gets a max-lines ratchet (PR #45)
 
 - **Category:** CI / lint gates

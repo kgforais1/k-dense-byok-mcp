@@ -1,13 +1,13 @@
 ---
 title: "MCP server Phase 3 — harden and package"
-status: accepted
+status: completed
 created: 2026-09-06
 branch: mcp-phase-3
 ---
 
 # MCP Server Phase 3 — Harden, Document, Package (Partial)
 
-**Status:** Accepted — deliberately partial. Scope depends on what Phase 2 actually built and what it deferred. Part of the [master plan](2026-09-06-mcp-server.md).
+**Status:** Completed and merged in PR #46. Deliberately partial in scope. Scope depends on what Phase 2 actually built and what it deferred. Part of the [master plan](2026-09-06-mcp-server.md).
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -41,13 +41,13 @@ dev-docs/todo.md                UPDATE — CLI follow-up entry if not already pr
 - [x] Validate that doc with a fresh-client walkthrough. Done 2026-09-20 — see [Walkthrough record](#walkthrough-record-2026-09-20). Three doc defects found and fixed; no server defect.
 - [x] Settle packaging (stdio npx-style vs documented HTTP endpoint) per Phase 1/2 verdicts. Decided below: the documented HTTP endpoint, with no npx package.
 - [x] Add or explicitly defer remaining §10 tools. The first two are decided and specified below: `list_research_sessions` and `delete_research_session`. Both are built; the rest of §10 is still expand-as-needed.
-- [ ] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope.
+- [x] Record the CLI entry point (adapter reuse map) and leave the CLI itself out of scope. Done 2026-09-22 — see [CLI reuse map](#cli-reuse-map-2026-09-22).
 
 **Exit criteria:** fresh client connects via docs alone; packaging decided and working; CLI follow-up recorded, not built.
 
-One unticked item is deliberately still open: the CLI reuse map. Do not
-archive this plan until it is done. The fresh-client walkthrough that backs the
-"installable by a third party" acceptance measure is recorded below.
+Both remaining items are now done: the fresh-client walkthrough that backs the
+"installable by a third party" acceptance measure, and the CLI reuse map. Both
+records are below.
 The documentation item, the carried-in review work, the two session-management
 tools below and the packaging decision have landed.
 
@@ -341,3 +341,65 @@ walkthrough — a JSON parse failure on an SSE frame, and an empty tool response
 — were both artefacts of the ad-hoc shell client, not of Kady. The bytes on
 the wire were valid in every case. Recorded because the next person to do this
 will hit the same two and should not spend the time twice.
+
+## CLI reuse map (2026-09-22)
+
+A CLI is still not built and still not needed — the MCP server is complete over
+Streamable HTTP. This records which modules a CLI would reuse, so whoever
+builds it extends the existing core instead of writing a second one that drifts.
+
+**Do not reuse: `mcp-server/http.ts` (135 lines).** Everything in it is
+transport. Streamable HTTP, per-connection `Mcp-Session-Id`, the Fastify route,
+the `MCP_ENABLED` gate and the loopback assertion are all answers to "a remote
+client is speaking to us over a socket", which is the one problem a CLI does
+not have. A CLI is a local process that already has the user's shell.
+
+**Reuse the tool bodies, not the tool registrations.**
+`mcp-server/server.ts` (365 lines) is two things wearing one coat: the seven
+tool bodies, which are the core, and their `server.registerTool` wrappers with
+MCP titles, annotations and Zod input schemas, which are MCP's presentation
+layer. A CLI wants the first and needs its own version of the second — argv
+parsing and `--help` rather than `inputSchema` and `readOnlyHint`. Extracting
+the bodies into a `mcp-server/tools.ts` that both callers import is the
+refactor that makes a CLI cheap; doing it now, with no second caller to
+validate it against, is the kind of speculative layering this plan has avoided
+elsewhere. Do it when the CLI is written, not before.
+
+**The functions the seven tools actually call** — this is the core, and none of
+it is MCP-specific:
+
+| Concern | Module | Used for |
+|---|---|---|
+| Project list and paths | `projects.ts` | `listProjects`, `activePaths` |
+| Request scoping | `scope.ts` | `withActiveProject`, `currentProjectId` |
+| Session lifecycle | `agent/session-registry.ts` | `createSession`, `getSession`, `deleteSession`, `listSessionsLabelled` |
+| Transcript | `agent/session-history.ts` | `toHistory` |
+| Session file lookup | `agent/session-export.ts` | `findSessionFile` |
+| Live run state | `agent/run-broker.ts` | `runBroker` |
+| Durable run state | `agent/run-results.ts` | `readRunResult` |
+| Context usage | `agent/events.ts` | `contextUsageForClient` |
+| Starting a run | `api/sessions.ts` | `beginRun`, `RunStartRejection` |
+
+**Three things a CLI has to get right, because the MCP adapter already does.**
+
+1. **Scoping is `AsyncLocalStorage`, not a parameter.** `scope.ts` holds the
+   active project in an `AsyncLocalStorage` store, and everything downstream
+   reads `currentProjectId()` rather than taking an id. The HTTP layer wraps
+   each request in `withActiveProject`. A CLI must do the same around each
+   command; calling a tool body outside that store resolves the wrong project.
+2. **`beginRun` lives in `api/sessions.ts`, the REST route module.** That is
+   the one place the tool core reaches into the HTTP layer, and it is the
+   seam worth watching: it is shared today only because MCP imports it
+   directly. If a CLI wants it too, move `beginRun` out of `api/` into a
+   neutral module rather than importing a route module from a terminal
+   program.
+3. **Headless sessions disable `interview`.** `create_research_session` passes
+   `includeInterview: false`, because `interview` blocks a run until a human
+   answers it in the browser, and nobody is watching. The same reasoning
+   applies to a CLI only if it cannot prompt; a CLI that *can* prompt on stdin
+   should pass `includeInterview: true` and answer the tool itself, which is a
+   genuine behavioural difference from the MCP path rather than a copy of it.
+
+**What this does not settle.** Whether a CLI is worth building at all. Nothing
+in the MCP work needs it, and no user has asked; this map exists so that the
+question stays cheap to answer later, not to argue that the answer is yes.

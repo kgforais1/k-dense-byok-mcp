@@ -21,7 +21,7 @@ branch: mcp-work
 > its closing checklist — never after merge. See
 > `docs/development/workflow.md#archive-lifecycle`.
 
-**Goal:** Answer the master plan's open questions with a timeboxed spike so Phase 2 has a decided transport, process model, and tool subset. Part of the [master plan](../2026-09-06-mcp-server.md).
+**Goal:** Answer the master plan's open questions with a timeboxed spike so Phase 2 has a decided transport, process model, and tool subset. Part of the [master plan](2026-09-06-mcp-server.md).
 
 ## Why this work
 

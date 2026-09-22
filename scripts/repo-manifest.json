@@ -46,7 +46,7 @@
       "category": "runtime-service",
       "path": "server/src/agent/session-registry.ts",
       "name": "Pi session registry",
-      "description": "Holds live Pi AgentSession objects (one per chat tab, ≤10 per project) and persists them as JSONL files under the project's sessions/ directory."
+      "description": "Holds live Pi AgentSession objects (one per chat tab, \u226410 per project) and persists them as JSONL files under the project's sessions/ directory."
     },
     {
       "id": "models-runtime",
@@ -233,7 +233,7 @@
     {
       "id": "mcp-server-plan",
       "category": "developer-documentation",
-      "path": "dev-docs/plans/2026-09-06-mcp-server.md",
+      "path": "dev-docs/plans/completed/2026-09-06-mcp-server.md",
       "name": "MCP server master plan",
       "description": "Master plan for exposing K-Dense as an MCP server (MCP first, CLI deferred). Index for the per-phase plans in dev-docs/plans/; update the path when it archives to completed/."
     },

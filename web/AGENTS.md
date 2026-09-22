@@ -50,6 +50,12 @@ npm test                    # vitest
 
 ## Conventions
 
+- **File size is capped and the cap only falls.** `web/.ratchets.json` holds a
+  `max-lines` value pinned at today's worst file, wired into
+  `web/eslint.config.mjs` and maintained by `npm run ratchet:sync` (pre-commit
+  runs it; CI's `ratchet:check` fails a stale one). Splitting a long file
+  lowers the cap permanently. Do not raise it to make a change pass — split
+  the file instead. The floor is 750.
 - App Router only; do not reintroduce `pages/`. New routes go under
   `src/app/` and follow existing layout/loading/error patterns.
 - Components live under `src/components/`. New viewer components go under

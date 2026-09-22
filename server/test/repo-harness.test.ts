@@ -13,6 +13,7 @@ import {
   measuredFileLines,
   nextMaxLines,
   ratchetCheck,
+  ratchetPackageNames,
   runVerify,
   scaffoldHandoff,
   scaffoldMaintenance,
@@ -21,7 +22,7 @@ import {
 import { commandDiagnostics } from "./helpers/command-diagnostics";
 
 const REPO_ROOT = path.resolve(path.dirname(MANIFEST_PATH), "..");
-const RATCHETS_FILE = path.join(REPO_ROOT, "server", ".ratchets.json");
+const ratchetsFile = (pkg: string) => path.join(REPO_ROOT, pkg, ".ratchets.json");
 
 function freshDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -545,18 +546,52 @@ describe("nextMaxLines", () => {
 });
 
 describe("the ratchet against this repository", () => {
-  // Read-only on purpose. An earlier version of this called `ratchetSync()`,
-  // which writes `.ratchets.json` — a test that edits checked-in config, and
-  // one that proved nothing, since it then compared the file against the value
-  // it had just written.
-  it("stores a cap that is in sync, and does not move it to find out", () => {
-    const before = fs.readFileSync(RATCHETS_FILE, "utf8");
+  // Every package, not just the backend. A cap added for one package and
+  // tested for the other is a cap nobody is watching.
+  it.each(ratchetPackageNames())(
+    // Read-only on purpose. An earlier version of this called `ratchetSync()`,
+    // which writes `.ratchets.json` — a test that edits checked-in config, and
+    // one that proved nothing, since it then compared the file against the
+    // value it had just written.
+    "%s stores a cap that is in sync, and does not move it to find out",
+    (pkg: string) => {
+      const before = fs.readFileSync(ratchetsFile(pkg), "utf8");
 
-    const result = ratchetCheck();
+      const result = ratchetCheck(pkg);
 
-    expect(result.outOfDate).toBe(false);
-    expect(result.stored).toBe(result.expected);
-    expect(fs.readFileSync(RATCHETS_FILE, "utf8")).toBe(before);
+      expect(result.package).toBe(pkg);
+      expect(result.outOfDate).toBe(false);
+      expect(result.stored).toBe(result.expected);
+      expect(fs.readFileSync(ratchetsFile(pkg), "utf8")).toBe(before);
+    },
+  );
+
+  it("measures the frontend, and skips what its lint config ignores", () => {
+    const measured = measuredFileLines("web").map((f) => f.file);
+
+    expect(measured.some((f) => f.startsWith("web/src/"))).toBe(true);
+    // The config file carrying the cap is itself linted, so it is measured.
+    expect(measured).toContain("web/eslint.config.mjs");
+    for (const ignored of [".next", "out", "build", "node_modules", "coverage"]) {
+      expect(measured.some((f) => f.includes(`/${ignored}/`))).toBe(false);
+    }
+    // `next-env.d.ts` is ignored by eslint-config-next, so counting it could
+    // hold the cap above a file ESLint never checks.
+    expect(measured).not.toContain("web/next-env.d.ts");
+  });
+
+  it("keeps the pre-commit hook's package list in step with the code's", () => {
+    // The hook stages each `.ratchets.json` the sync lowered, and it cannot
+    // import from `scripts/repo.mjs` — it is POSIX sh. A package added to the
+    // code and not to the hook is one whose cap is recomputed, left unstaged,
+    // and then fails `ratchet:check` in CI on the very next push.
+    const hook = fs.readFileSync(path.join(REPO_ROOT, ".githooks", "pre-commit"), "utf8");
+    const declared = /^PACKAGES="([^"]*)"$/m.exec(hook);
+
+    expect(declared).toBeTruthy();
+    expect(declared![1].split(/\s+/).filter(Boolean).sort()).toEqual(
+      [...ratchetPackageNames()].sort(),
+    );
   });
 
   it("measures files ESLint lints that live outside src and test", () => {
@@ -605,7 +640,7 @@ describe("the ratchet against this repository", () => {
       // Shrink on disk only. The index still holds the 900-line version.
       fs.writeFileSync(file, "// x\n".repeat(20));
 
-      const measured = measuredFileLines(repo);
+      const measured = measuredFileLines("server", repo);
       const big = measured.find((f) => f.file === "server/src/big.ts");
 
       expect(big?.lines).toBe(900);
@@ -615,24 +650,27 @@ describe("the ratchet against this repository", () => {
     }
   });
 
-  it("counts lines the way wc -l does, which is what ESLint agrees with", () => {
+  it.each(ratchetPackageNames())(
+    "%s counts lines the way wc -l does, which is what ESLint agrees with",
+    (pkg: string) => {
     // The assertion that matters. `split("\n").length` overcounts a
     // newline-terminated file by one, and `min(cap, ...)` hides that for as
     // long as the cap is already at or below the true worst — so a sync test
     // alone passes while the count is wrong, and the error only surfaces later
     // as a cap set one line looser than the worst file.
-    const result = ratchetCheck();
-    expect(result.worstFile).toBeTruthy();
+      const result = ratchetCheck(pkg);
+      expect(result.worstFile).toBeTruthy();
 
-    const text = fs.readFileSync(path.join(REPO_ROOT, result.worstFile!), "utf8");
-    const newlineTerminatedLines = text.endsWith("\n")
-      ? text.split("\n").length - 1
-      : text.split("\n").length;
+      const text = fs.readFileSync(path.join(REPO_ROOT, result.worstFile!), "utf8");
+      const newlineTerminatedLines = text.endsWith("\n")
+        ? text.split("\n").length - 1
+        : text.split("\n").length;
 
-    expect(result.worstLines).toBe(newlineTerminatedLines);
-    // And the stored cap sits exactly at it, which is the config's stated rule.
-    expect(result.stored).toBe(result.worstLines);
-  });
+      expect(result.worstLines).toBe(newlineTerminatedLines);
+      // And the stored cap sits exactly at it, which is the config's stated rule.
+      expect(result.stored).toBe(result.worstLines);
+    },
+  );
 });
 
 describe("the PR checklist phrases the CI job looks for", () => {

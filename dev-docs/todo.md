@@ -21,16 +21,14 @@ Done:
 
 Still open:
 
-- **Bring the remaining ratchets down.** `max-lines` now lowers itself
-  (`server/.ratchets.json`, `npm run ratchet:sync`, floor 750), but
-  `complexity` and `max-lines-per-function` still sit at today's worst
-  offender and still move only by hand. Both need ESLint's AST analysis
-  rather than a line count, which is why they were left out. The frontend has
-  no size limits at all, because a useful value cannot be set while
-  `file-preview-panel.tsx` is 2238 lines — a candidate for the same
-  self-lowering treatment once it comes down. Full backlog with current
-  numbers is in the plan's [ratchet
-  backlog](plans/2026-09-08-repo-quality-gates.md).
+- **Bring the remaining ratchets down.** `max-lines` now lowers itself on
+  both packages (`server/.ratchets.json` at 1467, `web/.ratchets.json` at
+  2355, `npm run ratchet:sync`, floor 750). Still manual: `complexity` (62)
+  and `max-lines-per-function` (672), backend only. Both need ESLint's own AST
+  analysis rather than a line count — the worst observed value has to be read
+  out of ESLint's report, not counted from the file — which is why they were
+  left out of the line ratchet. Full backlog with current numbers is in the
+  plan's [ratchet backlog](plans/2026-09-08-repo-quality-gates.md).
 - **Raise the coverage floors**, particularly on the frontend (48.8% statements vs the backend's 72.1%, which now includes `server/pi-packages/**`).
 - **Semgrep rules for this repository's own invariants** — not a generic ruleset, which would duplicate CodeQL. Candidates are recorded in the plan.
 - **Required status checks before merge.** The branch ruleset gates on CodeQL today; the new `Checks` jobs are not yet in the required set.

@@ -301,8 +301,9 @@ function clearUnreportedLoaded(
  * `/api/show` is documented and reports the same figure, but costs one POST
  * per model against a picker-open budget of two calls total. So it is the
  * fallback and not the source: on a daemon that still emits the tags field
- * this never fires, and it pays only in the failure it exists for. See
- * `dev-docs/todo.md` §4 (decided 2026-09-20).
+ * this never fires, and it pays only in the failure it exists for. Decided
+ * 2026-09-20; the field survey behind it is
+ * `dev-docs/plans/completed/2026-09-10-local-model-context-window-findings.md`.
  *
  * Never rejects, like the loaded probe, and its product is the cache write.
  * The write lands after the response the picker is already rendering, so the

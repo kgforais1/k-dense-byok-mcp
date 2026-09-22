@@ -1,5 +1,56 @@
 # Maintenance Log
 
+### 2026-09-21 — The frontend gets a max-lines ratchet (PR #45)
+
+- **Category:** CI / lint gates
+- **Summary:** `web/` had no file-size limit at all, while `server/` has had a
+  self-lowering one since PR #41. The same machinery now serves both:
+  `scripts/repo.mjs` carries a `RATCHET_PACKAGES` list, each package has its
+  own `.ratchets.json`, and `ratchet:sync` / `ratchet:check` iterate over
+  them. `web/.ratchets.json` starts at 2355, pinned exactly at `chat-tab.tsx`,
+  with the same floor of 750.
+- **Evidence:** wiring proved by moving the cap to 2354, which makes ESLint
+  report `File has too many lines (2355). Maximum allowed is 2354` on that
+  file, and back to 2355, which passes with 0 errors. `ratchet:check` reports
+  both packages. Server suite green; two mutations checked — dropping `web`
+  from the hook's package list, and setting the web cap high — each fail a
+  test that names them.
+- **The todo's numbers were stale:** it said `file-preview-panel.tsx` at 2238
+  was the blocker. That file is 1978 now, and the worst is `chat-tab.tsx` at
+  2355.
+- **Most of what this caps is upstream's code**, which is the accepted cost
+  and the same one the backend already carries — `modal/manager.ts` is
+  upstream's and sets the backend cap. A cap never demands a refactor; an
+  upstream merge that grows a file past it fails lint until the cap is raised
+  or the file is split, and raising it is meant to be a deliberate act.
+  `web/eslint.config.mjs` is upstream-owned, so the import and the rule both
+  carry `FORK:` markers.
+- **Drift guard:** the pre-commit hook lists its packages in POSIX sh and
+  cannot import them, so a test asserts its `PACKAGES` line matches
+  `ratchetPackageNames()`. A package added to one and not the other would
+  leave a recomputed cap unstaged and fail CI on the next push.
+- **`ratchet:check` now enforces the cap, not just its freshness.** It only
+  ever asked whether the stored cap was stale-high; because the policy is
+  `min(cap, max(worst, floor))`, a file *above* the cap leaves `expected`
+  equal to `stored`, so the check passed while ESLint would fail. Since
+  neither `verify -- server` nor `verify -- web` runs lint, the first sight of
+  a violation was CI. The check reports the two failures separately — the
+  fixes differ, one being `ratchet:sync` and the other splitting the file —
+  and the pre-push hook already ran it, so enforcement arrived there without a
+  new hook.
+- **Skip patterns are anchored** the way the lint configs' globs are, after a
+  muse-spark review found `skipsFile` matching a directory name at any depth.
+  A future `web/src/out/foo.ts` would have been linted and unmeasured. Not
+  live in either package; fixed while cheap. `node_modules` stays any-depth,
+  which is ESLint's own default rather than a config glob.
+- **Tests added for the parts that had none:** `ratchetSync`'s write path
+  (lowering, never raising, stopping at the floor, and preserving keys it does
+  not own), the disk-walk fallback used when the tree is not a git checkout,
+  and violation reporting. All five run against scratch repositories, which
+  needed an optional `repoRoot` threaded through `ratchetSync`, `ratchetCheck`
+  and the file scan — without it a test could only point at this checkout, and
+  `ratchetSync` writes.
+
 ### 2026-09-21 — Tests can no longer delete the real user directories (PR #44)
 
 - **Category:** test infrastructure / data safety

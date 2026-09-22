@@ -13,6 +13,8 @@ import {
   measuredFileLines,
   nextMaxLines,
   ratchetCheck,
+  ratchetPackageNames,
+  ratchetSync,
   runVerify,
   scaffoldHandoff,
   scaffoldMaintenance,
@@ -21,7 +23,7 @@ import {
 import { commandDiagnostics } from "./helpers/command-diagnostics";
 
 const REPO_ROOT = path.resolve(path.dirname(MANIFEST_PATH), "..");
-const RATCHETS_FILE = path.join(REPO_ROOT, "server", ".ratchets.json");
+const ratchetsFile = (pkg: string) => path.join(REPO_ROOT, pkg, ".ratchets.json");
 
 function freshDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -545,18 +547,99 @@ describe("nextMaxLines", () => {
 });
 
 describe("the ratchet against this repository", () => {
-  // Read-only on purpose. An earlier version of this called `ratchetSync()`,
-  // which writes `.ratchets.json` — a test that edits checked-in config, and
-  // one that proved nothing, since it then compared the file against the value
-  // it had just written.
-  it("stores a cap that is in sync, and does not move it to find out", () => {
-    const before = fs.readFileSync(RATCHETS_FILE, "utf8");
+  // Every package, not just the backend. A cap added for one package and
+  // tested for the other is a cap nobody is watching.
+  it.each(ratchetPackageNames())(
+    // Read-only on purpose. An earlier version of this called `ratchetSync()`,
+    // which writes `.ratchets.json` — a test that edits checked-in config, and
+    // one that proved nothing, since it then compared the file against the
+    // value it had just written.
+    "%s stores a cap that is in sync, and does not move it to find out",
+    (pkg: string) => {
+      const before = fs.readFileSync(ratchetsFile(pkg), "utf8");
 
-    const result = ratchetCheck();
+      const result = ratchetCheck(pkg);
 
-    expect(result.outOfDate).toBe(false);
-    expect(result.stored).toBe(result.expected);
-    expect(fs.readFileSync(RATCHETS_FILE, "utf8")).toBe(before);
+      expect(result.package).toBe(pkg);
+      expect(result.outOfDate).toBe(false);
+      expect(result.stored).toBe(result.expected);
+      // Against the real tree, where both packages sit exactly at their cap.
+      // A `>=` violation check would pass every scratch-repo test and then
+      // fail here, flagging the very file the cap was measured from.
+      expect(result.violations).toEqual([]);
+      expect(fs.readFileSync(ratchetsFile(pkg), "utf8")).toBe(before);
+    },
+  );
+
+  it("measures the frontend, and skips what its lint config ignores", () => {
+    const measured = measuredFileLines("web").map((f) => f.file);
+
+    expect(measured.some((f) => f.startsWith("web/src/"))).toBe(true);
+    // The config file carrying the cap is itself linted, so it is measured.
+    expect(measured).toContain("web/eslint.config.mjs");
+    for (const ignored of [".next", "out", "build", "node_modules", "coverage"]) {
+      expect(measured.some((f) => f.includes(`/${ignored}/`))).toBe(false);
+    }
+    // `next-env.d.ts` is ignored by eslint-config-next, so counting it could
+    // hold the cap above a file ESLint never checks.
+    expect(measured).not.toContain("web/next-env.d.ts");
+  });
+
+  it("anchors its skip patterns the way the lint config does", () => {
+    // A lint config's `ignores: ["out/**"]` means the package's own `out`, not
+    // any directory called that. Matching `/out/` anywhere would skip a
+    // nested `src/out/` that ESLint still lints — a linted file the scan
+    // cannot see is one the cap can be lowered underneath, and the next lint
+    // run fails on a file nobody touched. `node_modules` is the exception,
+    // because ESLint skips it at any depth. Raised by a muse-spark review.
+    const repo = freshDir("kady-ratchet-anchor-");
+    try {
+      const run = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      run("init", "-q");
+      run("config", "user.email", "test@example.com");
+      run("config", "user.name", "test");
+      const write = (relative: string) => {
+        const full = path.join(repo, relative);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, "// x\n");
+      };
+      write("web/out/top-level.ts");
+      write("web/src/out/nested.ts");
+      write("web/node_modules/pkg/index.ts");
+      write("web/src/deep/node_modules/pkg/index.ts");
+      write("web/next-env.d.ts");
+      write("web/src/app/page.tsx");
+      run("add", "-A");
+
+      const measured = measuredFileLines("web", repo).map((f) => f.file);
+
+      expect(measured).toContain("web/src/app/page.tsx");
+      // Nested, so ESLint lints it and the scan must count it.
+      expect(measured).toContain("web/src/out/nested.ts");
+      // Anchored at the package root, so ESLint ignores it and so do we.
+      expect(measured).not.toContain("web/out/top-level.ts");
+      expect(measured).not.toContain("web/next-env.d.ts");
+      // Any depth, because that is ESLint's own default.
+      expect(measured).not.toContain("web/node_modules/pkg/index.ts");
+      expect(measured).not.toContain("web/src/deep/node_modules/pkg/index.ts");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the pre-commit hook's package list in step with the code's", () => {
+    // The hook stages each `.ratchets.json` the sync lowered, and it cannot
+    // import from `scripts/repo.mjs` — it is POSIX sh. A package added to the
+    // code and not to the hook is one whose cap is recomputed, left unstaged,
+    // and then fails `ratchet:check` in CI on the very next push.
+    const hook = fs.readFileSync(path.join(REPO_ROOT, ".githooks", "pre-commit"), "utf8");
+    const declared = /^PACKAGES="([^"]*)"$/m.exec(hook);
+
+    expect(declared).toBeTruthy();
+    expect(declared?.[1].split(/\s+/).filter(Boolean).sort()).toEqual(
+      [...ratchetPackageNames()].sort(),
+    );
   });
 
   it("measures files ESLint lints that live outside src and test", () => {
@@ -605,7 +688,7 @@ describe("the ratchet against this repository", () => {
       // Shrink on disk only. The index still holds the 900-line version.
       fs.writeFileSync(file, "// x\n".repeat(20));
 
-      const measured = measuredFileLines(repo);
+      const measured = measuredFileLines("server", repo);
       const big = measured.find((f) => f.file === "server/src/big.ts");
 
       expect(big?.lines).toBe(900);
@@ -615,23 +698,172 @@ describe("the ratchet against this repository", () => {
     }
   });
 
-  it("counts lines the way wc -l does, which is what ESLint agrees with", () => {
+  it.each(ratchetPackageNames())(
+    "%s counts lines the way wc -l does, which is what ESLint agrees with",
+    (pkg: string) => {
     // The assertion that matters. `split("\n").length` overcounts a
     // newline-terminated file by one, and `min(cap, ...)` hides that for as
     // long as the cap is already at or below the true worst — so a sync test
     // alone passes while the count is wrong, and the error only surfaces later
     // as a cap set one line looser than the worst file.
-    const result = ratchetCheck();
-    expect(result.worstFile).toBeTruthy();
+      const result = ratchetCheck(pkg);
+      expect(result.worstFile).toBeTruthy();
 
-    const text = fs.readFileSync(path.join(REPO_ROOT, result.worstFile!), "utf8");
-    const newlineTerminatedLines = text.endsWith("\n")
-      ? text.split("\n").length - 1
-      : text.split("\n").length;
+      const text = fs.readFileSync(path.join(REPO_ROOT, result.worstFile!), "utf8");
+      const newlineTerminatedLines = text.endsWith("\n")
+        ? text.split("\n").length - 1
+        : text.split("\n").length;
 
-    expect(result.worstLines).toBe(newlineTerminatedLines);
-    // And the stored cap sits exactly at it, which is the config's stated rule.
-    expect(result.stored).toBe(result.worstLines);
+      expect(result.worstLines).toBe(newlineTerminatedLines);
+      // And the stored cap sits exactly at the worst file — or at the floor,
+      // once every file is smaller than it. Asserting equality with the worst
+      // file alone would have turned the success case into a failure: the
+      // ratchet stops at 750 by design, so the test would start failing on
+      // the day the last oversized file was finally split. Found by a
+      // greptile review.
+      expect(result.stored).toBe(Math.max(result.worstLines, result.floor));
+    },
+  );
+});
+
+describe("the ratchet against a scratch repository", () => {
+  /**
+   * A repo with one staged backend file of `lines` lines and a stored cap.
+   * Scratch rather than this checkout, because `ratchetSync` writes: pointing
+   * it at the real tree would edit checked-in config, which is why the
+   * in-sync test next door is careful to stay read-only.
+   */
+  function scratch(options: { lines: number; ratchets: Record<string, unknown> }) {
+    const repo = freshDir("kady-ratchet-sync-");
+    const run = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+    run("init", "-q");
+    run("config", "user.email", "test@example.com");
+    run("config", "user.name", "test");
+    fs.mkdirSync(path.join(repo, "server", "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repo, "server", ".ratchets.json"),
+      `${JSON.stringify(options.ratchets, null, 2)}\n`,
+    );
+    fs.writeFileSync(path.join(repo, "server", "src", "big.ts"), "// x\n".repeat(options.lines));
+    run("add", "-A");
+    return repo;
+  }
+
+  const storedCap = (repo: string) =>
+    JSON.parse(fs.readFileSync(path.join(repo, "server", ".ratchets.json"), "utf8"));
+
+  it("lowers the cap to the worst file, and keeps keys it does not own", () => {
+    // The `{ ...stored }` spread is load-bearing and was never exercised: a
+    // sync that dropped an unrelated key would delete configuration on every
+    // commit, silently.
+    const repo = scratch({ lines: 800, ratchets: { maxLines: 1000, floor: 750, note: "keep me" } });
+    try {
+      const result = ratchetSync("server", repo);
+
+      expect(result.changed).toBe(true);
+      expect(result.previous).toBe(1000);
+      expect(result.next).toBe(800);
+      expect(storedCap(repo)).toEqual({ maxLines: 800, floor: 750, note: "keep me" });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("never raises the cap, however long the worst file gets", () => {
+    const repo = scratch({ lines: 900, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      const result = ratchetSync("server", repo);
+
+      expect(result.changed).toBe(false);
+      expect(result.next).toBe(800);
+      expect(storedCap(repo).maxLines).toBe(800);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("stops at the floor rather than following a small tree down", () => {
+    const repo = scratch({ lines: 300, ratchets: { maxLines: 1000, floor: 750 } });
+    try {
+      const result = ratchetSync("server", repo);
+
+      expect(result.next).toBe(750);
+      expect(result.worstLines).toBe(300);
+      // Relative to the repo that was measured, not to this checkout. It
+      // reported `../../../../var/folders/...` before.
+      expect(result.worstFile).toBe("server/src/big.ts");
+      expect(storedCap(repo).maxLines).toBe(750);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a file over the cap, which a stale-cap check cannot see", () => {
+    // `min(cap, max(worst, floor))` leaves `expected` equal to `stored` when a
+    // file is over the cap, so `outOfDate` stays false while ESLint would
+    // fail. Before this, `ratchet:check` was silent on the one condition a
+    // developer is most likely to create.
+    const repo = scratch({ lines: 900, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      const result = ratchetCheck("server", repo);
+
+      expect(result.outOfDate).toBe(false);
+      expect(result.violations).toEqual([{ file: "server/src/big.ts", lines: 900 }]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a file exactly at the cap as fine, and one line more as a violation", () => {
+    // ESLint errors above the limit, not at it, so the worst file has to pass
+    // at exactly its own size — that is what lets the cap sit pinned to it.
+    // Without this pair, `>=` passes every other violation test while
+    // rejecting the file the cap was measured from. Raised by a stepfun
+    // review, which noticed the 900-vs-800 case cannot tell the two apart.
+    const atCap = scratch({ lines: 800, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      expect(ratchetCheck("server", atCap).violations).toEqual([]);
+    } finally {
+      fs.rmSync(atCap, { recursive: true, force: true });
+    }
+
+    const overCap = scratch({ lines: 801, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      expect(ratchetCheck("server", overCap).violations).toEqual([
+        { file: "server/src/big.ts", lines: 801 },
+      ]);
+    } finally {
+      fs.rmSync(overCap, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the same skip rules from disk when the tree is not a git checkout", () => {
+    // The fallback path. It has to agree with the index path about what
+    // counts, or the cap can be lowered underneath a file ESLint still lints.
+    const dir = freshDir("kady-ratchet-nogit-");
+    try {
+      const write = (relative: string, lines: number) => {
+        const full = path.join(dir, relative);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, "// x\n".repeat(lines));
+      };
+      write("server/src/counted.ts", 120);
+      write("server/pi-packages/also-counted.ts", 60);
+      write("server/dist/skipped.ts", 900);
+      write("server/src/helpers/.venv/skipped.js", 900);
+      write("server/node_modules/pkg/skipped.ts", 900);
+
+      const measured = measuredFileLines("server", dir);
+
+      expect(measured.map((f) => f.file).sort()).toEqual([
+        "server/pi-packages/also-counted.ts",
+        "server/src/counted.ts",
+      ]);
+      expect(measured.find((f) => f.file === "server/src/counted.ts")?.lines).toBe(120);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

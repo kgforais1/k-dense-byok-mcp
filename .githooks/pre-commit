@@ -1,6 +1,6 @@
 #!/bin/sh
-# Auto-sync the max-lines ratchet before each commit.
-# If the cap was lowered, stage server/.ratchets.json so it lands in the
+# Auto-sync the max-lines ratchets before each commit.
+# If a cap was lowered, stage that package's .ratchets.json so it lands in the
 # commit. Never blocks the commit.
 #
 # Resolve the repo root from git so this works regardless of the working
@@ -12,24 +12,42 @@
 command -v node >/dev/null 2>&1 || exit 0
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RATCHETS="$REPO_ROOT/server/.ratchets.json"
+
+# Every package with a ratchet. Keep in step with RATCHET_PACKAGES in
+# scripts/repo.mjs: a package missing here is one whose cap is recomputed and
+# then left unstaged, so the commit lands with a stale-high value and CI's
+# ratchet:check fails on it.
+PACKAGES="server web"
 
 read_maxlines() {
   node -e 'const fs=require("fs");const p=process.argv[1];try{const j=JSON.parse(fs.readFileSync(p,"utf8"));process.stdout.write(String(j.maxLines));}catch(e){}' "$1"
 }
 
-PREV="$(read_maxlines "$RATCHETS")"
+# Snapshot before, so the comparison after the sync is against what was there.
+# Written to a temp file rather than a shell variable per package, because
+# this has to work in POSIX sh without arrays.
+BEFORE="$(mktemp)"
+# Remove it however this exits, including a signal. The explicit `rm` at the
+# end stays for the ordinary path; this covers the interrupted one.
+trap 'rm -f "$BEFORE"' EXIT HUP INT TERM
+for pkg in $PACKAGES; do
+  echo "$pkg $(read_maxlines "$REPO_ROOT/$pkg/.ratchets.json")" >> "$BEFORE"
+done
 
 cd "$REPO_ROOT" && node scripts/repo.mjs ratchet:sync >/dev/null
 
-if [ -f "$RATCHETS" ]; then
+for pkg in $PACKAGES; do
+  RATCHETS="$REPO_ROOT/$pkg/.ratchets.json"
+  [ -f "$RATCHETS" ] || continue
+  PREV="$(awk -v p="$pkg" '$1 == p { print $2 }' "$BEFORE")"
   NEXT="$(read_maxlines "$RATCHETS")"
   if [ "$NEXT" != "$PREV" ]; then
-    echo >&2 "ratchet:sync lowered max-lines from $PREV to $NEXT; staging $RATCHETS"
+    echo >&2 "ratchet:sync lowered $pkg max-lines from $PREV to $NEXT; staging $RATCHETS"
     git add -- "$RATCHETS"
   fi
   # Silent when nothing moved: a hook that speaks on every commit gets tuned
   # out, and then it is not heard on the commit where it matters.
-fi
+done
 
+rm -f "$BEFORE"
 exit 0

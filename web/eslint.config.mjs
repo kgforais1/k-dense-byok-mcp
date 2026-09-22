@@ -1,6 +1,8 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+// FORK: the frontend max-lines ratchet. See the rule block below.
+import ratchets from "./.ratchets.json" with { type: "json" };
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -11,6 +13,23 @@ const eslintConfig = defineConfig([
       "react-hooks/refs": "warn",
       "react-hooks/immutability": "warn",
       "react-hooks/static-components": "warn",
+      // FORK: a file-size cap the frontend previously had none of, pinned at
+      // today's worst offender rather than at a number anyone would choose
+      // from scratch. It exists to stop new code getting worse, not to claim
+      // this tree is clean: `chat-tab.tsx` is 2355 lines.
+      //
+      // The value lives in `web/.ratchets.json` and is maintained by
+      // `npm run ratchet:sync`, the same machinery the backend uses. It only
+      // ever moves down, and stops at the floor (750). No number is written
+      // here on purpose — a literal would drift from the file the hook and CI
+      // both read.
+      //
+      // Most of the files this caps are upstream's. That is the accepted
+      // cost, and the same one the backend already carries: the cap never
+      // demands a refactor, but an upstream merge that grows a file past it
+      // fails lint until the cap is raised or the file is split. Raising it
+      // is a deliberate act, which is the point.
+      "max-lines": ["error", ratchets.maxLines],
     },
   },
   // Override default ignores of eslint-config-next.

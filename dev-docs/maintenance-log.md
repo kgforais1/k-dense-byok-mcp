@@ -29,6 +29,27 @@
   cannot import them, so a test asserts its `PACKAGES` line matches
   `ratchetPackageNames()`. A package added to one and not the other would
   leave a recomputed cap unstaged and fail CI on the next push.
+- **`ratchet:check` now enforces the cap, not just its freshness.** It only
+  ever asked whether the stored cap was stale-high; because the policy is
+  `min(cap, max(worst, floor))`, a file *above* the cap leaves `expected`
+  equal to `stored`, so the check passed while ESLint would fail. Since
+  neither `verify -- server` nor `verify -- web` runs lint, the first sight of
+  a violation was CI. The check reports the two failures separately — the
+  fixes differ, one being `ratchet:sync` and the other splitting the file —
+  and the pre-push hook already ran it, so enforcement arrived there without a
+  new hook.
+- **Skip patterns are anchored** the way the lint configs' globs are, after a
+  muse-spark review found `skipsFile` matching a directory name at any depth.
+  A future `web/src/out/foo.ts` would have been linted and unmeasured. Not
+  live in either package; fixed while cheap. `node_modules` stays any-depth,
+  which is ESLint's own default rather than a config glob.
+- **Tests added for the parts that had none:** `ratchetSync`'s write path
+  (lowering, never raising, stopping at the floor, and preserving keys it does
+  not own), the disk-walk fallback used when the tree is not a git checkout,
+  and violation reporting. All five run against scratch repositories, which
+  needed an optional `repoRoot` threaded through `ratchetSync`, `ratchetCheck`
+  and the file scan — without it a test could only point at this checkout, and
+  `ratchetSync` writes.
 
 ### 2026-09-21 — Tests can no longer delete the real user directories (PR #44)
 

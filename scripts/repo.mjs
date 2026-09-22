@@ -922,13 +922,13 @@ function ratchetsPath(pkg, repoRoot = REPO_ROOT) {
 }
 
 /** Load and return the stored ratchet object. */
-function loadRatchets(pkg) {
-  return JSON.parse(readText(ratchetsPath(pkg)));
+function loadRatchets(pkg, repoRoot = REPO_ROOT) {
+  return JSON.parse(readText(ratchetsPath(pkg, repoRoot)));
 }
 
 /** Save the ratchet object back to disk. */
-function saveRatchets(pkg, ratchets) {
-  fs.writeFileSync(ratchetsPath(pkg), `${JSON.stringify(ratchets, null, 2)}\n`);
+function saveRatchets(pkg, ratchets, repoRoot = REPO_ROOT) {
+  fs.writeFileSync(ratchetsPath(pkg, repoRoot), `${JSON.stringify(ratchets, null, 2)}\n`);
 }
 
 /**
@@ -998,36 +998,29 @@ function indexedFileLines(pkg, repoRoot = REPO_ROOT) {
  * checked that.
  */
 export function measuredFileLines(packageName = "server", repoRoot = REPO_ROOT) {
-  const indexed = indexedFileLines(ratchetPackage(packageName), repoRoot);
-  if (!indexed) return [];
-  return indexed.map((entry) => ({
+  return packageFileLines(ratchetPackage(packageName), repoRoot).map((entry) => ({
     file: path.relative(repoRoot, entry.file).split(path.sep).join("/"),
     lines: entry.lines,
   }));
 }
 
-function findWorstFile(pkg) {
-  const indexed = indexedFileLines(pkg);
-  if (indexed && indexed.length > 0) {
-    let best = null;
-    for (const entry of indexed) {
-      if (!best || entry.lines > best.lines) best = entry;
-    }
-    return best;
-  }
+/**
+ * Every measured file in the package, from the git index when it is readable
+ * and from a disk walk otherwise.
+ *
+ * The fallback exists for a tree that is not a git checkout, and it has to
+ * agree with the index path about what counts — so both route their decision
+ * through `skipsFile`, and the walk prunes only `node_modules`, which is
+ * pruned for speed rather than for correctness.
+ */
+function packageFileLines(pkg, repoRoot = REPO_ROOT) {
+  const indexed = indexedFileLines(pkg, repoRoot);
+  if (indexed && indexed.length > 0) return indexed;
 
-  // Scan what ESLint lints, not a subset of it. `eslint .` runs from the
-  // package root and covers everything but that config's ignores, so scanning
-  // only `src` and `test` left `pi-packages/**` and the config files
-  // invisible. A linted file the scan cannot see is one the cap can be lowered
-  // underneath, and the next lint run fails on a file nobody touched.
-  const root = path.join(REPO_ROOT, pkg.name);
-  // Only `node_modules` is pruned by name: it is enormous and ESLint skips it
-  // at any depth anyway. Everything else is decided per file by `skipsFile`,
-  // which anchors its patterns the way the lint config does.
+  const root = path.join(repoRoot, pkg.name);
   const prunedDirs = new Set(NESTED_SKIP_DIRS);
   const linted = new RegExp(`\\.(${LINTED_EXTENSIONS.join("|")})$`);
-  let worst = null;
+  const files = [];
 
   // Walk to any depth. A hand-unrolled fixed depth silently stops counting
   // below it, and a file the scan cannot see is one the cap can be lowered
@@ -1038,15 +1031,23 @@ function findWorstFile(pkg) {
       if (entry.isDirectory()) {
         if (!prunedDirs.has(entry.name)) walk(full);
       } else if (entry.isFile() && linted.test(entry.name)) {
-        const relative = path.relative(REPO_ROOT, full).split(path.sep).join("/");
+        const relative = path.relative(repoRoot, full).split(path.sep).join("/");
         if (skipsFile(pkg, relative)) continue;
-        const lines = countFileLines(full);
-        if (!worst || lines > worst.lines) worst = { file: full, lines };
+        files.push({ file: full, lines: countFileLines(full) });
       }
     }
   };
 
   if (exists(root)) walk(root);
+  return files;
+}
+
+/** The longest measured file in the package, or null when there are none. */
+function findWorstFile(pkg, repoRoot = REPO_ROOT) {
+  let worst = null;
+  for (const entry of packageFileLines(pkg, repoRoot)) {
+    if (!worst || entry.lines > worst.lines) worst = entry;
+  }
   return worst;
 }
 
@@ -1057,19 +1058,19 @@ export const ratchetPackageNames = () => RATCHET_PACKAGES.map((pkg) => pkg.name)
  * Recompute the max-lines ratchet and write it when it would go down.
  * Returns `{ changed, previous, next, worstFile, worstLines }`.
  */
-export function ratchetSync(packageName = "server") {
+export function ratchetSync(packageName = "server", repoRoot = REPO_ROOT) {
   const pkg = ratchetPackage(packageName);
-  const stored = loadRatchets(pkg);
+  const stored = loadRatchets(pkg, repoRoot);
   const currentCap = stored.maxLines;
   const floor = stored.floor;
-  const worst = findWorstFile(pkg);
+  const worst = findWorstFile(pkg, repoRoot);
   const worstLines = worst ? worst.lines : 0;
   const next = nextMaxLines(currentCap, worstLines, floor);
   const changed = next < currentCap;
 
   if (changed) {
     // Spread, so a key someone adds later is not deleted by the next commit.
-    saveRatchets(pkg, { ...stored, maxLines: next });
+    saveRatchets(pkg, { ...stored, maxLines: next }, repoRoot);
   }
 
   return {
@@ -1086,19 +1087,34 @@ export function ratchetSync(packageName = "server") {
  * Return whether the stored ratchet matches what sync would produce.
  * Also returns the recomputed values for messaging.
  */
-export function ratchetCheck(packageName = "server") {
+export function ratchetCheck(packageName = "server", repoRoot = REPO_ROOT) {
   const pkg = ratchetPackage(packageName);
-  const stored = loadRatchets(pkg);
+  const stored = loadRatchets(pkg, repoRoot);
   const currentCap = stored.maxLines;
   const floor = stored.floor;
-  const worst = findWorstFile(pkg);
+  const measured = packageFileLines(pkg, repoRoot);
+  let worst = null;
+  for (const entry of measured) {
+    if (!worst || entry.lines > worst.lines) worst = entry;
+  }
   const worstLines = worst ? worst.lines : 0;
   const expected = nextMaxLines(currentCap, worstLines, floor);
   const outOfDate = expected < currentCap;
+  // A stale-high cap and a file over the cap are different failures, and only
+  // the first one was ever reported. `min(cap, ...)` means a file above the
+  // cap leaves `expected` equal to `stored`, so `outOfDate` stays false while
+  // ESLint would fail — which made this check silent on the one condition a
+  // developer is most likely to create. ESLint errors above the limit, not at
+  // it, so the worst file passes at exactly its own size.
+  const violations = measured
+    .filter((entry) => entry.lines > currentCap)
+    .sort((a, b) => b.lines - a.lines)
+    .map((entry) => ({ file: path.relative(repoRoot, entry.file).split(path.sep).join("/"), lines: entry.lines }));
 
   return {
     package: pkg.name,
     outOfDate,
+    violations,
     stored: currentCap,
     expected,
     floor,
@@ -1528,22 +1544,38 @@ function cmdRatchetSync() {
 function cmdRatchetCheck() {
   // Report on every package before failing, so one stale cap does not hide
   // another behind it and turn one fix into two round trips through CI.
-  let failed = false;
+  let stale = false;
+  let over = false;
   for (const name of ratchetPackageNames()) {
     const result = ratchetCheck(name);
-    if (!result.outOfDate) {
-      process.stdout.write(`ratchet:check (${result.package}): ok (cap ${result.stored})\n`);
-      continue;
+    // Two distinct failures, reported separately because the fix differs: a
+    // stale cap is fixed by running sync, a file over the cap by splitting it.
+    for (const violation of result.violations) {
+      over = true;
+      process.stderr.write(
+        `ratchet:check (${result.package}): ${violation.file} has ${violation.lines} lines, ` +
+          `above the cap of ${result.stored}\n`,
+      );
     }
-    failed = true;
+    if (result.outOfDate) {
+      stale = true;
+      process.stderr.write(
+        `ratchet:check (${result.package}): stored max-lines ${result.stored} is above ` +
+          `recomputed ${result.expected} (worst file: ${result.worstFile}, ` +
+          `${result.worstLines} lines, floor ${result.floor})\n`,
+      );
+    }
+    if (!result.outOfDate && result.violations.length === 0) {
+      process.stdout.write(`ratchet:check (${result.package}): ok (cap ${result.stored})\n`);
+    }
+  }
+  if (!stale && !over) return 0;
+  if (over) {
     process.stderr.write(
-      `ratchet:check (${result.package}): stored max-lines ${result.stored} is above ` +
-        `recomputed ${result.expected} (worst file: ${result.worstFile}, ` +
-        `${result.worstLines} lines, floor ${result.floor})\n`,
+      `Split the file, or raise the cap deliberately in <package>/.ratchets.json.\n`,
     );
   }
-  if (!failed) return 0;
-  process.stderr.write(`Run: npm run ratchet:sync\n`);
+  if (stale) process.stderr.write(`Run: npm run ratchet:sync\n`);
   return 1;
 }
 

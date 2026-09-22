@@ -12,11 +12,14 @@ url="$2"
 case "$url" in
   *github.com/kgforais1/k-dense-byok-mcp|*github.com/kgforais1/k-dense-byok-mcp.git|\
 *github.com:kgforais1/k-dense-byok-mcp|*github.com:kgforais1/k-dense-byok-mcp.git)
-    # Fork guard passed. Check the cap against the git index, which on a clean
-    # tree is what you are pushing. It does not read the pushed ref range, so
-    # this is a "did you shrink something and not sync?" check rather than
-    # true push-level enforcement; CI lint is the backstop that sees the
-    # committed tree.
+    # Fork guard passed. Check the caps against the git index, which on a
+    # clean tree is what you are pushing. Two failures now, not one: a cap
+    # left stale-high after a file shrank, and a file that exceeds its cap.
+    # The second is the ESLint `max-lines` violation itself, caught here from
+    # line counts rather than by running ESLint — neither `verify -- server`
+    # nor `verify -- web` runs lint, so before this the first sight of it was
+    # CI. It does not read the pushed ref range, so it judges the index rather
+    # than the commits; CI lint remains the backstop.
     # Fail open when node is missing. A GUI git client inherits launchd's
     # PATH, which usually has no node, and blocking every push from one with
     # `command not found` — while the remedy also needs node — is how a hook

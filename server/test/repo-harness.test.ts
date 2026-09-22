@@ -14,6 +14,7 @@ import {
   nextMaxLines,
   ratchetCheck,
   ratchetPackageNames,
+  ratchetSync,
   runVerify,
   scaffoldHandoff,
   scaffoldMaintenance,
@@ -719,6 +720,121 @@ describe("the ratchet against this repository", () => {
       expect(result.stored).toBe(Math.max(result.worstLines, result.floor));
     },
   );
+});
+
+describe("the ratchet against a scratch repository", () => {
+  /**
+   * A repo with one staged backend file of `lines` lines and a stored cap.
+   * Scratch rather than this checkout, because `ratchetSync` writes: pointing
+   * it at the real tree would edit checked-in config, which is why the
+   * in-sync test next door is careful to stay read-only.
+   */
+  function scratch(options: { lines: number; ratchets: Record<string, unknown> }) {
+    const repo = freshDir("kady-ratchet-sync-");
+    const run = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+    run("init", "-q");
+    run("config", "user.email", "test@example.com");
+    run("config", "user.name", "test");
+    fs.mkdirSync(path.join(repo, "server", "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repo, "server", ".ratchets.json"),
+      `${JSON.stringify(options.ratchets, null, 2)}\n`,
+    );
+    fs.writeFileSync(path.join(repo, "server", "src", "big.ts"), "// x\n".repeat(options.lines));
+    run("add", "-A");
+    return repo;
+  }
+
+  const storedCap = (repo: string) =>
+    JSON.parse(fs.readFileSync(path.join(repo, "server", ".ratchets.json"), "utf8"));
+
+  it("lowers the cap to the worst file, and keeps keys it does not own", () => {
+    // The `{ ...stored }` spread is load-bearing and was never exercised: a
+    // sync that dropped an unrelated key would delete configuration on every
+    // commit, silently.
+    const repo = scratch({ lines: 800, ratchets: { maxLines: 1000, floor: 750, note: "keep me" } });
+    try {
+      const result = ratchetSync("server", repo);
+
+      expect(result.changed).toBe(true);
+      expect(result.previous).toBe(1000);
+      expect(result.next).toBe(800);
+      expect(storedCap(repo)).toEqual({ maxLines: 800, floor: 750, note: "keep me" });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("never raises the cap, however long the worst file gets", () => {
+    const repo = scratch({ lines: 900, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      const result = ratchetSync("server", repo);
+
+      expect(result.changed).toBe(false);
+      expect(result.next).toBe(800);
+      expect(storedCap(repo).maxLines).toBe(800);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("stops at the floor rather than following a small tree down", () => {
+    const repo = scratch({ lines: 300, ratchets: { maxLines: 1000, floor: 750 } });
+    try {
+      const result = ratchetSync("server", repo);
+
+      expect(result.next).toBe(750);
+      expect(result.worstLines).toBe(300);
+      expect(storedCap(repo).maxLines).toBe(750);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a file over the cap, which a stale-cap check cannot see", () => {
+    // `min(cap, max(worst, floor))` leaves `expected` equal to `stored` when a
+    // file is over the cap, so `outOfDate` stays false while ESLint would
+    // fail. Before this, `ratchet:check` was silent on the one condition a
+    // developer is most likely to create.
+    const repo = scratch({ lines: 900, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      const result = ratchetCheck("server", repo);
+
+      expect(result.outOfDate).toBe(false);
+      expect(result.violations).toEqual([{ file: "server/src/big.ts", lines: 900 }]);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("measures the same set from disk when the tree is not a git checkout", () => {
+    // The fallback path. It has to agree with the index path about what
+    // counts, or the cap can be lowered underneath a file ESLint still lints.
+    const dir = freshDir("kady-ratchet-nogit-");
+    try {
+      const write = (relative: string, lines: number) => {
+        const full = path.join(dir, relative);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, "// x\n".repeat(lines));
+      };
+      write("server/src/counted.ts", 120);
+      write("server/pi-packages/also-counted.ts", 60);
+      write("server/dist/skipped.ts", 900);
+      write("server/src/helpers/.venv/skipped.js", 900);
+      write("server/node_modules/pkg/skipped.ts", 900);
+
+      const measured = measuredFileLines("server", dir);
+
+      expect(measured.map((f) => f.file).sort()).toEqual([
+        "server/pi-packages/also-counted.ts",
+        "server/src/counted.ts",
+      ]);
+      expect(measured.find((f) => f.file === "server/src/counted.ts")?.lines).toBe(120);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the PR checklist phrases the CI job looks for", () => {

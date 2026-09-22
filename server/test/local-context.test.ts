@@ -382,6 +382,55 @@ describe("probeArchitecturalOllama", () => {
     expect(getContextWindow("ollama", base, "llava:13b")).toBe(32768);
   });
 
+  it("records nothing when the named architecture has no key of its own", async () => {
+    const base = freshBase();
+    // The body names qwen3 and carries a window for llama. Taking the lone
+    // key would be reading a number off a model we have been told this is
+    // not — evidence against the reading, not for it.
+    stubShow(() =>
+      showBody({
+        "general.architecture": "qwen3",
+        "llama.context_length": 131072,
+      }),
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest" }]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBeUndefined();
+  });
+
+  it("queues no rival while a call for the same model is in flight", async () => {
+    const base = freshBase();
+    const asked: string[] = [];
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
+      asked.push(JSON.parse(String(init?.body)).model as string);
+      await held;
+      return okJson({
+        model_info: { "general.architecture": "qwen3", "qwen3.context_length": 8192 },
+      });
+    });
+    // Open 1 queues a call at the first digest and it is still in flight when
+    // open 2 arrives at a second. The in-flight reservation is what stops the
+    // two answers from racing to write the same slot out of order.
+    const first = probeArchitecturalOllama(base, [
+      { id: "q:latest", digest: "sha256:aaa" },
+    ]);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    expect(asked).toEqual(["q:latest"]);
+
+    release();
+    await first;
+    // The answer is dated to the pull it was queued at, so the next open sees
+    // the mismatch and asks again rather than holding a figure that may
+    // describe the pull before last.
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    expect(asked).toEqual(["q:latest", "q:latest"]);
+  });
+
   it("records nothing when several keys could be the one", async () => {
     const base = freshBase();
     stubShow(() =>

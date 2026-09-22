@@ -122,7 +122,16 @@ export function cacheKey(
 
 /** `loaded ?? architectural`, recomputed on every read. The two figures are
  * stored in separate slots and merged here — never a merged stored number —
- * because the loaded figure is the transient of the pair. */
+ * because the loaded figure is the transient of the pair.
+ *
+ * Deliberately digest-blind. Between a re-pull that `/api/tags` cannot
+ * describe and the `/api/show` answer that corrects it, this returns the
+ * previous pull's figure. Refusing it instead would return `undefined`, and
+ * `resolveModel` reads that as the 128,000 floor — which for the models this
+ * path serves is usually the *larger* number, so the stricter read would
+ * widen the over-declaration it was meant to close. A stale figure that
+ * `needsShow` is already queueing a correction for beats a floor that nothing
+ * will correct. */
 export function getContextWindow(
   providerId: string,
   baseUrl: string,
@@ -433,19 +442,23 @@ async function showOne(job: ShowJob): Promise<void> {
  * `llama.context_length`, `qwen3.context_length` — so its name is only
  * knowable from `general.architecture` in the same object.
  *
- * Where that is missing, a single key ending in `.context_length` is taken
- * instead, because one candidate is not a guess. Several candidates are, and
- * a wrong pick here over-declares the window, which is the failure this
- * module exists to prevent — so ambiguity records nothing and the row keeps
- * whatever it had.
+ * Where the architecture is *absent*, a single key ending in
+ * `.context_length` is taken instead, because one candidate is not a guess.
+ * Several are, and a wrong pick here over-declares the window, which is the
+ * failure this module exists to prevent — so ambiguity records nothing and
+ * the row keeps whatever it had.
+ *
+ * Where the architecture is present but its key is missing or unusable, the
+ * answer is nothing, not the lone-key fallback. A body that names one
+ * architecture and carries a window for another is a body we do not
+ * understand; the lone key there is evidence against the reading, not for it.
  */
 function architecturalFromShow(body: unknown): number | undefined {
   const info = asRecord(asRecord(body)?.["model_info"]);
   if (!info) return undefined;
   const architecture = info["general.architecture"];
   if (typeof architecture === "string" && architecture) {
-    const direct = asNumber(info[`${architecture}.context_length`]);
-    if (direct !== undefined) return direct;
+    return asNumber(info[`${architecture}.context_length`]);
   }
   const candidates = Object.entries(info).filter(([name]) =>
     name.endsWith(".context_length"),

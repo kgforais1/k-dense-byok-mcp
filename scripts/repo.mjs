@@ -999,6 +999,16 @@ function indexedFileLines(pkg, repoRoot = REPO_ROOT) {
 }
 
 /**
+ * Repo-relative, against the root that was actually measured. `rel()` is
+ * hardcoded to this checkout, which is right for the CLI and wrong the moment
+ * a caller passes its own `repoRoot` — it reported a scratch repo's worst file
+ * as `../../../../var/folders/...`. The violation list already resolved paths
+ * this way; this makes `worstFile` agree with it.
+ */
+const relativeTo = (repoRoot, file) =>
+  path.relative(repoRoot, file).split(path.sep).join("/");
+
+/**
  * The measured set for one package, repo-relative: every file its ratchet
  * counts. Exported so a test can assert it agrees with what ESLint lints,
  * rather than asserting something adjacent and being named as though it
@@ -1048,16 +1058,6 @@ function packageFileLines(pkg, repoRoot = REPO_ROOT) {
   if (exists(root)) walk(root);
   return files;
 }
-
-/**
- * Repo-relative, against the root that was actually measured. `rel()` is
- * hardcoded to this checkout, which is right for the CLI and wrong the moment
- * a caller passes its own `repoRoot` — it reported a scratch repo's worst file
- * as `../../../../var/folders/...`. The violation list already resolved paths
- * this way; this makes `worstFile` agree with it.
- */
-const relativeTo = (repoRoot, file) =>
-  path.relative(repoRoot, file).split(path.sep).join("/");
 
 /** The longest measured file in the package, or null when there are none. */
 function findWorstFile(pkg, repoRoot = REPO_ROOT) {
@@ -1558,43 +1558,48 @@ function cmdRatchetSync() {
   return 0;
 }
 
+/**
+ * Print one package's result. Two distinct failures, reported separately
+ * because the fix differs: a stale cap is fixed by running sync, a file over
+ * the cap by splitting it.
+ */
+function reportRatchetPackage(result) {
+  for (const violation of result.violations) {
+    process.stderr.write(
+      `ratchet:check (${result.package}): ${violation.file} has ${violation.lines} lines, ` +
+        `above the cap of ${result.stored}\n`,
+    );
+  }
+  if (result.outOfDate) {
+    process.stderr.write(
+      `ratchet:check (${result.package}): stored max-lines ${result.stored} is above ` +
+        `recomputed ${result.expected} (worst file: ${result.worstFile}, ` +
+        `${result.worstLines} lines, floor ${result.floor})\n`,
+    );
+  }
+  if (!result.outOfDate && result.violations.length === 0) {
+    process.stdout.write(`ratchet:check (${result.package}): ok (cap ${result.stored})\n`);
+  }
+}
+
 function cmdRatchetCheck() {
   // Report on every package before failing, so one stale cap does not hide
   // another behind it and turn one fix into two round trips through CI.
-  let stale = false;
-  const over = [];
-  for (const name of ratchetPackageNames()) {
-    const result = ratchetCheck(name);
-    // Two distinct failures, reported separately because the fix differs: a
-    // stale cap is fixed by running sync, a file over the cap by splitting it.
-    for (const violation of result.violations) {
-      if (!over.includes(result.package)) over.push(result.package);
-      process.stderr.write(
-        `ratchet:check (${result.package}): ${violation.file} has ${violation.lines} lines, ` +
-          `above the cap of ${result.stored}\n`,
-      );
-    }
-    if (result.outOfDate) {
-      stale = true;
-      process.stderr.write(
-        `ratchet:check (${result.package}): stored max-lines ${result.stored} is above ` +
-          `recomputed ${result.expected} (worst file: ${result.worstFile}, ` +
-          `${result.worstLines} lines, floor ${result.floor})\n`,
-      );
-    }
-    if (!result.outOfDate && result.violations.length === 0) {
-      process.stdout.write(`ratchet:check (${result.package}): ok (cap ${result.stored})\n`);
-    }
-  }
+  const results = ratchetPackageNames().map((name) => ratchetCheck(name));
+  for (const result of results) reportRatchetPackage(result);
+
+  const stale = results.some((result) => result.outOfDate);
+  const over = results.filter((result) => result.violations.length > 0);
   if (!stale && over.length === 0) return 0;
+
   if (over.length > 0) {
     // Name the packages. The placeholder here was literal `<package>`, which
     // is the kind of message that makes a reader check whether the tool is
     // broken rather than their code. Caught by two reviewers at once.
-    const paths = over.map((name) => `${name}/.ratchets.json`).join(" and ");
+    const paths = over.map((result) => `${result.package}/.ratchets.json`).join(" and ");
     process.stderr.write(`Split the file, or raise the cap deliberately in ${paths}.\n`);
   }
-  if (stale) process.stderr.write(`Run: npm run ratchet:sync\n`);
+  if (stale) process.stderr.write("Run: npm run ratchet:sync\n");
   return 1;
 }
 

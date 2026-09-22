@@ -39,7 +39,7 @@ Phase 2 scope hinges on transport (stdio vs StreamableHTTP), run-mapping (SSE â†
 server/test/mcp-phase1-spike.test.ts              SDK + headless-session evidence
 server/test/mcp-run-mapping-spike.test.ts         broker poll-contract evidence
 dev-docs/plans/completed/2026-09-06-mcp-server-phase-1-research.md  THIS FILE (+ Decisions)
-dev-docs/plans/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
+dev-docs/plans/completed/2026-09-06-mcp-server-phase-2-server.md    refined with Phase 1 verdicts
 ```
 
 ## Implementation sequence

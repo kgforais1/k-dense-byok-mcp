@@ -903,6 +903,7 @@ function ratchetPackage(name) {
   return pkg;
 }
 
+/** Where a package keeps its stored cap. */
 const ratchetsPath = (pkg, repoRoot = REPO_ROOT) =>
   path.join(repoRoot, pkg.name, ".ratchets.json");
 
@@ -913,7 +914,7 @@ function loadRatchets(pkg) {
 
 /** Save the ratchet object back to disk. */
 function saveRatchets(pkg, ratchets) {
-  fs.writeFileSync(ratchetsPath(pkg), JSON.stringify(ratchets, null, 2) + "\n");
+  fs.writeFileSync(ratchetsPath(pkg), `${JSON.stringify(ratchets, null, 2)}\n`);
 }
 
 /**

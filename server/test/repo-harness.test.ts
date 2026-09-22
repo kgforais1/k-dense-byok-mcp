@@ -589,7 +589,7 @@ describe("the ratchet against this repository", () => {
     const declared = /^PACKAGES="([^"]*)"$/m.exec(hook);
 
     expect(declared).toBeTruthy();
-    expect(declared![1].split(/\s+/).filter(Boolean).sort()).toEqual(
+    expect(declared?.[1].split(/\s+/).filter(Boolean).sort()).toEqual(
       [...ratchetPackageNames()].sort(),
     );
   });
@@ -667,8 +667,13 @@ describe("the ratchet against this repository", () => {
         : text.split("\n").length;
 
       expect(result.worstLines).toBe(newlineTerminatedLines);
-      // And the stored cap sits exactly at it, which is the config's stated rule.
-      expect(result.stored).toBe(result.worstLines);
+      // And the stored cap sits exactly at the worst file — or at the floor,
+      // once every file is smaller than it. Asserting equality with the worst
+      // file alone would have turned the success case into a failure: the
+      // ratchet stops at 750 by design, so the test would start failing on
+      // the day the last oversized file was finally split. Found by a
+      // greptile review.
+      expect(result.stored).toBe(Math.max(result.worstLines, result.floor));
     },
   );
 });

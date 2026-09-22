@@ -621,9 +621,8 @@ describe("probeArchitecturalOllama", () => {
     const base = freshBase();
     let live = 0;
     let peak = 0;
-    stubFetch(async (url, init) => {
+    stubFetch(async (url) => {
       if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
-      void init;
       live += 1;
       peak = Math.max(peak, live);
       await new Promise((r) => setTimeout(r, 5));

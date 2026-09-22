@@ -305,15 +305,7 @@ export function probeArchitecturalOllama(
   models: { id: string; digest?: string; tagged?: number }[],
 ): Promise<void> {
   const root = normalizeBaseUrl(baseUrl);
-  let outstanding = 0;
-  let settle: () => void = () => {};
-  const finished = new Promise<void>((resolve) => {
-    settle = resolve;
-  });
-  const done = (): void => {
-    outstanding -= 1;
-    if (outstanding === 0) settle();
-  };
+  const queued: Omit<ShowJob, "done">[] = [];
   for (const model of models) {
     const key = cacheKey("ollama", root, model.id);
     const digest = model.digest ?? "";
@@ -329,12 +321,21 @@ export function probeArchitecturalOllama(
     // duplicate check.
     if (showInFlight.has(key)) continue;
     showInFlight.add(key);
-    outstanding += 1;
-    showQueue.push({ key, root, modelId: model.id, digest, done });
+    queued.push({ key, root, modelId: model.id, digest });
   }
-  if (outstanding === 0) return Promise.resolve();
-  pumpShowQueue();
-  return finished;
+  if (queued.length === 0) return Promise.resolve();
+  // The executor runs synchronously, so the jobs are still enqueued and the
+  // pool still topped up before this function returns — which is what lets
+  // the reservations above stand against a concurrent caller.
+  return new Promise<void>((resolve) => {
+    let outstanding = queued.length;
+    const done = (): void => {
+      outstanding -= 1;
+      if (outstanding === 0) resolve();
+    };
+    for (const job of queued) showQueue.push({ ...job, done });
+    pumpShowQueue();
+  });
 }
 
 /**
@@ -385,6 +386,9 @@ function pumpShowQueue(): void {
   }
 }
 
+/** Drains the shared queue until it is empty, then retires. One of at most
+ * `SHOW_CONCURRENCY` of these; `pumpShowQueue` is the only thing that starts
+ * one. */
 async function runShowWorker(): Promise<void> {
   try {
     for (;;) {
@@ -412,6 +416,9 @@ async function runShowWorker(): Promise<void> {
   }
 }
 
+/** One model's `/api/show` read. Dates the figure it writes with the digest
+ * the job was queued at, so a later open can tell it from a figure left over
+ * from a different pull of the same name. */
 async function showOne(job: ShowJob): Promise<void> {
   const body = await getJson(`${job.root}/api/show`, {
     method: "POST",
@@ -440,10 +447,10 @@ function architecturalFromShow(body: unknown): number | undefined {
     const direct = asNumber(info[`${architecture}.context_length`]);
     if (direct !== undefined) return direct;
   }
-  const candidates = Object.keys(info).filter((name) =>
+  const candidates = Object.entries(info).filter(([name]) =>
     name.endsWith(".context_length"),
   );
-  return candidates.length === 1 ? asNumber(info[candidates[0]!]) : undefined;
+  return candidates.length === 1 ? asNumber(candidates[0][1]) : undefined;
 }
 
 async function probeOllama(root: string): Promise<void> {

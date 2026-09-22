@@ -493,7 +493,7 @@ describe("GET /ollama/models", () => {
       app,
       (models) => models[0]?.context_length === 8192,
     );
-    expect(body.models[0]!.context_length).toBe(8192);
+    expect(body.models[0]?.context_length).toBe(8192);
     await app.close();
   });
 
@@ -528,7 +528,7 @@ describe("GET /ollama/models", () => {
       app,
       (models) => models[0]?.context_length === 8192,
     );
-    expect(body.models[0]!.context_length).toBe(8192);
+    expect(body.models[0]?.context_length).toBe(8192);
     expect(shownModels).toContain("q:latest");
     await app.close();
   });

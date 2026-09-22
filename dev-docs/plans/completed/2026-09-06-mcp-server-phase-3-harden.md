@@ -349,10 +349,16 @@ Streamable HTTP. This records which modules a CLI would reuse, so whoever
 builds it extends the existing core instead of writing a second one that drifts.
 
 **Do not reuse: `mcp-server/http.ts` (135 lines).** Everything in it is
-transport. Streamable HTTP, per-connection `Mcp-Session-Id`, the Fastify route,
-the `MCP_ENABLED` gate and the loopback assertion are all answers to "a remote
-client is speaking to us over a socket", which is the one problem a CLI does
-not have. A CLI is a local process that already has the user's shell.
+transport. Streamable HTTP, per-connection `Mcp-Session-Id`, the Fastify route
+and the `MCP_ENABLED` gate are all answers to "a remote client is speaking to
+us over a socket", which is the one problem a CLI does not have. A CLI is a
+local process that already has the user's shell.
+
+The loopback assertion is *not* here, despite belonging to the same concern:
+`assertMcpLoopbackHost` lives in `config.ts:191` and is called from `buildApp`
+(`index.ts:86`), because it has to refuse startup before any route exists. A
+CLI needs no equivalent — there is no socket to bind — but anyone auditing the
+network exposure of the MCP surface should look there rather than here.
 
 **Reuse the tool bodies, not the tool registrations.**
 `mcp-server/server.ts` (365 lines) is two things wearing one coat: the seven
@@ -383,8 +389,14 @@ it is MCP-specific:
 **Three things a CLI has to get right, because the MCP adapter already does.**
 
 1. **Scoping is `AsyncLocalStorage`, and setting it is the harness's job.**
-   `scope.ts` holds the active project in an `AsyncLocalStorage` store, and
-   everything downstream reads `currentProjectId()` rather than taking an id.
+   `scope.ts` holds the active project in an `AsyncLocalStorage` store. Most
+   functions below the tools take the id explicitly — `createSession`,
+   `getSession`, `deleteSession`, `listSessionsLabelled`, `runBroker.get`,
+   `readRunResult` all have a `projectId` parameter, and the tool bodies read
+   `currentProjectId()` and pass it down. Two do not, and they are where this
+   bites: `beginRun` reaches `prepareRun`, which reads `currentProjectId()`
+   and `activePaths()` from the store itself (`api/sessions.ts:238-239`), and
+   `activePaths()` reads it too (`projects.ts:154`).
    No tool body calls `withActiveProject` — the global Fastify hook at
    `index.ts:138` wraps each request, which is why it does not appear in the
    table above. A CLI has to do that wrapping itself, around each command.
@@ -401,13 +413,25 @@ it is MCP-specific:
    takes a Fastify type dependency whether or not it serves HTTP. If a CLI
    wants it too, move `beginRun` out of `api/` into a neutral module and give
    it a narrower logger type, rather than importing a route module from a
-   terminal program.
+   terminal program. Two more costs that "one import" hides: importing
+   `api/sessions.ts` pulls its whole runtime graph — roughly twenty modules,
+   including models, interview, modal-tool, permissions, skills and the
+   notebook set — and `createKadyMcpServer` itself takes a
+   `FastifyBaseLogger` (`server.ts:16,96`), so a CLI reusing the tool bodies
+   has to fabricate a compatible logger or narrow that type too.
 3. **Headless sessions disable `interview`.** `create_research_session` passes
    `includeInterview: false`, because `interview` blocks a run until a human
    answers it in the browser, and nobody is watching. The same reasoning
    applies to a CLI only if it cannot prompt; a CLI that *can* prompt on stdin
    should pass `includeInterview: true` and answer the tool itself, which is a
    genuine behavioural difference from the MCP path rather than a copy of it.
+   The mechanism supports that — answers flow through `resolveInterview`
+   (`interview.ts:161`), which the REST route already calls — but it is not a
+   simple prompt: the run blocks in-process on a pending entry keyed by
+   `toolCallId` (`interview.ts:285-322`), so the CLI needs a concurrent answer
+   loop running while the run is in flight, and has to handle the timeout
+   (600s by default, after which the run proceeds on assumed defaults rather
+   than hanging).
 
 **What this does not settle.** Whether a CLI is worth building at all. Nothing
 in the MCP work needs it, and no user has asked; this map exists so that the

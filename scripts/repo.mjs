@@ -940,6 +940,13 @@ function saveRatchets(pkg, ratchets, repoRoot = REPO_ROOT) {
  * and `wc -l`, and 1468 to a naive split. Overcounting by one would set the
  * cap a line looser than the worst file, quietly defeating the "exactly at the
  * worst offender" rule the config comment insists on.
+ *
+ * One known divergence, checked and not currently reachable: ESLint splits on
+ * a lone `\r` and on U+2028/U+2029 as well as on `\n`, while this and
+ * `git grep -c` do not. A muse-spark review scanned all 590 linted files for
+ * those characters and found none, so the two agree on this tree. A file that
+ * introduced one would be counted short here and could sit over the cap
+ * without this check seeing it; ESLint in CI would still catch it.
  */
 function countFileLines(filePath) {
   const text = readText(filePath);
@@ -1555,13 +1562,13 @@ function cmdRatchetCheck() {
   // Report on every package before failing, so one stale cap does not hide
   // another behind it and turn one fix into two round trips through CI.
   let stale = false;
-  let over = false;
+  const over = [];
   for (const name of ratchetPackageNames()) {
     const result = ratchetCheck(name);
     // Two distinct failures, reported separately because the fix differs: a
     // stale cap is fixed by running sync, a file over the cap by splitting it.
     for (const violation of result.violations) {
-      over = true;
+      if (!over.includes(result.package)) over.push(result.package);
       process.stderr.write(
         `ratchet:check (${result.package}): ${violation.file} has ${violation.lines} lines, ` +
           `above the cap of ${result.stored}\n`,
@@ -1579,11 +1586,13 @@ function cmdRatchetCheck() {
       process.stdout.write(`ratchet:check (${result.package}): ok (cap ${result.stored})\n`);
     }
   }
-  if (!stale && !over) return 0;
-  if (over) {
-    process.stderr.write(
-      `Split the file, or raise the cap deliberately in <package>/.ratchets.json.\n`,
-    );
+  if (!stale && over.length === 0) return 0;
+  if (over.length > 0) {
+    // Name the packages. The placeholder here was literal `<package>`, which
+    // is the kind of message that makes a reader check whether the tool is
+    // broken rather than their code. Caught by two reviewers at once.
+    const paths = over.map((name) => `${name}/.ratchets.json`).join(" and ");
+    process.stderr.write(`Split the file, or raise the cap deliberately in ${paths}.\n`);
   }
   if (stale) process.stderr.write(`Run: npm run ratchet:sync\n`);
   return 1;

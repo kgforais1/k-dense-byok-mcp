@@ -563,6 +563,10 @@ describe("the ratchet against this repository", () => {
       expect(result.package).toBe(pkg);
       expect(result.outOfDate).toBe(false);
       expect(result.stored).toBe(result.expected);
+      // Against the real tree, where both packages sit exactly at their cap.
+      // A `>=` violation check would pass every scratch-repo test and then
+      // fail here, flagging the very file the cap was measured from.
+      expect(result.violations).toEqual([]);
       expect(fs.readFileSync(ratchetsFile(pkg), "utf8")).toBe(before);
     },
   );
@@ -811,7 +815,30 @@ describe("the ratchet against a scratch repository", () => {
     }
   });
 
-  it("measures the same set from disk when the tree is not a git checkout", () => {
+  it("treats a file exactly at the cap as fine, and one line more as a violation", () => {
+    // ESLint errors above the limit, not at it, so the worst file has to pass
+    // at exactly its own size — that is what lets the cap sit pinned to it.
+    // Without this pair, `>=` passes every other violation test while
+    // rejecting the file the cap was measured from. Raised by a stepfun
+    // review, which noticed the 900-vs-800 case cannot tell the two apart.
+    const atCap = scratch({ lines: 800, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      expect(ratchetCheck("server", atCap).violations).toEqual([]);
+    } finally {
+      fs.rmSync(atCap, { recursive: true, force: true });
+    }
+
+    const overCap = scratch({ lines: 801, ratchets: { maxLines: 800, floor: 750 } });
+    try {
+      expect(ratchetCheck("server", overCap).violations).toEqual([
+        { file: "server/src/big.ts", lines: 801 },
+      ]);
+    } finally {
+      fs.rmSync(overCap, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the same skip rules from disk when the tree is not a git checkout", () => {
     // The fallback path. It has to agree with the index path about what
     // counts, or the cap can be lowered underneath a file ESLint still lints.
     const dir = freshDir("kady-ratchet-nogit-");

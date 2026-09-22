@@ -12,6 +12,7 @@ import {
 import {
   cacheKey,
   getContextWindow,
+  probeArchitecturalOllama,
   probeLoaded,
   recordArchitectural,
 } from "../agent/local-context.ts";
@@ -109,6 +110,9 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // rather than rendered, because `ollama/undefined` is a selectable
       // entry that resolves to nothing.
       const rows = payload.models ?? [];
+      // Rows whose `details.context_length` was missing or unusable, for the
+      // `/api/show` fallback below.
+      const missingArchitectural: string[] = [];
       const models = rows.flatMap((m) => {
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never
@@ -127,6 +131,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           cacheKey("ollama", OLLAMA_BASE_URL, name),
           architectural,
         );
+        if (architectural === undefined) missingArchitectural.push(name);
         return [
           {
             id: `ollama/${name}`,
@@ -145,6 +150,14 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // never rejects, so no .catch() — and awaiting it would stall the
       // picker on a hung daemon behind a list it already has.
       void probeLoaded("ollama", OLLAMA_BASE_URL);
+      // FORK: `details.context_length` is undocumented, so a row without it is
+      // an Ollama-side change rather than a bug. Those rows — and only those —
+      // get the documented `/api/show` read, unawaited for the same reason.
+      // Empty on a daemon that still emits the field, which is why the picker
+      // budget of two calls per open is unaffected in the normal case.
+      if (missingArchitectural.length > 0) {
+        void probeArchitecturalOllama(OLLAMA_BASE_URL, missingArchitectural);
+      }
       return { available: true, models };
     } catch {
       return { available: false, models: [] };

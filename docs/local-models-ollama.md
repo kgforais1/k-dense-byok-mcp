@@ -86,8 +86,16 @@ each server's own API is read when the model picker opens:
 Those field names were last confirmed on 2026-09-19 against Ollama 0.33.2 and
 LM Studio 0.4.23+1 (`cat ~/.lmstudio/.internal/app-version`). Ollama does not
 document `details.context_length`, so that one in particular is worth
-re-checking after an upgrade; if it disappears, an unloaded model falls back to
-the figure below rather than breaking.
+re-checking after an upgrade.
+
+If it does disappear, Ollama models do not lose the figure. Any row that
+arrives without one is looked up individually through the documented
+`POST /api/show`, which reports the same number under an architecture-prefixed
+key (`qwen3.context_length`). That costs one call per affected model instead of
+the usual one call for the whole list, which is why it is a fallback and not
+the source: on a daemon that still fills `details.context_length` it never
+runs. A model it cannot answer for falls back to the figure below rather than
+breaking.
 
 The **loaded** figure wins when both are known, because that is what your
 request is measured against and it is often smaller than the maximum. Both
@@ -108,7 +116,8 @@ Practical consequences:
   then. Either way the *loaded* figure — the one your request is measured
   against — lands only after that background read, so if a model is loaded
   smaller than its maximum, the first open overstates it. Reopening the picker
-  settles it.
+  settles it. An Ollama row that needed the `/api/show` fallback also gets no
+  badge until the second open, for the same reason.
 - **If nothing answers, Kady assumes 128,000.** That is a deliberate floor
   rather than a guess at your hardware: Kady's own system prompt is roughly
   44,000 tokens and the compaction reserve adds about 16,000 on top, so a

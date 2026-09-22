@@ -37,6 +37,15 @@ interface ContextEntry {
 
 const cache = new Map<string, ContextEntry>();
 const pending = new Map<string, Promise<void>>();
+/** Cache keys with an `/api/show` call outstanding. Unlike `pending`, callers
+ * never join one: the fallback's product is the cache write, and the next
+ * picker open re-reads the cache anyway. */
+const showInFlight = new Set<string>();
+
+/** Fan-out ceiling for the `/api/show` fallback. It runs once per model, so a
+ * daemon that stopped emitting `details.context_length` for every row would
+ * otherwise open one socket per installed model at once. */
+const SHOW_CONCURRENCY = 4;
 
 function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
@@ -164,11 +173,11 @@ async function runProbe(providerId: string, root: string): Promise<void> {
  * discovery routes. Returns `undefined` on any failure (network error,
  * abort, non-2xx, malformed body); callers treat that as "leave the cache
  * alone". */
-async function getJson(url: string): Promise<unknown> {
+async function getJson(url: string, init?: RequestInit): Promise<unknown> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const resp = await fetch(url, { signal: ctrl.signal });
+    const resp = await fetch(url, { ...init, signal: ctrl.signal });
     if (!resp.ok) return undefined;
     return (await resp.json()) as unknown;
   } catch {
@@ -225,6 +234,104 @@ function clearUnreportedLoaded(
       delete entry.loaded;
     }
   }
+}
+
+/**
+ * Fallback source for Ollama's architectural figure, for rows whose
+ * `/api/tags` entry carried no `details.context_length`.
+ *
+ * `details.context_length` is undocumented — Ollama documents only `format`,
+ * `family`, `families`, `parameter_size` and `quantization_level` — so it can
+ * disappear in an upgrade without that being a regression on Ollama's side.
+ * `/api/show` is documented and reports the same figure, but costs one POST
+ * per model against a picker-open budget of two calls total. So it is the
+ * fallback and not the source: on a daemon that still emits the tags field
+ * this never fires, and it pays only in the failure it exists for. See
+ * `dev-docs/todo.md` §4 (decided 2026-09-20).
+ *
+ * Never rejects, like the loaded probe, and its product is the cache write.
+ * The write lands after the response the picker is already rendering, so the
+ * figure appears on the *next* open — the same second-open shape LM Studio
+ * rows have always had.
+ */
+export function probeArchitecturalOllama(
+  baseUrl: string,
+  modelIds: string[],
+): Promise<void> {
+  const root = normalizeBaseUrl(baseUrl);
+  const queue: { key: string; modelId: string }[] = [];
+  for (const modelId of modelIds) {
+    const key = cacheKey("ollama", root, modelId);
+    // Re-checked here rather than trusted from the caller: a concurrent open
+    // may have filled the slot since the list was built, and a figure we
+    // already hold is never worth a call.
+    if (cache.get(key)?.architectural !== undefined) continue;
+    // Reserved synchronously, before any await, so two overlapping opens
+    // cannot both queue the same model. Doubles as the within-batch
+    // duplicate check.
+    if (showInFlight.has(key)) continue;
+    showInFlight.add(key);
+    queue.push({ key, modelId });
+  }
+  if (queue.length === 0) return Promise.resolve();
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const item = queue[next++];
+      if (!item) return;
+      try {
+        await showOne(root, item.modelId, item.key);
+      } catch {
+        // Never rejects — one failed model is a no-op, not an error, and
+        // must not abandon the rest of the queue.
+      } finally {
+        showInFlight.delete(item.key);
+      }
+    }
+  };
+  const workers = Array.from(
+    { length: Math.min(SHOW_CONCURRENCY, queue.length) },
+    () => worker(),
+  );
+  return Promise.all(workers).then(() => undefined);
+}
+
+async function showOne(
+  root: string,
+  modelId: string,
+  key: string,
+): Promise<void> {
+  const body = await getJson(`${root}/api/show`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: modelId }),
+  });
+  recordArchitectural(key, architecturalFromShow(body));
+}
+
+/**
+ * `/api/show` reports the window under an architecture-prefixed key —
+ * `llama.context_length`, `qwen3.context_length` — so its name is only
+ * knowable from `general.architecture` in the same object.
+ *
+ * Where that is missing, a single key ending in `.context_length` is taken
+ * instead, because one candidate is not a guess. Several candidates are, and
+ * a wrong pick here over-declares the window, which is the failure this
+ * module exists to prevent — so ambiguity records nothing and the row keeps
+ * whatever it had.
+ */
+function architecturalFromShow(body: unknown): number | undefined {
+  const info = asRecord(asRecord(body)?.["model_info"]);
+  if (!info) return undefined;
+  const architecture = info["general.architecture"];
+  if (typeof architecture === "string" && architecture) {
+    const direct = asNumber(info[`${architecture}.context_length`]);
+    if (direct !== undefined) return direct;
+  }
+  const candidates = Object.keys(info).filter((name) =>
+    name.endsWith(".context_length"),
+  );
+  return candidates.length === 1 ? asNumber(info[candidates[0]!]) : undefined;
 }
 
 async function probeOllama(root: string): Promise<void> {

@@ -580,6 +580,49 @@ describe("the ratchet against this repository", () => {
     expect(measured).not.toContain("web/next-env.d.ts");
   });
 
+  it("anchors its skip patterns the way the lint config does", () => {
+    // A lint config's `ignores: ["out/**"]` means the package's own `out`, not
+    // any directory called that. Matching `/out/` anywhere would skip a
+    // nested `src/out/` that ESLint still lints — a linted file the scan
+    // cannot see is one the cap can be lowered underneath, and the next lint
+    // run fails on a file nobody touched. `node_modules` is the exception,
+    // because ESLint skips it at any depth. Raised by a muse-spark review.
+    const repo = freshDir("kady-ratchet-anchor-");
+    try {
+      const run = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      run("init", "-q");
+      run("config", "user.email", "test@example.com");
+      run("config", "user.name", "test");
+      const write = (relative: string) => {
+        const full = path.join(repo, relative);
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, "// x\n");
+      };
+      write("web/out/top-level.ts");
+      write("web/src/out/nested.ts");
+      write("web/node_modules/pkg/index.ts");
+      write("web/src/deep/node_modules/pkg/index.ts");
+      write("web/next-env.d.ts");
+      write("web/src/app/page.tsx");
+      run("add", "-A");
+
+      const measured = measuredFileLines("web", repo).map((f) => f.file);
+
+      expect(measured).toContain("web/src/app/page.tsx");
+      // Nested, so ESLint lints it and the scan must count it.
+      expect(measured).toContain("web/src/out/nested.ts");
+      // Anchored at the package root, so ESLint ignores it and so do we.
+      expect(measured).not.toContain("web/out/top-level.ts");
+      expect(measured).not.toContain("web/next-env.d.ts");
+      // Any depth, because that is ESLint's own default.
+      expect(measured).not.toContain("web/node_modules/pkg/index.ts");
+      expect(measured).not.toContain("web/src/deep/node_modules/pkg/index.ts");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the pre-commit hook's package list in step with the code's", () => {
     // The hook stages each `.ratchets.json` the sync lowered, and it cannot
     // import from `scripts/repo.mjs` — it is POSIX sh. A package added to the

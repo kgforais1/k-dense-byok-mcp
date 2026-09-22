@@ -878,7 +878,14 @@ export function nextMaxLines(currentCap, worstFileLines, floor) {
 const RATCHET_PACKAGES = [
   {
     name: "server",
-    skipDirs: ["dist", "node_modules", "coverage", ".venv"],
+    // Package-relative, and anchored, because that is how ESLint reads the
+    // `ignores` globs they mirror: `dist/**` in `server/eslint.config.mjs`
+    // means the package's own `dist`, not any directory called that. Matching
+    // on `/dist/` anywhere would skip a future `src/dist/` that ESLint still
+    // lints — a linted file the scan cannot see is one the cap can be lowered
+    // underneath. Raised by a muse-spark review; not live in either package
+    // today, which is the point of fixing it while it is cheap.
+    skipPrefixes: ["dist/", "coverage/", "src/helpers/.venv/"],
     skipFiles: [],
   },
   {
@@ -886,10 +893,16 @@ const RATCHET_PACKAGES = [
     // `.next`, `out`, `build` and `next-env.d.ts` are eslint-config-next's own
     // ignores, which `web/eslint.config.mjs` restates; `coverage` is the
     // fork's addition.
-    skipDirs: [".next", "out", "build", "node_modules", "coverage"],
-    skipFiles: ["web/next-env.d.ts"],
+    skipPrefixes: ["coverage/", ".next/", "out/", "build/"],
+    skipFiles: ["next-env.d.ts"],
   },
 ];
+
+/**
+ * ESLint ignores `node_modules` at any depth, unlike the anchored globs in a
+ * config's own `ignores`, so this is shared rather than per-package.
+ */
+const NESTED_SKIP_DIRS = ["node_modules"];
 
 const LINTED_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
@@ -937,8 +950,12 @@ function countFileLines(filePath) {
 
 /** True when `file` (repo-relative, forward slashes) is one the package skips. */
 function skipsFile(pkg, file) {
-  if (pkg.skipFiles.includes(file)) return true;
-  return pkg.skipDirs.some((dir) => file.includes(`/${dir}/`));
+  if (NESTED_SKIP_DIRS.some((dir) => file.includes(`/${dir}/`))) return true;
+  const prefix = `${pkg.name}/`;
+  if (!file.startsWith(prefix)) return true;
+  const withinPackage = file.slice(prefix.length);
+  if (pkg.skipFiles.includes(withinPackage)) return true;
+  return pkg.skipPrefixes.some((dir) => withinPackage.startsWith(dir));
 }
 
 /**
@@ -1005,7 +1022,10 @@ function findWorstFile(pkg) {
   // invisible. A linted file the scan cannot see is one the cap can be lowered
   // underneath, and the next lint run fails on a file nobody touched.
   const root = path.join(REPO_ROOT, pkg.name);
-  const skipDirs = new Set(pkg.skipDirs);
+  // Only `node_modules` is pruned by name: it is enormous and ESLint skips it
+  // at any depth anyway. Everything else is decided per file by `skipsFile`,
+  // which anchors its patterns the way the lint config does.
+  const prunedDirs = new Set(NESTED_SKIP_DIRS);
   const linted = new RegExp(`\\.(${LINTED_EXTENSIONS.join("|")})$`);
   let worst = null;
 
@@ -1016,7 +1036,7 @@ function findWorstFile(pkg) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (!skipDirs.has(entry.name)) walk(full);
+        if (!prunedDirs.has(entry.name)) walk(full);
       } else if (entry.isFile() && linted.test(entry.name)) {
         const relative = path.relative(REPO_ROOT, full).split(path.sep).join("/");
         if (skipsFile(pkg, relative)) continue;

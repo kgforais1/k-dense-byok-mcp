@@ -27,6 +27,9 @@ read_maxlines() {
 # Written to a temp file rather than a shell variable per package, because
 # this has to work in POSIX sh without arrays.
 BEFORE="$(mktemp)"
+# Remove it however this exits, including a signal. The explicit `rm` at the
+# end stays for the ordinary path; this covers the interrupted one.
+trap 'rm -f "$BEFORE"' EXIT HUP INT TERM
 for pkg in $PACKAGES; do
   echo "$pkg $(read_maxlines "$REPO_ROOT/$pkg/.ratchets.json")" >> "$BEFORE"
 done

@@ -96,6 +96,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           ? (data as {
               models?: ({
                 name?: unknown;
+                digest?: unknown;
                 details?: { context_length?: unknown };
               } | null)[];
             })
@@ -110,9 +111,12 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // rather than rendered, because `ollama/undefined` is a selectable
       // entry that resolves to nothing.
       const rows = payload.models ?? [];
-      // Rows whose `details.context_length` was missing or unusable, for the
-      // `/api/show` fallback below.
-      const missingArchitectural: string[] = [];
+      // Every named row, with the digest that identifies this pull of it, for
+      // the `/api/show` fallback below. Deciding *there* which of them still
+      // owe a call keeps one rule in one place: this route would otherwise
+      // have to reproduce the cache's positive-integer test to notice that a
+      // `context_length` of `0` left the slot empty.
+      const listed: { id: string; digest?: string }[] = [];
       const models = rows.flatMap((m) => {
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never
@@ -131,7 +135,10 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           cacheKey("ollama", OLLAMA_BASE_URL, name),
           architectural,
         );
-        if (architectural === undefined) missingArchitectural.push(name);
+        listed.push({
+          id: name,
+          digest: typeof m.digest === "string" ? m.digest : undefined,
+        });
         return [
           {
             id: `ollama/${name}`,
@@ -151,13 +158,12 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // picker on a hung daemon behind a list it already has.
       void probeLoaded("ollama", OLLAMA_BASE_URL);
       // FORK: `details.context_length` is undocumented, so a row without it is
-      // an Ollama-side change rather than a bug. Those rows — and only those —
+      // an Ollama-side change rather than a bug. Rows still missing a figure
       // get the documented `/api/show` read, unawaited for the same reason.
-      // Empty on a daemon that still emits the field, which is why the picker
-      // budget of two calls per open is unaffected in the normal case.
-      if (missingArchitectural.length > 0) {
-        void probeArchitecturalOllama(OLLAMA_BASE_URL, missingArchitectural);
-      }
+      // It makes no call at all on a daemon that still emits the field, which
+      // is why the picker budget of two calls per open is unaffected in the
+      // normal case.
+      void probeArchitecturalOllama(OLLAMA_BASE_URL, listed);
       return { available: true, models };
     } catch {
       return { available: false, models: [] };

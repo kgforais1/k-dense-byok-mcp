@@ -42,10 +42,37 @@ const pending = new Map<string, Promise<void>>();
  * picker open re-reads the cache anyway. */
 const showInFlight = new Set<string>();
 
-/** Fan-out ceiling for the `/api/show` fallback. It runs once per model, so a
- * daemon that stopped emitting `details.context_length` for every row would
- * otherwise open one socket per installed model at once. */
+/**
+ * Cache key → the `/api/tags` digest that the last `/api/show` call for it was
+ * made against (`""` where the row carried none). This is what stops a
+ * show-sourced figure from freezing for the life of the process: the tags path
+ * rewrites its figure on every picker open, so a re-pull under the same name
+ * corrects itself there, while this path is asked once. Re-pulling changes the
+ * digest, which is the exact signal that the answer we hold describes a
+ * different model — and it costs nothing when nothing has changed, unlike a
+ * TTL.
+ */
+const showDigests = new Map<string, string>();
+
+/** Fan-out ceiling for the `/api/show` fallback, shared across calls rather
+ * than per call. It runs once per model, so a daemon that stopped emitting
+ * `details.context_length` for every row would otherwise open one socket per
+ * installed model at once — and two overlapping picker opens whose missing
+ * rows did not overlap would each have got their own pool. */
 const SHOW_CONCURRENCY = 4;
+
+interface ShowJob {
+  key: string;
+  root: string;
+  modelId: string;
+  digest: string;
+  done: () => void;
+}
+
+/** One queue and one worker count for the whole process, which is what makes
+ * `SHOW_CONCURRENCY` a daemon-wide ceiling instead of a per-call one. */
+const showQueue: ShowJob[] = [];
+let showWorkers = 0;
 
 function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
@@ -237,8 +264,9 @@ function clearUnreportedLoaded(
 }
 
 /**
- * Fallback source for Ollama's architectural figure, for rows whose
- * `/api/tags` entry carried no `details.context_length`.
+ * Fallback source for Ollama's architectural figure. Takes the whole
+ * `/api/tags` list and decides per row, in `needsShow`, whether a call is
+ * owed — the caller does not filter.
  *
  * `details.context_length` is undocumented — Ollama documents only `format`,
  * `family`, `families`, `parameter_size` and `quantization_level` — so it can
@@ -256,44 +284,97 @@ function clearUnreportedLoaded(
  */
 export function probeArchitecturalOllama(
   baseUrl: string,
-  modelIds: string[],
+  models: { id: string; digest?: string }[],
 ): Promise<void> {
   const root = normalizeBaseUrl(baseUrl);
-  const queue: { key: string; modelId: string }[] = [];
-  for (const modelId of modelIds) {
-    const key = cacheKey("ollama", root, modelId);
-    // Re-checked here rather than trusted from the caller: a concurrent open
-    // may have filled the slot since the list was built, and a figure we
-    // already hold is never worth a call.
-    if (cache.get(key)?.architectural !== undefined) continue;
+  let outstanding = 0;
+  let settle: () => void = () => {};
+  const finished = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  const done = (): void => {
+    outstanding -= 1;
+    if (outstanding === 0) settle();
+  };
+  for (const model of models) {
+    const key = cacheKey("ollama", root, model.id);
+    const digest = model.digest ?? "";
+    // Every row is offered, and the decision to call is made here against the
+    // cache rather than by the caller against the payload. A caller judging
+    // "this row had no figure" has to reproduce `recordArchitectural`'s
+    // positive-integer rule to get it right, and a `details.context_length`
+    // of `0` or `-1` is present-but-rejected: the slot stays empty while the
+    // row looks answered, and the model silently takes the 128,000 floor.
+    if (!needsShow(key, digest)) continue;
     // Reserved synchronously, before any await, so two overlapping opens
     // cannot both queue the same model. Doubles as the within-batch
     // duplicate check.
     if (showInFlight.has(key)) continue;
     showInFlight.add(key);
-    queue.push({ key, modelId });
+    outstanding += 1;
+    showQueue.push({ key, root, modelId: model.id, digest, done });
   }
-  if (queue.length === 0) return Promise.resolve();
-  let next = 0;
-  const worker = async (): Promise<void> => {
+  if (outstanding === 0) return Promise.resolve();
+  pumpShowQueue();
+  return finished;
+}
+
+/**
+ * Two reasons to call, and no others. Either we hold no figure for the model
+ * — including the case where one arrived and was rejected as unusable — or we
+ * hold one that `/api/show` gave us for a different digest, meaning the tag
+ * was re-pulled under the same name and may now be a smaller model.
+ *
+ * A figure we have never used `/api/show` for came from `/api/tags`, which
+ * rewrites it on every open, so it is current by construction and this path
+ * stays out of it.
+ *
+ * Note what this deliberately does not do: give up. A model `/api/show`
+ * cannot answer for is asked again on the next open, so the cost of a
+ * permanently unanswerable model is one call per picker open. Remembering the
+ * failure instead would make a transient one permanent, and the figure it
+ * denies us is the difference between the real window and a 128,000 floor
+ * that over-declares it.
+ */
+function needsShow(key: string, digest: string): boolean {
+  if (cache.get(key)?.architectural === undefined) return true;
+  const asked = showDigests.get(key);
+  return asked !== undefined && asked !== digest;
+}
+
+/** Tops the shared worker pool back up to `SHOW_CONCURRENCY`. Safe to call
+ * whenever the queue or the worker count changes; a no-op when the pool is
+ * already full or the queue is empty. */
+function pumpShowQueue(): void {
+  while (showWorkers < SHOW_CONCURRENCY && showQueue.length > 0) {
+    showWorkers += 1;
+    void runShowWorker();
+  }
+}
+
+async function runShowWorker(): Promise<void> {
+  try {
     for (;;) {
-      const item = queue[next++];
-      if (!item) return;
+      const job = showQueue.shift();
+      if (!job) return;
       try {
-        await showOne(root, item.modelId, item.key);
+        await showOne(job.root, job.modelId, job.key);
       } catch {
         // Never rejects — one failed model is a no-op, not an error, and
         // must not abandon the rest of the queue.
       } finally {
-        showInFlight.delete(item.key);
+        showInFlight.delete(job.key);
+        showDigests.set(job.key, job.digest);
+        job.done();
       }
     }
-  };
-  const workers = Array.from(
-    { length: Math.min(SHOW_CONCURRENCY, queue.length) },
-    () => worker(),
-  );
-  return Promise.all(workers).then(() => undefined);
+  } finally {
+    showWorkers -= 1;
+    // A worker that saw an empty queue and a caller that enqueued while the
+    // pool looked full can interleave, leaving a job with nobody to run it.
+    // Pumping on the way out closes that window.
+    pumpShowQueue();
+  }
 }
 
 async function showOne(

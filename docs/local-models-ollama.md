@@ -95,7 +95,8 @@ key (`qwen3.context_length`). That costs one call per affected model instead of
 the usual one call for the whole list, which is why it is a fallback and not
 the source: on a daemon that still fills `details.context_length` it never
 runs. A model it cannot answer for falls back to the figure below rather than
-breaking.
+breaking, and re-pulling a tag re-reads it, so a replacement with a smaller
+window is not held to the old one.
 
 The **loaded** figure wins when both are known, because that is what your
 request is measured against and it is often smaller than the maximum. Both

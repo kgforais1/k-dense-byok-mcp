@@ -430,6 +430,73 @@ describe("GET /ollama/models", () => {
     await app.close();
   });
 
+  // A `context_length` the cache rejects (0, negative, fractional) is
+  // present-but-unusable. The row looks answered to anyone reading the
+  // payload while the cached figure is empty, so the model would take the
+  // 128,000 floor and over-declare itself.
+  it("falls back for a row whose figure is present but unusable", async () => {
+    respondTags = (res) =>
+      okJson(res, {
+        models: [
+          { name: "zero:latest", details: { context_length: 0 } },
+          { name: "negative:latest", details: { context_length: -1 } },
+          { name: "fraction:latest", details: { context_length: 1.5 } },
+        ],
+      });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (_model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "llama",
+          "llama.context_length": 8192,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    const body = await waitForModels(app, (models) =>
+      models.every((m) => m.context_length === 8192),
+    );
+    expect(body.models).toHaveLength(3);
+    expect(new Set(shownModels)).toEqual(
+      new Set(["zero:latest", "negative:latest", "fraction:latest"]),
+    );
+    await app.close();
+  });
+
+  // A re-pull under the same name changes the digest. Without that signal a
+  // show-sourced figure would be frozen for the life of the process, so a
+  // replacement with a smaller window would keep running over-declared.
+  it("re-asks /api/show when a tag is re-pulled under the same name", async () => {
+    let digest = "sha256:aaa";
+    let window = 40960;
+    respondTags = (res) =>
+      okJson(res, { models: [{ name: "q:latest", digest, details: {} }] });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (_model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "qwen3",
+          "qwen3.context_length": window,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    await waitForModels(app, (models) => models[0]?.context_length === 40960);
+    const afterFirst = shownModels.length;
+    // A second open at the same digest adds no call.
+    await app.inject({ url: "/ollama/models" });
+    expect(shownModels).toHaveLength(afterFirst);
+
+    digest = "sha256:bbb";
+    window = 8192;
+    const body = await waitForModels(
+      app,
+      (models) => models[0]?.context_length === 8192,
+    );
+    expect(body.models[0]!.context_length).toBe(8192);
+    await app.close();
+  });
+
   it("leaves a row at the fallback figure when /api/show does not answer", async () => {
     respondTags = (res) =>
       okJson(res, { models: [{ name: "missing:latest", details: {} }] });

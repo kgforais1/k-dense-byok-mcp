@@ -38,7 +38,9 @@ jobs:
   # `start.mjs` runs — so a contributor who has never launched the app can
   # shrink the worst file, leave the cap high, and push a green build. ESLint
   # enforces the cap's value but not its freshness: a stale-high cap passes
-  # lint by definition. This is the server-side half.
+  # lint by definition. One job covers both packages — `ratchet:check`
+  # iterates over every entry in `RATCHET_PACKAGES`, so there is no separate
+  # web job to look for.
   ratchet:
     name: max-lines ratchet
     timeout-minutes: 10

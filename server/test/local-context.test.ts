@@ -435,20 +435,17 @@ describe("probeArchitecturalOllama", () => {
     const base = freshBase();
     const seen: { url: string; model: unknown }[] = [];
     // Dated to the same pull the batch below names, which is what a figure
-    // written from this open's /api/tags payload looks like. An *undated*
-    // figure is deliberately not treated as current: nothing vouches for it,
-    // and one wasted call beats holding a number that may describe a
-    // different model.
-    recordArchitectural(cacheKey("ollama", base, "known:latest"), 4096, "");
+    // written from this open's /api/tags payload looks like.
+    recordArchitectural(cacheKey("ollama", base, "known:latest"), 4096, "sha256:k");
     stubShow(
       () =>
         showBody({ "general.architecture": "llama", "llama.context_length": 8192 }),
       seen,
     );
     await probeArchitecturalOllama(base, [
-      { id: "known:latest" },
-      { id: "new:latest" },
-      { id: "new:latest" },
+      { id: "known:latest", digest: "sha256:k" },
+      { id: "new:latest", digest: "sha256:n" },
+      { id: "new:latest", digest: "sha256:n" },
     ]);
     expect(seen.map((s) => s.model)).toEqual(["new:latest"]);
     // The cached figure is untouched, not refreshed.
@@ -507,6 +504,55 @@ describe("probeArchitecturalOllama", () => {
     await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
     expect(seen).toHaveLength(2);
     expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+  });
+
+  it("asks about an undated figure rather than trusting it", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // Nothing vouches for this figure: no digest says which pull it came
+    // from, and `/api/tags` did not answer for the row on this open. One
+    // wasted call beats holding a number that may describe a model someone
+    // has since replaced.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960);
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "qwen3", "qwen3.context_length": 8192 }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(seen.map((s) => s.model)).toEqual(["q:latest"]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+  });
+
+  it("asks every open when the row carries no digest at all", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // Two pulls of a digest-less row compare equal, so the digest can prove
+    // nothing. A daemon reporting neither `digest` nor
+    // `details.context_length` is already paying for the fallback; holding a
+    // figure it cannot vouch for would over-declare a replaced model.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960, "");
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "qwen3", "qwen3.context_length": 8192 }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest" }]);
+    await probeArchitecturalOllama(base, [{ id: "q:latest" }]);
+    expect(seen.map((s) => s.model)).toEqual(["q:latest", "q:latest"]);
+  });
+
+  it("makes no call for a digest-less row that /api/tags answered for", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // The same digest-less daemon, but still emitting
+    // `details.context_length`. The figure is this open's by construction, so
+    // the rule above costs nothing here.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960, "");
+    stubShow(() => showBody({ "llama.context_length": 8192 }), seen);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", tagged: 40960 }]);
+    expect(seen).toEqual([]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(40960);
   });
 
   it("re-asks when /api/tags drops the field on a re-pulled tag", async () => {

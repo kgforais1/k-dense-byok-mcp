@@ -116,7 +116,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // owe a call keeps one rule in one place: this route would otherwise
       // have to reproduce the cache's positive-integer test to notice that a
       // `context_length` of `0` left the slot empty.
-      const listed: { id: string; digest?: string }[] = [];
+      const listed: { id: string; digest?: string; tagged?: number }[] = [];
       const models = rows.flatMap((m) => {
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never
@@ -140,7 +140,11 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           architectural,
           digest,
         );
-        listed.push({ id: name, digest });
+        // `tagged` is this open's answer from the payload, passed on so the
+        // fallback can tell a figure written just now from one that merely
+        // survived — the two are indistinguishable in the cache, because
+        // `recordArchitectural` no-ops on a missing value.
+        listed.push({ id: name, digest, tagged: architectural });
         return [
           {
             id: `ollama/${name}`,

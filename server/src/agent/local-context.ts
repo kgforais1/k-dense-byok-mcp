@@ -302,7 +302,7 @@ function clearUnreportedLoaded(
  */
 export function probeArchitecturalOllama(
   baseUrl: string,
-  models: { id: string; digest?: string }[],
+  models: { id: string; digest?: string; tagged?: number }[],
 ): Promise<void> {
   const root = normalizeBaseUrl(baseUrl);
   let outstanding = 0;
@@ -323,7 +323,7 @@ export function probeArchitecturalOllama(
     // positive-integer rule to get it right, and a `details.context_length`
     // of `0` or `-1` is present-but-rejected: the slot stays empty while the
     // row looks answered, and the model silently takes the 128,000 floor.
-    if (!needsShow(key, digest)) continue;
+    if (!needsShow(key, digest, model.tagged)) continue;
     // Reserved synchronously, before any await, so two overlapping opens
     // cannot both queue the same model. Doubles as the within-batch
     // duplicate check.
@@ -357,8 +357,21 @@ export function probeArchitecturalOllama(
  * denies us is the difference between the real window and a 128,000 floor
  * that over-declares it.
  */
-function needsShow(key: string, digest: string): boolean {
+function needsShow(key: string, digest: string, tagged: number | undefined): boolean {
+  // `/api/tags` answered for this row on this open, so whatever is in the
+  // cache is this pull's figure and nothing is owed — whatever we held
+  // before. Judged here, against the same `isPositiveInt` rule that decides
+  // whether the value was written at all, rather than by the caller.
+  if (isPositiveInt(tagged)) return false;
   if (cache.get(key)?.architectural === undefined) return true;
+  // Past this point the figure survived an open rather than being written by
+  // it, so it is current only if it is dated to this pull. A row carrying no
+  // digest cannot be dated, and two undated pulls of the same name compare
+  // equal — so an undated row is asked about every open rather than trusted.
+  // That costs one call per open for a daemon that reports neither field,
+  // which is the same daemon already paying for the fallback; the alternative
+  // is holding a number that may describe a model someone has since replaced.
+  if (digest === "") return true;
   return architecturalDigests.get(key) !== digest;
 }
 
@@ -389,9 +402,12 @@ async function runShowWorker(): Promise<void> {
     }
   } finally {
     showWorkers -= 1;
-    // A worker that saw an empty queue and a caller that enqueued while the
-    // pool looked full can interleave, leaving a job with nobody to run it.
-    // Pumping on the way out closes that window.
+    // Unreachable today, and deliberately kept. The window it would close —
+    // a worker seeing an empty queue while a caller enqueues against a pool
+    // that still looks full — cannot open, because there is no await between
+    // the empty `shift()` and this line, and `probeArchitecturalOllama`
+    // enqueues and pumps synchronously. Both halves of that are easy to lose
+    // to a later edit, and the cost of the call is a comparison.
     pumpShowQueue();
   }
 }

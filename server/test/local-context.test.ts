@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { quietFor } from "./helpers/timing.ts";
 import {
   cacheKey,
   getContextWindow,
@@ -418,14 +419,23 @@ describe("probeArchitecturalOllama", () => {
     const first = probeArchitecturalOllama(base, [
       { id: "q:latest", digest: "sha256:aaa" },
     ]);
-    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    // Deliberately not awaited. A rival call would block on the same gate as
+    // the first, so awaiting it would report a lost reservation as a 30s
+    // timeout — the failure mode this test's own gate exists to avoid —
+    // instead of as the assertion below. With the reservation intact this
+    // resolves immediately, having queued nothing.
+    const rival = probeArchitecturalOllama(base, [
+      { id: "q:latest", digest: "sha256:bbb" },
+    ]);
+    // A rival would reach its fetch by now; the reservation means none does.
+    await quietFor(10);
     expect(asked).toEqual(["q:latest"]);
 
     // Loud rather than optional: a silently unarmed gate would hang `first`
     // until the test timeout and report that instead of the real cause.
     if (!release) throw new Error("the /api/show gate was never armed");
     release();
-    await first;
+    await Promise.all([first, rival]);
     // The answer is dated to the pull it was queued at, so the next open sees
     // the mismatch and asks again rather than holding a figure that may
     // describe the pull before last.

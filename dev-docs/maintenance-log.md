@@ -1,5 +1,43 @@
 # Maintenance Log
 
+### 2026-09-22 — Semgrep answered: one rule, in the lint that already runs (PR #48)
+
+- **Category:** CI / lint
+- **Summary:** `dev-docs/todo.md` §1 carried "Semgrep rules for this
+  repository's own invariants" as deferred work. Re-examining the candidate
+  list left exactly one rule that a static matcher can express, so the answer
+  is no Semgrep job and one `no-restricted-syntax` rule in
+  `server/eslint.config.mjs`. The todo row is deleted rather than re-deferred:
+  the question has now been examined twice and the answer did not change.
+- **The rule:** `prepareRun` must not touch the HTTP reply. It returns a typed
+  `RunStartRejection`, and that is the only reason the MCP adapter can share
+  it — the MCP path has no `reply` to write to. A second run path built
+  because this one was unusable headlessly would split run ownership and
+  billing.
+- **Why a rule at all, when TypeScript already rejects it:** it does, but only
+  by accident of the current signature — `reply` is not in scope. The refactor
+  this guards is someone threading `reply: FastifyReply` into `prepareRun` and
+  then using it, which compiles. The archived Phase 3 plan said that change
+  "would pass lint, typecheck and every test while breaking only the MCP
+  path"; that sentence is now false by one clause, and has been corrected in
+  place.
+- **Why not Semgrep:** a second scanner, config, annotation vocabulary and
+  version pin for one rule is a bad trade. Two further candidate rules were
+  measured and died on the data: `process.env` is read 31 times across 12+
+  backend files, so "centralise env access" would be a refactor rather than a
+  gate, and there are only 4 `fetch` call sites, too few to justify a rule
+  about timeouts.
+- **Tested, not just configured:** `server/test/lint-rules.test.ts` lints
+  synthetic sources through the real config, so the rule is checked by its
+  behaviour. Five cases: a `.code` write, the other reply writers, the const
+  arrow form, a typed rejection that must pass, and a reply write in a route
+  handler that must also pass — a rule that fired there would be deleted
+  within a week. Three mutations were checked: dropping the const-arrow
+  selector, narrowing to `.code`, and unscoping from `prepareRun` each turn a
+  test red.
+- **Scope note:** the rule matches any member access on `reply`, since
+  `.send`, `.status` and `.raw` end the sharing the same way `.code` does.
+
 ### 2026-09-22 — MCP server plans archived, CLI entry point recorded (PR #46)
 
 - **Category:** documentation / plan lifecycle

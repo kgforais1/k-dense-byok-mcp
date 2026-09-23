@@ -88,6 +88,38 @@ export default tseslint.config(
       // reads — it would admit a ~1300-line file. Counting physical lines
       // keeps the number honest, and this codebase should never be discouraged
       // from adding a comment.
+      // `prepareRun` returns a typed `RunStartRejection` instead of writing
+      // an HTTP reply, and that is the only reason the MCP adapter can share
+      // it: the MCP path has no `reply` to write to. A second run path built
+      // because this one was unusable headlessly would split run ownership
+      // and billing, which is the failure `dev-docs/plans/completed/`'s MCP
+      // work exists to avoid.
+      //
+      // TypeScript already rejects `reply.code(...)` there today, because
+      // `reply` is not in scope — but only by accident of the current
+      // signature. The refactor this guards is someone threading
+      // `reply: FastifyReply` into `prepareRun` and then using it, which
+      // compiles fine and quietly ends the sharing. The rule states the
+      // reason at the moment that happens; the compiler never would.
+      //
+      // Any member access, not just `.code`: `.send`, `.status` and `.raw`
+      // end the sharing the same way.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            'FunctionDeclaration[id.name="prepareRun"] MemberExpression[object.name="reply"]',
+          message:
+            "prepareRun must not touch the HTTP reply — it returns a typed RunStartRejection so the MCP adapter can share it. See server/src/api/sessions.ts.",
+        },
+        {
+          selector:
+            'VariableDeclarator[id.name="prepareRun"] MemberExpression[object.name="reply"]',
+          message:
+            "prepareRun must not touch the HTTP reply — it returns a typed RunStartRejection so the MCP adapter can share it. See server/src/api/sessions.ts.",
+        },
+      ],
+
       complexity: ["error", 62],
       "max-lines": ["error", ratchets.maxLines],
       "max-lines-per-function": ["error", 672],

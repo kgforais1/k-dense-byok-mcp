@@ -29,12 +29,11 @@
   about timeouts.
 - **Tested, not just configured:** `server/test/lint-rules.test.ts` lints
   synthetic sources through the real config, so the rule is checked by its
-  behaviour. Five cases: a `.code` write, the other reply writers, the const
-  arrow form, a typed rejection that must pass, and a reply write in a route
-  handler that must also pass — a rule that fired there would be deleted
-  within a week. Three mutations were checked: dropping the const-arrow
-  selector, narrowing to `.code`, and unscoping from `prepareRun` each turn a
-  test red.
+  behaviour rather than by its presence in the file. That includes the cases
+  where it must stay *quiet* — a typed rejection, a reply write in a route
+  handler, and `FastifyRequest["log"]` — because a rule that fired on those
+  would be deleted within a week. Every selector has a mutation that turns a
+  test red; the rounds below are the ones where that was not yet true.
 - **A fourth review round, on the comments themselves.** kilo stepfun found
   that the config claimed the file threads Fastify types "in eight places". It
   counted seven; the answer is six `FastifyRequest["log"]` threadings plus one
@@ -82,9 +81,9 @@
   the reply in through the parameter list first, so the guard moved to the
   signature: a parameter named `reply`/`res`/`response`, or anything typed
   `FastifyReply` anywhere inside. The member-access selectors stay for a reply
-  reached from module scope. `any` is not a way round it — `no-explicit-any`
-  is an error in `src/`, and an untyped destructured parameter fails
-  `noImplicitAny`.
+  reached from module scope. This bullet originally ended by claiming `any`
+  was not a way round the rule; the round recorded above found that wrong and
+  the clause is struck rather than left to be read.
 
 ### 2026-09-22 — MCP server plans archived, CLI entry point recorded (PR #46)
 

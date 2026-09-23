@@ -35,6 +35,17 @@
   within a week. Three mutations were checked: dropping the const-arrow
   selector, narrowing to `.code`, and unscoping from `prepareRun` each turn a
   test red.
+- **CodeRabbit round.** Two more, both valid. A parameter that binds a reply
+  through a destructuring, default or rest pattern and then *forwards* it was
+  unguarded: the bare-identifier selector matches only a direct child, and
+  with no member access the member selector never saw it. Covered now, with a
+  test per binding form. And the type list carried a package-wide
+  `TSImportType[argument.value="fastify"]` entry, which turned out to be inert
+  — on this AST the module string sits at `argument.literal.value` — but which,
+  spelled correctly, would have fired on `FastifyRequest["log"]` and
+  `FastifyInstance`, both threaded legitimately through this file. Removed,
+  and a negative test now pins the working spelling so a later correction of
+  the dead one cannot land the false positive.
 - **Revised twice more after review.** Two reviewers independently showed the
   comment overclaimed: `no-explicit-any` catches only the literal `any`, and
   `unknown` plus a structural annotation is a one-word substitute that neither

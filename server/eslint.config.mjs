@@ -37,12 +37,35 @@ const REPLY_NAMES = "/^(reply|res|response)$/";
 /** The ways a Fastify reply type can be written: bare, aliased on import
  * (`FastifyReply as Reply`), qualified (`fastify.FastifyReply`), or inline
  * (`import("fastify").FastifyReply`). Each is a different AST node, and the
- * first version of this rule only knew the first one. */
+ * first version of this rule only knew the first one.
+ *
+ * Every entry names the *reply*, never the package. An earlier version also
+ * carried `TSImportType[argument.value="fastify"]`, which was inert: on this
+ * AST the module string sits at `argument.literal.value`, so it matched
+ * nothing. Spelled correctly it would have fired on
+ * `import("fastify").FastifyRequest["log"]` and on `FastifyInstance` — types
+ * this file threads legitimately in eight places (`sessions.ts:348` onward).
+ * So the entry was both dead and, once fixed, wrong. The invariant is about
+ * the reply, not about touching Fastify, and the negative test pins the
+ * working spelling rather than the dead one. */
 const REPLY_TYPE_SELECTORS = [
   'TSTypeReference[typeName.name=/^(FastifyReply|Reply)$/]',
   'TSTypeReference[typeName.right.name="FastifyReply"]',
   'TSImportType[qualifier.name="FastifyReply"]',
-  'TSImportType[argument.value="fastify"]',
+];
+
+/** Parameter shapes that can bind a name without being a bare identifier:
+ * `{ reply }`, `[reply]`, `reply = fallback`, `...reply`. The first version
+ * matched only a direct `Identifier` child, so a destructured or defaulted
+ * reply was seen only if it was later member-accessed — and forwarding it to
+ * a helper has no member access at all. */
+const PARAM_PATTERNS =
+  ":matches(ObjectPattern, ArrayPattern, AssignmentPattern, RestElement)";
+
+/** A `prepareRun` form either *is* the callable or wraps one. */
+const CALLABLE_WRAPPERS = [
+  "",
+  " > :matches(ArrowFunctionExpression, FunctionExpression)",
 ];
 
 const PREPARE_RUN_MESSAGE =
@@ -162,16 +185,19 @@ export default tseslint.config(
       "no-restricted-syntax": [
         "error",
         ...PREPARE_RUN_FORMS.flatMap((form) => [
-          // A parameter that says "reply" by name, in any of the callable
-          // shapes the form can wrap.
-          {
-            selector: `${form} > Identifier[name=${REPLY_NAMES}]`,
-            message: PREPARE_RUN_MESSAGE,
-          },
-          {
-            selector: `${form} > :matches(ArrowFunctionExpression, FunctionExpression) > Identifier[name=${REPLY_NAMES}]`,
-            message: PREPARE_RUN_MESSAGE,
-          },
+          // A parameter that says "reply" by name — bare, or bound inside a
+          // destructuring, default or rest pattern — in either of the
+          // callable shapes the form can wrap.
+          ...CALLABLE_WRAPPERS.flatMap((wrapper) => [
+            {
+              selector: `${form}${wrapper} > Identifier[name=${REPLY_NAMES}]`,
+              message: PREPARE_RUN_MESSAGE,
+            },
+            {
+              selector: `${form}${wrapper} > ${PARAM_PATTERNS} Identifier[name=${REPLY_NAMES}]`,
+              message: PREPARE_RUN_MESSAGE,
+            },
+          ]),
           // A parameter that says "reply" by type, anywhere inside. This is
           // what covers an alias or a destructure: either still has to be
           // typed to compile.

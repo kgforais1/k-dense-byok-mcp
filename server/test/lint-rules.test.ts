@@ -180,6 +180,47 @@ describe("prepareRun must not touch the HTTP reply", () => {
     expect(messages).toHaveLength(1);
   });
 
+  it("rejects a reply bound by a destructuring, default or rest pattern", async () => {
+    // Each of these forwards the reply without ever member-accessing it, so
+    // the member selector never sees them and the bare-identifier selector
+    // does not match a name nested inside a pattern.
+    const bindings = [
+      "{ reply }: { reply: { code: (n: number) => void } }",
+      "[reply]: { code: (n: number) => void }[]",
+      "reply: { code: (n: number) => void } = fallback",
+      "...reply: { code: (n: number) => void }[]",
+    ];
+    for (const binding of bindings) {
+      const source = `
+        declare const fallback: { code: (n: number) => void };
+        declare function forward(value: unknown): void;
+        export async function prepareRun(${binding}) {
+          forward(reply);
+          return null;
+        }
+      `;
+      expect((await lint(source)).length, binding).toBeGreaterThan(0);
+    }
+  });
+
+  it("allows FastifyRequest['log'], which this file threads legitimately", async () => {
+    // `sessions.ts` passes `FastifyRequest["log"]` through eight functions.
+    // A rule keyed on the fastify *package* rather than on the reply fires
+    // here — verified by adding `TSImportType[argument.literal.value=
+    // "fastify"]`, which turns this test red. The config briefly carried that
+    // selector misspelled as `argument.value`, where it matched nothing at
+    // all; this test is what stops a well-meaning correction of the spelling
+    // from landing the false positive.
+    const forms = [
+      'import type { FastifyRequest } from "fastify";\nexport async function prepareRun(sessionId: string, log: FastifyRequest["log"]) { log.info(sessionId); return null; }',
+      'export async function prepareRun(log: import("fastify").FastifyRequest["log"]) { log.info("x"); return null; }',
+      'export async function prepareRun(app: import("fastify").FastifyInstance) { return app; }',
+    ];
+    for (const form of forms) {
+      expect(await lint(form), form).toEqual([]);
+    }
+  });
+
   it("allows a typed rejection, which is the shape this exists to protect", async () => {
     const messages = await lint(`
       export async function prepareRun(sessionId: string) {

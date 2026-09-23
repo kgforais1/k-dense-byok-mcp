@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
@@ -24,7 +25,10 @@ const eslint = new ESLint({
 
 async function lint(source: string): Promise<string[]> {
   const [result] = await eslint.lintText(source, {
-    filePath: path.join(serverRoot, "src/api/synthetic-lint-subject.ts"),
+    // Linted *as* the file the rule is scoped to. The rule is not global —
+    // it belongs to one function in one file — so a synthetic path outside
+    // that scope would silently test nothing.
+    filePath: path.join(serverRoot, "src/api/sessions.ts"),
   });
   return (result?.messages ?? [])
     .filter((m) => m.ruleId === "no-restricted-syntax")
@@ -125,6 +129,57 @@ describe("prepareRun must not touch the HTTP reply", () => {
     expect(messages.length).toBeGreaterThan(0);
   });
 
+  it("rejects a FastifyReply written as an alias, qualified, or inline", async () => {
+    // Four different AST nodes for the same type. The first version of the
+    // rule knew only the first, which a reviewer demonstrated by getting a
+    // reply in under each of the other three.
+    const forms = [
+      'import type { FastifyReply } from "fastify";\nexport async function prepareRun(sink: FastifyReply) { return sink; }',
+      'import type { FastifyReply as Reply } from "fastify";\nexport async function prepareRun(sink: Reply) { return sink; }',
+      'import type * as fastify from "fastify";\nexport async function prepareRun(sink: fastify.FastifyReply) { return sink; }',
+      'export async function prepareRun(sink: import("fastify").FastifyReply) { return sink; }',
+    ];
+    for (const form of forms) {
+      expect((await lint(form)).length, form).toBeGreaterThan(0);
+    }
+  });
+
+  it("rejects the const-assigned function expression, not just the arrow", async () => {
+    // The form the config's own comment used to omit while calling itself
+    // "the two shapes".
+    const messages = await lint(`
+      export const prepareRun = async function (reply: { code: (n: number) => void }) {
+        return reply;
+      };
+    `);
+    expect(messages.length).toBeGreaterThan(0);
+  });
+
+  // The two halves of the rule — "a parameter that says reply" and "a member
+  // access on a reply" — both fire on most violations, so a test that trips
+  // both cannot tell which is doing the work. A reviewer showed that deleting
+  // either half whole left all nine of the original tests green. These two
+  // isolate them.
+  it("rejects a reply-named parameter that is never used", async () => {
+    const messages = await lint(`
+      export async function prepareRun(reply: string) {
+        return reply;
+      }
+    `);
+    expect(messages).toHaveLength(1);
+  });
+
+  it("rejects a reply reached from module scope with clean parameters", async () => {
+    const messages = await lint(`
+      declare const reply: { code: (n: number) => void };
+      export async function prepareRun(sessionId: string) {
+        reply.code(409);
+        return sessionId;
+      }
+    `);
+    expect(messages).toHaveLength(1);
+  });
+
   it("allows a typed rejection, which is the shape this exists to protect", async () => {
     const messages = await lint(`
       export async function prepareRun(sessionId: string) {
@@ -147,5 +202,23 @@ describe("prepareRun must not touch the HTTP reply", () => {
       }
     `);
     expect(messages).toEqual([]);
+  });
+});
+
+describe("the rule's anchor", () => {
+  it("still has a prepareRun to guard", async () => {
+    // The selectors key on the function name, and the rule is scoped to the
+    // file. Renaming or moving `prepareRun` would leave the whole guard
+    // matching nothing, with every test still green and lint still clean —
+    // silently losing the guard is the exact failure class this PR exists to
+    // prevent, so it cannot be allowed to happen quietly here either.
+    const source = await readFile(
+      path.join(serverRoot, "src/api/sessions.ts"),
+      "utf8",
+    );
+    expect(
+      /\basync function prepareRun\b/.test(source),
+      "prepareRun was renamed or moved; update PREPARE_RUN_FORMS and the files scope in server/eslint.config.mjs, or the invariant is no longer enforced",
+    ).toBe(true);
   });
 });

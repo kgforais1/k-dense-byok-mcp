@@ -35,6 +35,26 @@
   within a week. Three mutations were checked: dropping the const-arrow
   selector, narrowing to `.code`, and unscoping from `prepareRun` each turn a
   test red.
+- **Revised twice more after review.** Two reviewers independently showed the
+  comment overclaimed: `no-explicit-any` catches only the literal `any`, and
+  `unknown` plus a structural annotation is a one-word substitute that neither
+  it nor `noImplicitAny` sees. A structural type with an innocent name —
+  `prepareRun(sink: { code: (n: number) => void })` — is not catchable without
+  type information the rule does not have, so the config now says so instead
+  of claiming the hatch is closed. What is caught is the honest refactor,
+  which is the failure worth spending on. The cheap type forms that *were*
+  closeable are closed: an import alias, a qualified `fastify.FastifyReply`,
+  and an inline `import("fastify")` type were each three separate AST nodes
+  the first version did not know.
+- **Two selector halves were mutually masking.** Every test tripped both the
+  parameter-name selector and the member-access selector, so deleting either
+  half whole left the suite green. Two tests now isolate them: a reply-named
+  parameter that is never used, and a module-scope reply with clean
+  parameters.
+- **The rule is scoped to `src/api/sessions.ts`** rather than leaving the
+  function name to do the scoping alone, and a canary test fails if
+  `prepareRun` is renamed or moved — losing the guard in silence is the same
+  failure class the rule exists to prevent.
 - **Scope note, revised after review:** the first version matched member
   access on a variable named `reply`. Greptile pointed out that renaming,
   aliasing, destructuring or forwarding the parameter all still couple

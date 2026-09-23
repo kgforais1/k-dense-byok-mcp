@@ -20,13 +20,29 @@ import ratchets from "./.ratchets.json" with { type: "json" };
  * this config's own lint fix deleted a dead import from `manager.ts` and moved
  * the number.
  */
-/** The two shapes `prepareRun` could take. Naming the function is what keeps
- * the rule below about one invariant rather than about replies in general —
- * a rule that fired in route handlers, where replies belong, would be
- * deleted within a week. */
+/** Every shape `prepareRun` could take. A reviewer pointed out the first
+ * version of this list called itself "the two shapes" while already being
+ * short by one — `const prepareRun = function () {}` is neither a declaration
+ * nor an arrow. */
 const PREPARE_RUN_FORMS = [
   'FunctionDeclaration[id.name="prepareRun"]',
   'VariableDeclarator[id.name="prepareRun"]',
+  'MethodDefinition[key.name="prepareRun"]',
+  'Property[key.name="prepareRun"]',
+];
+
+/** Parameter names that mean "an HTTP reply" by convention. */
+const REPLY_NAMES = "/^(reply|res|response)$/";
+
+/** The ways a Fastify reply type can be written: bare, aliased on import
+ * (`FastifyReply as Reply`), qualified (`fastify.FastifyReply`), or inline
+ * (`import("fastify").FastifyReply`). Each is a different AST node, and the
+ * first version of this rule only knew the first one. */
+const REPLY_TYPE_SELECTORS = [
+  'TSTypeReference[typeName.name=/^(FastifyReply|Reply)$/]',
+  'TSTypeReference[typeName.right.name="FastifyReply"]',
+  'TSImportType[qualifier.name="FastifyReply"]',
+  'TSImportType[argument.value="fastify"]',
 ];
 
 const PREPARE_RUN_MESSAGE =
@@ -100,6 +116,20 @@ export default tseslint.config(
       // reads — it would admit a ~1300-line file. Counting physical lines
       // keeps the number honest, and this codebase should never be discouraged
       // from adding a comment.
+      complexity: ["error", 62],
+      "max-lines": ["error", ratchets.maxLines],
+      "max-lines-per-function": ["error", 672],
+    },
+  },
+  {
+    // One invariant, one function, one file — so the rule says so, rather
+    // than leaving the function's name to do the scoping by itself. A future
+    // unrelated `prepareRun` elsewhere in the tree is then not this rule's
+    // business. `test/lint-rules.test.ts` keeps this path honest: it lints
+    // its synthetic sources *as* this file, and fails if the function is
+    // renamed or moved out from under the rule.
+    files: ["src/api/sessions.ts"],
+    rules: {
       // `prepareRun` returns a typed `RunStartRejection` instead of writing
       // an HTTP reply, and that is the only reason the MCP adapter can share
       // it: the MCP path has no `reply` to write to. A second run path built
@@ -107,51 +137,56 @@ export default tseslint.config(
       // and billing, which is the failure the archived MCP work exists to
       // avoid.
       //
-      // TypeScript already rejects `reply.code(...)` there today, because
-      // `reply` is not in scope — but only by accident of the current
-      // signature. The refactor this guards is someone threading a Fastify
-      // reply into `prepareRun` and then using it, which compiles fine and
-      // quietly ends the sharing. The rule states the reason at the moment
-      // that happens; the compiler never would.
+      // TypeScript does not catch the refactor this guards — threading a
+      // Fastify reply back into `prepareRun` compiles fine and breaks only
+      // the MCP path. The rule states the reason at the moment it happens.
       //
-      // Guarded at the *signature*, not only at the use. A rule that matched
+      // Guarded at the *signature*, not only at the use. A rule matching
       // `reply.code(...)` alone is bypassed by renaming the parameter,
       // aliasing it, destructuring it, or handing it to a helper — all of
-      // which still couple this function to HTTP. Every one of those has to
-      // get the reply in through the parameter list first, so that is where
-      // the guard sits: a parameter named like a reply, or one typed as a
-      // `FastifyReply` anywhere inside. The member-access selectors stay as
-      // well, for a reply reached from module scope rather than a parameter.
+      // which still couple this function to HTTP, and all of which have to
+      // bring the reply in through the parameter list first.
       //
-      // `any` is not an escape hatch here: `@typescript-eslint/no-explicit-any`
-      // is an error in `src/`, and an untyped destructured parameter fails
-      // `noImplicitAny`. So a reply arriving without either a telling name or
-      // the `FastifyReply` type is already rejected by something else.
+      // WHAT THIS DOES NOT CATCH, stated plainly because the previous version
+      // of this comment claimed the opposite. Two reviewers independently
+      // showed the hatch is not closed. A structural annotation with an
+      // innocent name — `function prepareRun(sink: { code: (n: number) => void })`
+      // — trips nothing here, and `unknown` plus a cast at the use site does
+      // the same. Neither `noImplicitAny` nor `no-explicit-any` helps:
+      // `no-explicit-any` catches only the literal `any`, and `unknown` is a
+      // one-word substitute for it. Closing that needs type information this
+      // rule does not have. What is left is a guard against the honest
+      // refactor, not against someone working around it — which is the
+      // failure actually worth spending on, since nobody threads a reply into
+      // this function on purpose while disguising its type.
       "no-restricted-syntax": [
         "error",
         ...PREPARE_RUN_FORMS.flatMap((form) => [
+          // A parameter that says "reply" by name, in any of the callable
+          // shapes the form can wrap.
           {
-            selector: `${form} > Identifier[name=/^(reply|res|response)$/]`,
+            selector: `${form} > Identifier[name=${REPLY_NAMES}]`,
             message: PREPARE_RUN_MESSAGE,
           },
           {
-            selector: `${form} > ArrowFunctionExpression > Identifier[name=/^(reply|res|response)$/]`,
+            selector: `${form} > :matches(ArrowFunctionExpression, FunctionExpression) > Identifier[name=${REPLY_NAMES}]`,
             message: PREPARE_RUN_MESSAGE,
           },
-          {
-            selector: `${form} TSTypeReference[typeName.name="FastifyReply"]`,
+          // A parameter that says "reply" by type, anywhere inside. This is
+          // what covers an alias or a destructure: either still has to be
+          // typed to compile.
+          ...REPLY_TYPE_SELECTORS.map((type) => ({
+            selector: `${form} ${type}`,
             message: PREPARE_RUN_MESSAGE,
-          },
+          })),
+          // A reply reached from module scope rather than through a
+          // parameter.
           {
-            selector: `${form} MemberExpression[object.name=/^(reply|res|response)$/]`,
+            selector: `${form} MemberExpression[object.name=${REPLY_NAMES}]`,
             message: PREPARE_RUN_MESSAGE,
           },
         ]),
       ],
-
-      complexity: ["error", 62],
-      "max-lines": ["error", ratchets.maxLines],
-      "max-lines-per-function": ["error", 672],
     },
   },
   {

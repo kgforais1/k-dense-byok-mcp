@@ -400,7 +400,7 @@ describe("probeArchitecturalOllama", () => {
   it("queues no rival while a call for the same model is in flight", async () => {
     const base = freshBase();
     const asked: string[] = [];
-    let release = (): void => {};
+    let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -421,6 +421,9 @@ describe("probeArchitecturalOllama", () => {
     await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
     expect(asked).toEqual(["q:latest"]);
 
+    // Loud rather than optional: a silently unarmed gate would hang `first`
+    // until the test timeout and report that instead of the real cause.
+    if (!release) throw new Error("the /api/show gate was never armed");
     release();
     await first;
     // The answer is dated to the pull it was queued at, so the next open sees

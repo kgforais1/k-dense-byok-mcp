@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { quietFor } from "./helpers/timing.ts";
 import {
   cacheKey,
   getContextWindow,
+  probeArchitecturalOllama,
   probeLoaded,
   recordArchitectural,
   recordLoaded,
@@ -316,6 +318,423 @@ describe("probeLoaded (ollama)", () => {
     stubFetch(() => httpError(500));
     await probeLoaded("ollama", base);
     expect(getContextWindow("ollama", base, "all-minilm")).toBe(256);
+  });
+});
+
+describe("probeArchitecturalOllama", () => {
+  // The `/api/show` fallback for rows whose `/api/tags` entry carried no
+  // `details.context_length`. Only the missing rows are asked about, and the
+  // answer's key is architecture-prefixed rather than fixed.
+  function showBody(info: Record<string, unknown>) {
+    return okJson({ model_info: info });
+  }
+
+  function stubShow(
+    handler: (modelId: string) => unknown,
+    seen?: { url: string; model: unknown }[],
+  ) {
+    stubFetch((url, init) => {
+      if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
+      const model = JSON.parse(String(init?.body)).model as string;
+      seen?.push({ url, model });
+      return handler(model);
+    });
+  }
+
+  it("reads the figure under the architecture-prefixed key", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    stubShow(
+      () =>
+        showBody({
+          "general.architecture": "qwen3",
+          "qwen3.context_length": 40960,
+          "qwen3.embedding_length": 2560,
+        }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [{ id: "qwen3:8b" }]);
+    // POSTed to the root, naming the model as `/api/show` documents.
+    expect(seen).toEqual([{ url: `${base}/api/show`, model: "qwen3:8b" }]);
+    expect(getContextWindow("ollama", base, "qwen3:8b")).toBe(40960);
+  });
+
+  it("falls back to a lone *.context_length key when the architecture is absent", async () => {
+    const base = freshBase();
+    stubShow(() => showBody({ "llama.context_length": 131072 }));
+    await probeArchitecturalOllama(base, [{ id: "llama3:8b" }]);
+    expect(getContextWindow("ollama", base, "llama3:8b")).toBe(131072);
+  });
+
+  it("uses the architecture to disambiguate several context_length keys", async () => {
+    const base = freshBase();
+    // A multimodal model carries one per submodel. `general.architecture` is
+    // the only thing that says which is the text window, so an implementation
+    // that only scans for a lone `*.context_length` key would record nothing
+    // here and leave the model on the 128,000 floor.
+    stubShow(() =>
+      showBody({
+        "general.architecture": "llama",
+        "llama.context_length": 32768,
+        "clip.context_length": 512,
+      }),
+    );
+    await probeArchitecturalOllama(base, [{ id: "llava:13b" }]);
+    expect(getContextWindow("ollama", base, "llava:13b")).toBe(32768);
+  });
+
+  it("records nothing when the named architecture has no key of its own", async () => {
+    const base = freshBase();
+    // The body names qwen3 and carries a window for llama. Taking the lone
+    // key would be reading a number off a model we have been told this is
+    // not — evidence against the reading, not for it.
+    stubShow(() =>
+      showBody({
+        "general.architecture": "qwen3",
+        "llama.context_length": 131072,
+      }),
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest" }]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBeUndefined();
+  });
+
+  it("queues no rival while a call for the same model is in flight", async () => {
+    const base = freshBase();
+    const asked: string[] = [];
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch(async (url, init) => {
+      if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
+      asked.push(JSON.parse(String(init?.body)).model as string);
+      await held;
+      return okJson({
+        model_info: { "general.architecture": "qwen3", "qwen3.context_length": 8192 },
+      });
+    });
+    // Open 1 queues a call at the first digest and it is still in flight when
+    // open 2 arrives at a second. The in-flight reservation is what stops the
+    // two answers from racing to write the same slot out of order.
+    const first = probeArchitecturalOllama(base, [
+      { id: "q:latest", digest: "sha256:aaa" },
+    ]);
+    // Deliberately not awaited. A rival call would block on the same gate as
+    // the first, so awaiting it would report a lost reservation as a 30s
+    // timeout — the failure mode this test's own gate exists to avoid —
+    // instead of as the assertion below. With the reservation intact this
+    // resolves immediately, having queued nothing.
+    const rival = probeArchitecturalOllama(base, [
+      { id: "q:latest", digest: "sha256:bbb" },
+    ]);
+    // A rival would reach its fetch by now; the reservation means none does.
+    await quietFor(10);
+    expect(asked).toEqual(["q:latest"]);
+
+    // Loud rather than optional: a silently unarmed gate would hang `first`
+    // until the test timeout and report that instead of the real cause.
+    if (!release) throw new Error("the /api/show gate was never armed");
+    release();
+    await Promise.all([first, rival]);
+    // The answer is dated to the pull it was queued at, so the next open sees
+    // the mismatch and asks again rather than holding a figure that may
+    // describe the pull before last.
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    expect(asked).toEqual(["q:latest", "q:latest"]);
+  });
+
+  it("records nothing when several keys could be the one", async () => {
+    const base = freshBase();
+    stubShow(() =>
+      showBody({
+        "llama.context_length": 131072,
+        "clip.context_length": 512,
+      }),
+    );
+    await probeArchitecturalOllama(base, [{ id: "llava:7b" }]);
+    // Ambiguity leaves the slot empty rather than picking: a wrong pick here
+    // over-declares the window.
+    expect(getContextWindow("ollama", base, "llava:7b")).toBeUndefined();
+  });
+
+  it("records nothing on a 404, a malformed body or an unusable value", async () => {
+    const base = freshBase();
+    stubShow((model) => {
+      if (model === "gone:latest") return httpError();
+      if (model === "garbage:latest") return malformed();
+      return showBody({
+        "general.architecture": "llama",
+        "llama.context_length": 0,
+      });
+    });
+    await probeArchitecturalOllama(base, [
+      { id: "gone:latest" },
+      { id: "garbage:latest" },
+      { id: "zero:latest" },
+    ]);
+    for (const id of ["gone:latest", "garbage:latest", "zero:latest"]) {
+      expect(getContextWindow("ollama", base, id)).toBeUndefined();
+    }
+  });
+
+  it("one model's failure does not abandon the rest of the queue", async () => {
+    const base = freshBase();
+    stubFetch((url, init) => {
+      if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
+      const model = JSON.parse(String(init?.body)).model as string;
+      if (model === "boom:latest") throw new TypeError("fetch failed");
+      return okJson({
+        model_info: { "general.architecture": "llama", "llama.context_length": 8192 },
+      });
+    });
+    await probeArchitecturalOllama(base, [{ id: "boom:latest" }, { id: "ok:latest" }]);
+    expect(getContextWindow("ollama", base, "boom:latest")).toBeUndefined();
+    expect(getContextWindow("ollama", base, "ok:latest")).toBe(8192);
+  });
+
+  it("skips a model whose figure is already cached, and duplicates in one batch", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // Dated to the same pull the batch below names, which is what a figure
+    // written from this open's /api/tags payload looks like.
+    recordArchitectural(cacheKey("ollama", base, "known:latest"), 4096, "sha256:k");
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "llama", "llama.context_length": 8192 }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [
+      { id: "known:latest", digest: "sha256:k" },
+      { id: "new:latest", digest: "sha256:n" },
+      { id: "new:latest", digest: "sha256:n" },
+    ]);
+    expect(seen.map((s) => s.model)).toEqual(["new:latest"]);
+    // The cached figure is untouched, not refreshed.
+    expect(getContextWindow("ollama", base, "known:latest")).toBe(4096);
+  });
+
+  it("dedups overlapping batches and never runs more than four at once", async () => {
+    const base = freshBase();
+    let live = 0;
+    let peak = 0;
+    const models = Array.from({ length: 12 }, (_, i) => ({ id: `m${i}:latest` }));
+    const calls: string[] = [];
+    stubFetch(async (url, init) => {
+      if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
+      calls.push(JSON.parse(String(init?.body)).model as string);
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((r) => setTimeout(r, 5));
+      live -= 1;
+      return okJson({
+        model_info: { "general.architecture": "llama", "llama.context_length": 8192 },
+      });
+    });
+    await Promise.all([
+      probeArchitecturalOllama(base, models),
+      probeArchitecturalOllama(base, models),
+    ]);
+    // A second open while the first is still running adds no calls.
+    expect(calls).toHaveLength(models.length);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(getContextWindow("ollama", base, "m11:latest")).toBe(8192);
+  });
+
+  it("re-asks when the digest changes, and not otherwise", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    let answer = 40960;
+    stubShow(
+      () =>
+        showBody({
+          "general.architecture": "qwen3",
+          "qwen3.context_length": answer,
+        }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(40960);
+
+    // Same pull, so the answer we hold still describes this model.
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(seen).toHaveLength(1);
+
+    // Re-pulled under the same name: the tag now points at a different model,
+    // and keeping the old figure would over-declare a smaller one.
+    answer = 8192;
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    expect(seen).toHaveLength(2);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+  });
+
+  it("asks about an undated figure rather than trusting it", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // Nothing vouches for this figure: no digest says which pull it came
+    // from, and `/api/tags` did not answer for the row on this open. One
+    // wasted call beats holding a number that may describe a model someone
+    // has since replaced.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960);
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "qwen3", "qwen3.context_length": 8192 }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(seen.map((s) => s.model)).toEqual(["q:latest"]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+  });
+
+  it("asks every open when the row carries no digest at all", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // Two pulls of a digest-less row compare equal, so the digest can prove
+    // nothing. A daemon reporting neither `digest` nor
+    // `details.context_length` is already paying for the fallback; holding a
+    // figure it cannot vouch for would over-declare a replaced model.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960, "");
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "qwen3", "qwen3.context_length": 8192 }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [{ id: "q:latest" }]);
+    await probeArchitecturalOllama(base, [{ id: "q:latest" }]);
+    expect(seen.map((s) => s.model)).toEqual(["q:latest", "q:latest"]);
+  });
+
+  it("makes no call for a digest-less row that /api/tags answered for", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // The same digest-less daemon, but still emitting
+    // `details.context_length`. The figure is this open's by construction, so
+    // the rule above costs nothing here.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960, "");
+    stubShow(() => showBody({ "llama.context_length": 8192 }), seen);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", tagged: 40960 }]);
+    expect(seen).toEqual([]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(40960);
+  });
+
+  it("re-asks when /api/tags drops the field on a re-pulled tag", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // Open 1: /api/tags carried the figure, dated to that pull. This is what
+    // the discovery route writes inline.
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 40960, "sha256:aaa");
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "qwen3", "qwen3.context_length": 8192 }),
+      seen,
+    );
+    // Open 2, same pull: nothing has moved, so nothing is owed.
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(seen).toEqual([]);
+
+    // Open 3: the tag was re-pulled *and* this Ollama no longer emits
+    // `details.context_length`. `recordArchitectural` no-ops on the missing
+    // value, so the 40960 from the old pull survives — and it now describes a
+    // different model. Left alone it would over-declare a smaller one.
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:bbb" }]);
+    expect(seen.map((s) => s.model)).toEqual(["q:latest"]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(8192);
+  });
+
+  it("leaves a tags-sourced figure alone while its digest holds", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    recordArchitectural(cacheKey("ollama", base, "q:latest"), 4096, "sha256:aaa");
+    stubShow(() => showBody({ "llama.context_length": 8192 }), seen);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    await probeArchitecturalOllama(base, [{ id: "q:latest", digest: "sha256:aaa" }]);
+    expect(seen).toEqual([]);
+    expect(getContextWindow("ollama", base, "q:latest")).toBe(4096);
+  });
+
+  it("asks about a row whose figure arrived present but unusable", async () => {
+    const base = freshBase();
+    const seen: { url: string; model: unknown }[] = [];
+    // `recordArchitectural` rejects a non-positive integer, so the slot is
+    // empty even though the row carried a number. A caller filtering on
+    // "the field was undefined" would skip this one and leave the model on
+    // the 128,000 floor, over-declaring it.
+    recordArchitectural(cacheKey("ollama", base, "zero:latest"), 0);
+    recordArchitectural(cacheKey("ollama", base, "negative:latest"), -1);
+    recordArchitectural(cacheKey("ollama", base, "fraction:latest"), 1.5);
+    stubShow(
+      () =>
+        showBody({ "general.architecture": "llama", "llama.context_length": 8192 }),
+      seen,
+    );
+    await probeArchitecturalOllama(base, [
+      { id: "zero:latest" },
+      { id: "negative:latest" },
+      { id: "fraction:latest" },
+    ]);
+    expect(seen.map((s) => s.model)).toEqual([
+      "zero:latest",
+      "negative:latest",
+      "fraction:latest",
+    ]);
+  });
+
+  it("caps concurrency across calls, not per call", async () => {
+    const base = freshBase();
+    let live = 0;
+    let peak = 0;
+    stubFetch(async (url) => {
+      if (!url.endsWith("/api/show")) throw new Error(`unexpected url ${url}`);
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((r) => setTimeout(r, 5));
+      live -= 1;
+      return okJson({
+        model_info: { "general.architecture": "llama", "llama.context_length": 8192 },
+      });
+    });
+    // Disjoint sets, so the in-flight check dedups nothing between them. A
+    // per-call pool would run eight at once here.
+    await Promise.all([
+      probeArchitecturalOllama(
+        base,
+        Array.from({ length: 8 }, (_, i) => ({ id: `a${i}:latest` })),
+      ),
+      probeArchitecturalOllama(
+        base,
+        Array.from({ length: 8 }, (_, i) => ({ id: `b${i}:latest` })),
+      ),
+    ]);
+    expect(peak).toBeLessThanOrEqual(4);
+    // Both calls resolve only once their own models are done.
+    expect(getContextWindow("ollama", base, "a7:latest")).toBe(8192);
+    expect(getContextWindow("ollama", base, "b7:latest")).toBe(8192);
+  });
+
+  it("retries a model /api/show could not answer for", async () => {
+    const base = freshBase();
+    let attempts = 0;
+    stubShow(() => {
+      attempts += 1;
+      return attempts === 1
+        ? httpError()
+        : showBody({ "general.architecture": "llama", "llama.context_length": 8192 });
+    });
+    await probeArchitecturalOllama(base, [{ id: "flaky:latest", digest: "sha256:a" }]);
+    expect(getContextWindow("ollama", base, "flaky:latest")).toBeUndefined();
+    // Same digest, but we still hold no figure — remembering the failure
+    // would make a transient one permanent.
+    await probeArchitecturalOllama(base, [{ id: "flaky:latest", digest: "sha256:a" }]);
+    expect(attempts).toBe(2);
+    expect(getContextWindow("ollama", base, "flaky:latest")).toBe(8192);
+  });
+
+  it("does nothing, and makes no call, for an empty list", async () => {
+    const base = freshBase();
+    stubFetch((url) => {
+      throw new Error(`unexpected url ${url}`);
+    });
+    await expect(probeArchitecturalOllama(base, [])).resolves.toBeUndefined();
   });
 });
 

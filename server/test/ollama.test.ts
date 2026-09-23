@@ -18,7 +18,11 @@ describe("GET /ollama/models", () => {
   let respondTags: (res: http.ServerResponse) => void;
   /** Serves the `/api/ps` loaded-figures probe; defaults to 404. */
   let respondPs: (res: http.ServerResponse) => void;
+  /** Serves the `/api/show` architectural fallback; defaults to 404. */
+  let respondShow: (model: string, res: http.ServerResponse) => void;
   let requestedPaths: string[];
+  /** Model ids POSTed to `/api/show`, in order. */
+  let shownModels: string[];
 
   function okJson(res: http.ServerResponse, payload: unknown) {
     res.writeHead(200, { "content-type": "application/json" });
@@ -27,8 +31,13 @@ describe("GET /ollama/models", () => {
 
   beforeEach(async () => {
     requestedPaths = [];
+    shownModels = [];
     respondTags = (res) => okJson(res, { models: [] });
     respondPs = (res) => {
+      res.writeHead(404);
+      res.end("nope");
+    };
+    respondShow = (_model, res) => {
       res.writeHead(404);
       res.end("nope");
     };
@@ -37,7 +46,21 @@ describe("GET /ollama/models", () => {
       requestedPaths.push(url);
       if (url.startsWith("/api/ps")) respondPs(res);
       else if (url.startsWith("/api/tags")) respondTags(res);
-      else {
+      else if (url.startsWith("/api/show")) {
+        // The fallback is a POST; read the body so the test can assert which
+        // model was asked about.
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          const model = String(
+            (JSON.parse(Buffer.concat(chunks).toString() || "{}") as {
+              model?: unknown;
+            }).model,
+          );
+          shownModels.push(model);
+          respondShow(model, res);
+        });
+      } else {
         res.writeHead(404);
         res.end("nope");
       }
@@ -360,6 +383,173 @@ describe("GET /ollama/models", () => {
 
     expect(requestedPaths.filter((p) => p === "/api/tags")).toHaveLength(1);
     expect(requestedPaths.filter((p) => p === "/api/ps")).toHaveLength(1);
+    // The /api/show fallback is the budget's one exception, and it fires only
+    // for a row that arrived without its figure. This row had one.
+    expect(requestedPaths.filter((p) => p === "/api/show")).toHaveLength(0);
+    await app.close();
+  });
+
+  // `details.context_length` is undocumented, so Ollama may stop emitting it
+  // without that being a regression. Those rows — and only those — are asked
+  // about through the documented `/api/show`.
+  it("falls back to /api/show for a row that arrived without a figure", async () => {
+    respondTags = (res) =>
+      okJson(res, {
+        models: [
+          { name: "has-it:latest", details: { context_length: 512 } },
+          { name: "missing:latest", details: {} },
+          { name: "also-missing:latest" },
+        ],
+      });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "llama",
+          "llama.context_length": model === "missing:latest" ? 8192 : 4096,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    const body = await waitForModels(app, (models) =>
+      models.every((m) => m.context_length > 0),
+    );
+    expect(
+      (body.models as { id: string; context_length: number }[]).map((m) => [
+        m.id,
+        m.context_length,
+      ]),
+    ).toEqual([
+      ["ollama/has-it:latest", 512],
+      ["ollama/missing:latest", 8192],
+      ["ollama/also-missing:latest", 4096],
+    ]);
+    // The row that already had a figure is never asked about, on this open or
+    // any later one.
+    expect(shownModels).toEqual(["missing:latest", "also-missing:latest"]);
+    await app.close();
+  });
+
+  // A `context_length` the cache rejects (0, negative, fractional) is
+  // present-but-unusable. The row looks answered to anyone reading the
+  // payload while the cached figure is empty, so the model would take the
+  // 128,000 floor and over-declare itself.
+  it("falls back for a row whose figure is present but unusable", async () => {
+    respondTags = (res) =>
+      okJson(res, {
+        models: [
+          { name: "zero:latest", details: { context_length: 0 } },
+          { name: "negative:latest", details: { context_length: -1 } },
+          { name: "fraction:latest", details: { context_length: 1.5 } },
+        ],
+      });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (_model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "llama",
+          "llama.context_length": 8192,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    const body = await waitForModels(app, (models) =>
+      models.every((m) => m.context_length === 8192),
+    );
+    expect(body.models).toHaveLength(3);
+    expect(new Set(shownModels)).toEqual(
+      new Set(["zero:latest", "negative:latest", "fraction:latest"]),
+    );
+    await app.close();
+  });
+
+  // A re-pull under the same name changes the digest. Without that signal a
+  // show-sourced figure would be frozen for the life of the process, so a
+  // replacement with a smaller window would keep running over-declared.
+  it("re-asks /api/show when a tag is re-pulled under the same name", async () => {
+    let digest = "sha256:aaa";
+    let window = 40960;
+    respondTags = (res) =>
+      okJson(res, { models: [{ name: "q:latest", digest, details: {} }] });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (_model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "qwen3",
+          "qwen3.context_length": window,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    await waitForModels(app, (models) => models[0]?.context_length === 40960);
+    const afterFirst = shownModels.length;
+    // A second open at the same digest adds no call.
+    await app.inject({ url: "/ollama/models" });
+    expect(shownModels).toHaveLength(afterFirst);
+
+    digest = "sha256:bbb";
+    window = 8192;
+    const body = await waitForModels(
+      app,
+      (models) => models[0]?.context_length === 8192,
+    );
+    expect(body.models[0]?.context_length).toBe(8192);
+    await app.close();
+  });
+
+  // The nastier half of the same problem: the row had a figure from
+  // `/api/tags` on an earlier open, then the daemon stopped emitting the
+  // undocumented field *and* the tag was re-pulled. `recordArchitectural`
+  // no-ops on the missing value, so the old figure survives and now describes
+  // a different model.
+  it("re-asks when /api/tags stops carrying the field for a re-pulled tag", async () => {
+    let digest = "sha256:aaa";
+    let details: Record<string, unknown> | undefined = { context_length: 40960 };
+    respondTags = (res) =>
+      okJson(res, { models: [{ name: "q:latest", digest, details }] });
+    respondPs = (res) => okJson(res, { models: [] });
+    respondShow = (_model, res) =>
+      okJson(res, {
+        model_info: {
+          "general.architecture": "qwen3",
+          "qwen3.context_length": 8192,
+        },
+      });
+    const app = await buildRoutes(baseUrl);
+
+    const first = (await app.inject({ url: "/ollama/models" })).json();
+    expect(first.models[0].context_length).toBe(40960);
+    expect(shownModels).toEqual([]);
+
+    // Upgrade drops the field, and the tag is re-pulled to a smaller model.
+    details = {};
+    digest = "sha256:bbb";
+    const body = await waitForModels(
+      app,
+      (models) => models[0]?.context_length === 8192,
+    );
+    expect(body.models[0]?.context_length).toBe(8192);
+    expect(shownModels).toContain("q:latest");
+    await app.close();
+  });
+
+  it("leaves a row at the fallback figure when /api/show does not answer", async () => {
+    respondTags = (res) =>
+      okJson(res, { models: [{ name: "missing:latest", details: {} }] });
+    respondPs = (res) => okJson(res, { models: [] });
+    const app = await buildRoutes(baseUrl);
+
+    const first = await app.inject({ url: "/ollama/models" });
+    const deadline = Date.now() + WAIT_BUDGET_MS;
+    while (shownModels.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(shownModels).toEqual(["missing:latest"]);
+    // A 0 here is the route reporting "unknown"; resolveModel applies the
+    // 128,000 floor. The list itself still came back.
+    expect(first.json().available).toBe(true);
+    const second = (await app.inject({ url: "/ollama/models" })).json();
+    expect(second.models[0].context_length).toBe(0);
     await app.close();
   });
 });

@@ -111,33 +111,3 @@ project scoping, cancellation, tool policy, and accounting.
   supports headless execution, sessions, and CI. It remains a separate agent
   engine with its own authentication, tool permissions, and lifecycle—not a
   direct Pi model-provider entry.
-
-## 4. Ollama's architectural context figure is undocumented
-
-`/api/tags` → `details.context_length` is what PR #35 reads for a model's
-architectural maximum, and Ollama does not document it. The documented
-`details` fields are `format`, `family`, `families`, `parameter_size` and
-`quantization_level`. Ollama 0.33.2 does emit it. `/api/ps` → `context_length`,
-the loaded figure, *is* documented.
-
-Losing it degrades rather than breaks: a loaded model still reports correctly
-through `/api/ps`, and only an unloaded one falls through to the 128,000 floor
-— the over-declaring direction, but bounded and already accepted.
-
-**Decided 2026-09-20:** keep `/api/tags` as the primary source and fall back to
-`/api/show` — which does document a model's parameters — only for rows whose
-`details.context_length` is missing. The two alternatives were both worse.
-Switching to `/api/show` outright costs a call per model against today's budget
-of two per picker open, which `test/ollama.test.ts` has a test guarding
-("stays within two calls per open"); doing nothing leaves the figure resting on
-an undocumented field. The fallback costs nothing while Ollama still emits it,
-and pays only in the failure this item is about. Keep the per-open budget
-assertion, and extend it to allow the extra calls only on the fallback path.
-
-Not worth doing: tracing how far back the undocumented field goes. Old Ollama
-builds are not a supported target, and the degradation is benign.
-
-The practical guard is re-checking the field after an Ollama upgrade. The
-version this was confirmed against is recorded in
-[the findings note](plans/completed/2026-09-10-local-model-context-window-findings.md)
-and in [the user docs](../docs/local-models-ollama.md).

@@ -12,6 +12,7 @@ import {
 import {
   cacheKey,
   getContextWindow,
+  probeArchitecturalOllama,
   probeLoaded,
   recordArchitectural,
 } from "../agent/local-context.ts";
@@ -95,6 +96,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           ? (data as {
               models?: ({
                 name?: unknown;
+                digest?: unknown;
                 details?: { context_length?: unknown };
               } | null)[];
             })
@@ -109,6 +111,12 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // rather than rendered, because `ollama/undefined` is a selectable
       // entry that resolves to nothing.
       const rows = payload.models ?? [];
+      // Every named row, with the digest that identifies this pull of it, for
+      // the `/api/show` fallback below. Deciding *there* which of them still
+      // owe a call keeps one rule in one place: this route would otherwise
+      // have to reproduce the cache's positive-integer test to notice that a
+      // `context_length` of `0` left the slot empty.
+      const listed: { id: string; digest?: string; tagged?: number }[] = [];
       const models = rows.flatMap((m) => {
         // Rejected, not trimmed: a whitespace-only name is as unusable as a
         // missing one, and trimming would invent an id the daemon never
@@ -123,10 +131,20 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           typeof m.details?.context_length === "number"
             ? m.details.context_length
             : undefined;
+        // The digest identifies this pull of the tag, and is recorded with
+        // the figure so a later open can tell a current figure from one left
+        // over from a different model of the same name.
+        const digest = typeof m.digest === "string" ? m.digest : "";
         recordArchitectural(
           cacheKey("ollama", OLLAMA_BASE_URL, name),
           architectural,
+          digest,
         );
+        // `tagged` is this open's answer from the payload, passed on so the
+        // fallback can tell a figure written just now from one that merely
+        // survived — the two are indistinguishable in the cache, because
+        // `recordArchitectural` no-ops on a missing value.
+        listed.push({ id: name, digest, tagged: architectural });
         return [
           {
             id: `ollama/${name}`,
@@ -145,6 +163,13 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // never rejects, so no .catch() — and awaiting it would stall the
       // picker on a hung daemon behind a list it already has.
       void probeLoaded("ollama", OLLAMA_BASE_URL);
+      // FORK: `details.context_length` is undocumented, so a row without it is
+      // an Ollama-side change rather than a bug. Rows still missing a figure
+      // get the documented `/api/show` read, unawaited for the same reason.
+      // It makes no call at all on a daemon that still emits the field, which
+      // is why the picker budget of two calls per open is unaffected in the
+      // normal case.
+      void probeArchitecturalOllama(OLLAMA_BASE_URL, listed);
       return { available: true, models };
     } catch {
       return { available: false, models: [] };

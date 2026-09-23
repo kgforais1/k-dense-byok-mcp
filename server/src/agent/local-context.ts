@@ -37,6 +37,51 @@ interface ContextEntry {
 
 const cache = new Map<string, ContextEntry>();
 const pending = new Map<string, Promise<void>>();
+/** Cache keys with an `/api/show` call outstanding. Unlike `pending`, callers
+ * never join one: the fallback's product is the cache write, and the next
+ * picker open re-reads the cache anyway. */
+const showInFlight = new Set<string>();
+
+/**
+ * Cache key → the `/api/tags` digest the architectural figure we currently
+ * hold was obtained at (`""` where the row carried none). Written by whichever
+ * path wrote the figure, which is what makes it a description of the figure
+ * rather than of one probe.
+ *
+ * This is how a stale figure is noticed without a TTL. Re-pulling a tag under
+ * the same name changes its digest, and that is the exact signal that the
+ * number we hold describes a different model. It costs nothing when nothing
+ * has moved.
+ *
+ * It has to cover the tags path too, not just `/api/show`. `recordArchitectural`
+ * no-ops on a missing value, so a row that carried `details.context_length`
+ * on one open and not the next — an Ollama upgrade that dropped the
+ * undocumented field, which is the whole premise of the fallback — keeps its
+ * old figure rather than losing it. If only `/api/show` answers were dated,
+ * that surviving figure would look current forever, and a smaller replacement
+ * model would run over-declared.
+ */
+const architecturalDigests = new Map<string, string>();
+
+/** Fan-out ceiling for the `/api/show` fallback, shared across calls rather
+ * than per call. It runs once per model, so a daemon that stopped emitting
+ * `details.context_length` for every row would otherwise open one socket per
+ * installed model at once — and two overlapping picker opens whose missing
+ * rows did not overlap would each have got their own pool. */
+const SHOW_CONCURRENCY = 4;
+
+interface ShowJob {
+  key: string;
+  root: string;
+  modelId: string;
+  digest: string;
+  done: () => void;
+}
+
+/** One queue and one worker count for the whole process, which is what makes
+ * `SHOW_CONCURRENCY` a daemon-wide ceiling instead of a per-call one. */
+const showQueue: ShowJob[] = [];
+let showWorkers = 0;
 
 function isPositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
@@ -77,7 +122,16 @@ export function cacheKey(
 
 /** `loaded ?? architectural`, recomputed on every read. The two figures are
  * stored in separate slots and merged here — never a merged stored number —
- * because the loaded figure is the transient of the pair. */
+ * because the loaded figure is the transient of the pair.
+ *
+ * Deliberately digest-blind. Between a re-pull that `/api/tags` cannot
+ * describe and the `/api/show` answer that corrects it, this returns the
+ * previous pull's figure. Refusing it instead would return `undefined`, and
+ * `resolveModel` reads that as the 128,000 floor — which for the models this
+ * path serves is usually the *larger* number, so the stricter read would
+ * widen the over-declaration it was meant to close. A stale figure that
+ * `needsShow` is already queueing a correction for beats a floor that nothing
+ * will correct. */
 export function getContextWindow(
   providerId: string,
   baseUrl: string,
@@ -89,10 +143,18 @@ export function getContextWindow(
 
 /** Writes only a positive integer; anything else (including `undefined`) is a
  * no-op that leaves an existing entry alone. A failed refresh is therefore a
- * no-op, never a downgrade. */
+ * no-op, never a downgrade.
+ *
+ * `digest` dates the figure — Ollama callers pass the `/api/tags` digest of
+ * the pull it describes, so `needsShow` can tell a current figure from one
+ * left over from a different model of the same name. Omitting it leaves any
+ * existing date alone, which is what the OpenAI-compatible path wants: it has
+ * no equivalent and never consults the map. A rejected value dates nothing,
+ * because the figure it would have dated was not written. */
 export function recordArchitectural(
   key: string,
   value: number | undefined,
+  digest?: string,
 ): void {
   if (!isPositiveInt(value)) return;
   let entry = cache.get(key);
@@ -101,6 +163,7 @@ export function recordArchitectural(
     cache.set(key, entry);
   }
   entry.architectural = value;
+  if (digest !== undefined) architecturalDigests.set(key, digest);
 }
 
 /**
@@ -164,11 +227,11 @@ async function runProbe(providerId: string, root: string): Promise<void> {
  * discovery routes. Returns `undefined` on any failure (network error,
  * abort, non-2xx, malformed body); callers treat that as "leave the cache
  * alone". */
-async function getJson(url: string): Promise<unknown> {
+async function getJson(url: string, init?: RequestInit): Promise<unknown> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const resp = await fetch(url, { signal: ctrl.signal });
+    const resp = await fetch(url, { ...init, signal: ctrl.signal });
     if (!resp.ok) return undefined;
     return (await resp.json()) as unknown;
   } catch {
@@ -225,6 +288,183 @@ function clearUnreportedLoaded(
       delete entry.loaded;
     }
   }
+}
+
+/**
+ * Fallback source for Ollama's architectural figure. Takes the whole
+ * `/api/tags` list and decides per row, in `needsShow`, whether a call is
+ * owed — the caller does not filter.
+ *
+ * `details.context_length` is undocumented — Ollama documents only `format`,
+ * `family`, `families`, `parameter_size` and `quantization_level` — so it can
+ * disappear in an upgrade without that being a regression on Ollama's side.
+ * `/api/show` is documented and reports the same figure, but costs one POST
+ * per model against a picker-open budget of two calls total. So it is the
+ * fallback and not the source: on a daemon that still emits the tags field
+ * this never fires, and it pays only in the failure it exists for. Decided
+ * 2026-09-20; the field survey behind it is
+ * `dev-docs/plans/completed/2026-09-10-local-model-context-window-findings.md`.
+ *
+ * Never rejects, like the loaded probe, and its product is the cache write.
+ * The write lands after the response the picker is already rendering, so the
+ * figure appears on the *next* open — the same second-open shape LM Studio
+ * rows have always had.
+ */
+export function probeArchitecturalOllama(
+  baseUrl: string,
+  models: { id: string; digest?: string; tagged?: number }[],
+): Promise<void> {
+  const root = normalizeBaseUrl(baseUrl);
+  const queued: Omit<ShowJob, "done">[] = [];
+  for (const model of models) {
+    const key = cacheKey("ollama", root, model.id);
+    const digest = model.digest ?? "";
+    // Every row is offered, and the decision to call is made here against the
+    // cache rather than by the caller against the payload. A caller judging
+    // "this row had no figure" has to reproduce `recordArchitectural`'s
+    // positive-integer rule to get it right, and a `details.context_length`
+    // of `0` or `-1` is present-but-rejected: the slot stays empty while the
+    // row looks answered, and the model silently takes the 128,000 floor.
+    if (!needsShow(key, digest, model.tagged)) continue;
+    // Reserved synchronously, before any await, so two overlapping opens
+    // cannot both queue the same model. Doubles as the within-batch
+    // duplicate check.
+    if (showInFlight.has(key)) continue;
+    showInFlight.add(key);
+    queued.push({ key, root, modelId: model.id, digest });
+  }
+  if (queued.length === 0) return Promise.resolve();
+  // The executor runs synchronously, so the jobs are still enqueued and the
+  // pool still topped up before this function returns — which is what lets
+  // the reservations above stand against a concurrent caller.
+  return new Promise<void>((resolve) => {
+    let outstanding = queued.length;
+    const done = (): void => {
+      outstanding -= 1;
+      if (outstanding === 0) resolve();
+    };
+    for (const job of queued) showQueue.push({ ...job, done });
+    pumpShowQueue();
+  });
+}
+
+/**
+ * Two reasons to call, and no others. Either we hold no figure for the model
+ * — including the case where one arrived and was rejected as unusable — or we
+ * hold one dated to a different pull, meaning the tag was re-pulled under the
+ * same name and may now be a smaller model.
+ *
+ * The date is what makes the second case sound, and it is why the tags path
+ * dates its writes too. `/api/tags` answering this open is not something this
+ * function can observe: `recordArchitectural` no-ops on a missing value, so a
+ * figure that survived an open where the row carried none is indistinguishable
+ * from one just written. The date distinguishes them, because the route
+ * records it in the same call as the figure.
+ *
+ * Note what this deliberately does not do: give up. A model `/api/show`
+ * cannot answer for is asked again on the next open, so the cost of a
+ * permanently unanswerable model is one call per picker open. Remembering the
+ * failure instead would make a transient one permanent, and the figure it
+ * denies us is the difference between the real window and a 128,000 floor
+ * that over-declares it.
+ */
+function needsShow(key: string, digest: string, tagged: number | undefined): boolean {
+  // `/api/tags` answered for this row on this open, so whatever is in the
+  // cache is this pull's figure and nothing is owed — whatever we held
+  // before. Judged here, against the same `isPositiveInt` rule that decides
+  // whether the value was written at all, rather than by the caller.
+  if (isPositiveInt(tagged)) return false;
+  if (cache.get(key)?.architectural === undefined) return true;
+  // Past this point the figure survived an open rather than being written by
+  // it, so it is current only if it is dated to this pull. A row carrying no
+  // digest cannot be dated, and two undated pulls of the same name compare
+  // equal — so an undated row is asked about every open rather than trusted.
+  // That costs one call per open for a daemon that reports neither field,
+  // which is the same daemon already paying for the fallback; the alternative
+  // is holding a number that may describe a model someone has since replaced.
+  if (digest === "") return true;
+  return architecturalDigests.get(key) !== digest;
+}
+
+/** Tops the shared worker pool back up to `SHOW_CONCURRENCY`. Safe to call
+ * whenever the queue or the worker count changes; a no-op when the pool is
+ * already full or the queue is empty. */
+function pumpShowQueue(): void {
+  while (showWorkers < SHOW_CONCURRENCY && showQueue.length > 0) {
+    showWorkers += 1;
+    void runShowWorker();
+  }
+}
+
+/** Drains the shared queue until it is empty, then retires. One of at most
+ * `SHOW_CONCURRENCY` of these; `pumpShowQueue` is the only thing that starts
+ * one. */
+async function runShowWorker(): Promise<void> {
+  try {
+    for (;;) {
+      const job = showQueue.shift();
+      if (!job) return;
+      try {
+        await showOne(job);
+      } catch {
+        // Never rejects — one failed model is a no-op, not an error, and
+        // must not abandon the rest of the queue.
+      } finally {
+        showInFlight.delete(job.key);
+        job.done();
+      }
+    }
+  } finally {
+    showWorkers -= 1;
+    // Unreachable today, and deliberately kept. The window it would close —
+    // a worker seeing an empty queue while a caller enqueues against a pool
+    // that still looks full — cannot open, because there is no await between
+    // the empty `shift()` and this line, and `probeArchitecturalOllama`
+    // enqueues and pumps synchronously. Both halves of that are easy to lose
+    // to a later edit, and the cost of the call is a comparison.
+    pumpShowQueue();
+  }
+}
+
+/** One model's `/api/show` read. Dates the figure it writes with the digest
+ * the job was queued at, so a later open can tell it from a figure left over
+ * from a different pull of the same name. */
+async function showOne(job: ShowJob): Promise<void> {
+  const body = await getJson(`${job.root}/api/show`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: job.modelId }),
+  });
+  recordArchitectural(job.key, architecturalFromShow(body), job.digest);
+}
+
+/**
+ * `/api/show` reports the window under an architecture-prefixed key —
+ * `llama.context_length`, `qwen3.context_length` — so its name is only
+ * knowable from `general.architecture` in the same object.
+ *
+ * Where the architecture is *absent*, a single key ending in
+ * `.context_length` is taken instead, because one candidate is not a guess.
+ * Several are, and a wrong pick here over-declares the window, which is the
+ * failure this module exists to prevent — so ambiguity records nothing and
+ * the row keeps whatever it had.
+ *
+ * Where the architecture is present but its key is missing or unusable, the
+ * answer is nothing, not the lone-key fallback. A body that names one
+ * architecture and carries a window for another is a body we do not
+ * understand; the lone key there is evidence against the reading, not for it.
+ */
+function architecturalFromShow(body: unknown): number | undefined {
+  const info = asRecord(asRecord(body)?.["model_info"]);
+  if (!info) return undefined;
+  const architecture = info["general.architecture"];
+  if (typeof architecture === "string" && architecture) {
+    return asNumber(info[`${architecture}.context_length`]);
+  }
+  const candidates = Object.entries(info).filter(([name]) =>
+    name.endsWith(".context_length"),
+  );
+  return candidates.length === 1 ? asNumber(candidates[0][1]) : undefined;
 }
 
 async function probeOllama(root: string): Promise<void> {

@@ -29,7 +29,6 @@ Still open:
   left out of the line ratchet. Full backlog with current numbers is in the
   plan's [ratchet backlog](plans/2026-09-08-repo-quality-gates.md).
 - **Raise the coverage floors**, particularly on the frontend (48.8% statements vs the backend's 72.1%, which now includes `server/pi-packages/**`).
-- **Semgrep rules for this repository's own invariants** — not a generic ruleset, which would duplicate CodeQL. Candidates are recorded in the plan.
 - **Required status checks before merge.** The branch ruleset gates on CodeQL today; the new `Checks` jobs are not yet in the required set.
 
 ## 2. Code scanning, security alerts, and Dependabot

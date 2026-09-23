@@ -265,10 +265,16 @@ static rules, and the moment to write them is while the seam is fresh:
   reimplementation in the adapter fails the test; asserting only the returned
   `run_already_active` shape would not have.
 
-The third, "`prepareRun` must not call `reply.code`", is genuinely structural
-and stays a Semgrep candidate. `prepareRun` is transport-neutral now and returns
-`RunStartRejection`; re-adding a `reply` parameter would pass lint, typecheck
-and every test while breaking only the MCP path.
+The third, "`prepareRun` must not call `reply.code`", is genuinely structural.
+`prepareRun` is transport-neutral now and returns `RunStartRejection`; re-adding
+a `reply` parameter would pass typecheck and every test while breaking only the
+MCP path.
+
+**Shipped 2026-09-22, not as Semgrep.** It is a `no-restricted-syntax` rule in
+`server/eslint.config.mjs`, so it runs in the lint that already runs in CI. A
+second scanner for one rule was the wrong trade; see the
+[repo quality gates plan](../2026-09-08-repo-quality-gates.md). The clause
+above about passing lint no longer holds, which is the point.
 
 ## Guardrails
 

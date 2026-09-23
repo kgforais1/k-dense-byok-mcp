@@ -20,6 +20,61 @@ import ratchets from "./.ratchets.json" with { type: "json" };
  * this config's own lint fix deleted a dead import from `manager.ts` and moved
  * the number.
  */
+/** Every shape `prepareRun` could take. A reviewer pointed out the first
+ * version of this list called itself "the two shapes" while already being
+ * short by one — `const prepareRun = function () {}` is neither a declaration
+ * nor an arrow. */
+const PREPARE_RUN_FORMS = [
+  'FunctionDeclaration[id.name="prepareRun"]',
+  'VariableDeclarator[id.name="prepareRun"]',
+  'MethodDefinition[key.name="prepareRun"]',
+  'Property[key.name="prepareRun"]',
+];
+
+/** Parameter names that mean "an HTTP reply" by convention. */
+const REPLY_NAMES = "/^(reply|res|response)$/";
+
+/** The ways a Fastify reply type can be written: bare, aliased on import
+ * (`FastifyReply as Reply`), qualified (`fastify.FastifyReply`), or inline
+ * (`import("fastify").FastifyReply`). Each is a different AST node, and the
+ * first version of this rule only knew the first one.
+ *
+ * Every entry names the *reply*, never the package. An earlier version also
+ * carried `TSImportType[argument.value="fastify"]`, which was inert: on this
+ * AST the module string sits at `argument.literal.value`, so it matched
+ * nothing. Spelled correctly it would have fired on
+ * `import("fastify").FastifyRequest["log"]` and on `FastifyInstance` — types
+ * this file threads legitimately through its run helpers (`sessions.ts:348`
+ * onward) and its route registration. No count here on purpose: the first
+ * version of this comment said "eight places", a reviewer counted seven, and
+ * the answer is six plus one of a different type. A number in a comment is a
+ * claim that rots, and this branch has already shipped three of those.
+ * So the entry was both dead and, once fixed, wrong. The invariant is about
+ * the reply, not about touching Fastify, and the negative test pins the
+ * working spelling rather than the dead one. */
+const REPLY_TYPE_SELECTORS = [
+  'TSTypeReference[typeName.name=/^(FastifyReply|Reply)$/]',
+  'TSTypeReference[typeName.right.name="FastifyReply"]',
+  'TSImportType[qualifier.name="FastifyReply"]',
+];
+
+/** Parameter shapes that can bind a name without being a bare identifier:
+ * `{ reply }`, `[reply]`, `reply = fallback`, `...reply`. The first version
+ * matched only a direct `Identifier` child, so a destructured or defaulted
+ * reply was seen only if it was later member-accessed — and forwarding it to
+ * a helper has no member access at all. */
+const PARAM_PATTERNS =
+  ":matches(ObjectPattern, ArrayPattern, AssignmentPattern, RestElement)";
+
+/** A `prepareRun` form either *is* the callable or wraps one. */
+const CALLABLE_WRAPPERS = [
+  "",
+  " > :matches(ArrowFunctionExpression, FunctionExpression)",
+];
+
+const PREPARE_RUN_MESSAGE =
+  "prepareRun must stay transport-neutral: it returns a typed RunStartRejection so the MCP adapter, which has no reply to write to, can share it. Do not accept or touch a Fastify reply here. See server/src/api/sessions.ts.";
+
 export default tseslint.config(
   {
     ignores: [
@@ -91,6 +146,77 @@ export default tseslint.config(
       complexity: ["error", 62],
       "max-lines": ["error", ratchets.maxLines],
       "max-lines-per-function": ["error", 672],
+    },
+  },
+  {
+    // One invariant, one function, one file — so the rule says so, rather
+    // than leaving the function's name to do the scoping by itself. A future
+    // unrelated `prepareRun` elsewhere in the tree is then not this rule's
+    // business. `test/lint-rules.test.ts` keeps this path honest: it lints
+    // its synthetic sources *as* this file, and fails if the function is
+    // renamed or moved out from under the rule.
+    files: ["src/api/sessions.ts"],
+    rules: {
+      // `prepareRun` returns a typed `RunStartRejection` instead of writing
+      // an HTTP reply, and that is the only reason the MCP adapter can share
+      // it: the MCP path has no `reply` to write to. A second run path built
+      // because this one was unusable headlessly would split run ownership
+      // and billing, which is the failure the archived MCP work exists to
+      // avoid.
+      //
+      // TypeScript does not catch the refactor this guards — threading a
+      // Fastify reply back into `prepareRun` compiles fine and breaks only
+      // the MCP path. The rule states the reason at the moment it happens.
+      //
+      // Guarded at the *signature*, not only at the use. A rule matching
+      // `reply.code(...)` alone is bypassed by renaming the parameter,
+      // aliasing it, destructuring it, or handing it to a helper — all of
+      // which still couple this function to HTTP, and all of which have to
+      // bring the reply in through the parameter list first.
+      //
+      // WHAT THIS DOES NOT CATCH, stated plainly because the previous version
+      // of this comment claimed the opposite. Two reviewers independently
+      // showed the hatch is not closed. A structural annotation with an
+      // innocent name — `function prepareRun(sink: { code: (n: number) => void })`
+      // — trips nothing here, and `unknown` plus a cast at the use site does
+      // the same. Neither `noImplicitAny` nor `no-explicit-any` helps:
+      // `no-explicit-any` catches only the literal `any`, and `unknown` is a
+      // one-word substitute for it. Closing that needs type information this
+      // rule does not have. What is left is a guard against the honest
+      // refactor, not against someone working around it — which is the
+      // failure actually worth spending on, since nobody threads a reply into
+      // this function on purpose while disguising its type.
+      "no-restricted-syntax": [
+        "error",
+        ...PREPARE_RUN_FORMS.flatMap((form) => [
+          // A parameter that says "reply" by name — bare, or bound inside a
+          // destructuring, default or rest pattern — in either of the
+          // callable shapes the form can wrap.
+          ...CALLABLE_WRAPPERS.flatMap((wrapper) => [
+            {
+              selector: `${form}${wrapper} > Identifier[name=${REPLY_NAMES}]`,
+              message: PREPARE_RUN_MESSAGE,
+            },
+            {
+              selector: `${form}${wrapper} > ${PARAM_PATTERNS} Identifier[name=${REPLY_NAMES}]`,
+              message: PREPARE_RUN_MESSAGE,
+            },
+          ]),
+          // A parameter that says "reply" by type, anywhere inside. This is
+          // what covers an alias or a destructure: either still has to be
+          // typed to compile.
+          ...REPLY_TYPE_SELECTORS.map((type) => ({
+            selector: `${form} ${type}`,
+            message: PREPARE_RUN_MESSAGE,
+          })),
+          // A reply reached from module scope rather than through a
+          // parameter.
+          {
+            selector: `${form} MemberExpression[object.name=${REPLY_NAMES}]`,
+            message: PREPARE_RUN_MESSAGE,
+          },
+        ]),
+      ],
     },
   },
   {

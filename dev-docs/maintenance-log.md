@@ -1,5 +1,90 @@
 # Maintenance Log
 
+### 2026-09-22 — Semgrep answered: one rule, in the lint that already runs (PR #48)
+
+- **Category:** CI / lint
+- **Summary:** `dev-docs/todo.md` §1 carried "Semgrep rules for this
+  repository's own invariants" as deferred work. Re-examining the candidate
+  list left exactly one rule that a static matcher can express, so the answer
+  is no Semgrep job and one `no-restricted-syntax` rule in
+  `server/eslint.config.mjs`. The todo row is deleted rather than re-deferred:
+  the question has now been examined twice and the answer did not change.
+- **The rule:** `prepareRun` must not touch the HTTP reply. It returns a typed
+  `RunStartRejection`, and that is the only reason the MCP adapter can share
+  it — the MCP path has no `reply` to write to. A second run path built
+  because this one was unusable headlessly would split run ownership and
+  billing.
+- **Why a rule at all, when TypeScript already rejects it:** it does, but only
+  by accident of the current signature — `reply` is not in scope. The refactor
+  this guards is someone threading `reply: FastifyReply` into `prepareRun` and
+  then using it, which compiles. The archived Phase 3 plan said that change
+  "would pass lint, typecheck and every test while breaking only the MCP
+  path"; that sentence is now false by one clause, and has been corrected in
+  place.
+- **Why not Semgrep:** a second scanner, config, annotation vocabulary and
+  version pin for one rule is a bad trade. Two further candidate rules were
+  measured and died on the data: `process.env` is read 31 times across 12+
+  backend files, so "centralise env access" would be a refactor rather than a
+  gate, and there are only 4 `fetch` call sites, too few to justify a rule
+  about timeouts.
+- **Tested, not just configured:** `server/test/lint-rules.test.ts` lints
+  synthetic sources through the real config, so the rule is checked by its
+  behaviour rather than by its presence in the file. That includes the cases
+  where it must stay *quiet* — a typed rejection, a reply write in a route
+  handler, and `FastifyRequest["log"]` — because a rule that fired on those
+  would be deleted within a week. Every selector has a mutation that turns a
+  test red; the rounds below are the ones where that was not yet true.
+- **A fourth review round, on the comments themselves.** kilo stepfun found
+  that the config claimed the file threads Fastify types "in eight places". It
+  counted seven; the answer is six `FastifyRequest["log"]` threadings plus one
+  `FastifyInstance`. All three of us were wrong, so the count is gone rather
+  than corrected — a number in a comment is a claim that rots, and this branch
+  had already shipped three claims that outran the code. It also found the
+  mutation the tests could not see: `PREPARE_RUN_FORMS` lists four shapes and
+  only two were exercised, so deleting the class-method and object-property
+  entries left the suite green. Covered now.
+- **CodeRabbit round.** Two more, both valid. A parameter that binds a reply
+  through a destructuring, default or rest pattern and then *forwards* it was
+  unguarded: the bare-identifier selector matches only a direct child, and
+  with no member access the member selector never saw it. Covered now, with a
+  test per binding form. And the type list carried a package-wide
+  `TSImportType[argument.value="fastify"]` entry, which turned out to be inert
+  — on this AST the module string sits at `argument.literal.value` — but which,
+  spelled correctly, would have fired on `FastifyRequest["log"]` and
+  `FastifyInstance`, both threaded legitimately through this file. Removed,
+  and a negative test now pins the working spelling so a later correction of
+  the dead one cannot land the false positive.
+- **Revised twice more after review.** Two reviewers independently showed the
+  comment overclaimed: `no-explicit-any` catches only the literal `any`, and
+  `unknown` plus a structural annotation is a one-word substitute that neither
+  it nor `noImplicitAny` sees. A structural type with an innocent name —
+  `prepareRun(sink: { code: (n: number) => void })` — is not catchable without
+  type information the rule does not have, so the config now says so instead
+  of claiming the hatch is closed. What is caught is the honest refactor,
+  which is the failure worth spending on. The cheap type forms that *were*
+  closeable are closed: an import alias, a qualified `fastify.FastifyReply`,
+  and an inline `import("fastify")` type were each three separate AST nodes
+  the first version did not know.
+- **Two selector halves were mutually masking.** Every test tripped both the
+  parameter-name selector and the member-access selector, so deleting either
+  half whole left the suite green. Two tests now isolate them: a reply-named
+  parameter that is never used, and a module-scope reply with clean
+  parameters.
+- **The rule is scoped to `src/api/sessions.ts`** rather than leaving the
+  function name to do the scoping alone, and a canary test fails if
+  `prepareRun` is renamed or moved — losing the guard in silence is the same
+  failure class the rule exists to prevent.
+- **Scope note, revised after review:** the first version matched member
+  access on a variable named `reply`. Greptile pointed out that renaming,
+  aliasing, destructuring or forwarding the parameter all still couple
+  `prepareRun` to HTTP and all slip past that. Every one of them has to get
+  the reply in through the parameter list first, so the guard moved to the
+  signature: a parameter named `reply`/`res`/`response`, or anything typed
+  `FastifyReply` anywhere inside. The member-access selectors stay for a reply
+  reached from module scope. This bullet originally ended by claiming `any`
+  was not a way round the rule; the round recorded above found that wrong and
+  the clause is struck rather than left to be read.
+
 ### 2026-09-22 — MCP server plans archived, CLI entry point recorded (PR #46)
 
 - **Category:** documentation / plan lifecycle

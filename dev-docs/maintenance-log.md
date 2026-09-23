@@ -35,8 +35,16 @@
   within a week. Three mutations were checked: dropping the const-arrow
   selector, narrowing to `.code`, and unscoping from `prepareRun` each turn a
   test red.
-- **Scope note:** the rule matches any member access on `reply`, since
-  `.send`, `.status` and `.raw` end the sharing the same way `.code` does.
+- **Scope note, revised after review:** the first version matched member
+  access on a variable named `reply`. Greptile pointed out that renaming,
+  aliasing, destructuring or forwarding the parameter all still couple
+  `prepareRun` to HTTP and all slip past that. Every one of them has to get
+  the reply in through the parameter list first, so the guard moved to the
+  signature: a parameter named `reply`/`res`/`response`, or anything typed
+  `FastifyReply` anywhere inside. The member-access selectors stay for a reply
+  reached from module scope. `any` is not a way round it — `no-explicit-any`
+  is an error in `src/`, and an untyped destructured parameter fails
+  `noImplicitAny`.
 
 ### 2026-09-22 — MCP server plans archived, CLI entry point recorded (PR #46)
 

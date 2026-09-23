@@ -20,6 +20,18 @@ import ratchets from "./.ratchets.json" with { type: "json" };
  * this config's own lint fix deleted a dead import from `manager.ts` and moved
  * the number.
  */
+/** The two shapes `prepareRun` could take. Naming the function is what keeps
+ * the rule below about one invariant rather than about replies in general —
+ * a rule that fired in route handlers, where replies belong, would be
+ * deleted within a week. */
+const PREPARE_RUN_FORMS = [
+  'FunctionDeclaration[id.name="prepareRun"]',
+  'VariableDeclarator[id.name="prepareRun"]',
+];
+
+const PREPARE_RUN_MESSAGE =
+  "prepareRun must stay transport-neutral: it returns a typed RunStartRejection so the MCP adapter, which has no reply to write to, can share it. Do not accept or touch a Fastify reply here. See server/src/api/sessions.ts.";
+
 export default tseslint.config(
   {
     ignores: [
@@ -92,32 +104,49 @@ export default tseslint.config(
       // an HTTP reply, and that is the only reason the MCP adapter can share
       // it: the MCP path has no `reply` to write to. A second run path built
       // because this one was unusable headlessly would split run ownership
-      // and billing, which is the failure `dev-docs/plans/completed/`'s MCP
-      // work exists to avoid.
+      // and billing, which is the failure the archived MCP work exists to
+      // avoid.
       //
       // TypeScript already rejects `reply.code(...)` there today, because
       // `reply` is not in scope — but only by accident of the current
-      // signature. The refactor this guards is someone threading
-      // `reply: FastifyReply` into `prepareRun` and then using it, which
-      // compiles fine and quietly ends the sharing. The rule states the
-      // reason at the moment that happens; the compiler never would.
+      // signature. The refactor this guards is someone threading a Fastify
+      // reply into `prepareRun` and then using it, which compiles fine and
+      // quietly ends the sharing. The rule states the reason at the moment
+      // that happens; the compiler never would.
       //
-      // Any member access, not just `.code`: `.send`, `.status` and `.raw`
-      // end the sharing the same way.
+      // Guarded at the *signature*, not only at the use. A rule that matched
+      // `reply.code(...)` alone is bypassed by renaming the parameter,
+      // aliasing it, destructuring it, or handing it to a helper — all of
+      // which still couple this function to HTTP. Every one of those has to
+      // get the reply in through the parameter list first, so that is where
+      // the guard sits: a parameter named like a reply, or one typed as a
+      // `FastifyReply` anywhere inside. The member-access selectors stay as
+      // well, for a reply reached from module scope rather than a parameter.
+      //
+      // `any` is not an escape hatch here: `@typescript-eslint/no-explicit-any`
+      // is an error in `src/`, and an untyped destructured parameter fails
+      // `noImplicitAny`. So a reply arriving without either a telling name or
+      // the `FastifyReply` type is already rejected by something else.
       "no-restricted-syntax": [
         "error",
-        {
-          selector:
-            'FunctionDeclaration[id.name="prepareRun"] MemberExpression[object.name="reply"]',
-          message:
-            "prepareRun must not touch the HTTP reply — it returns a typed RunStartRejection so the MCP adapter can share it. See server/src/api/sessions.ts.",
-        },
-        {
-          selector:
-            'VariableDeclarator[id.name="prepareRun"] MemberExpression[object.name="reply"]',
-          message:
-            "prepareRun must not touch the HTTP reply — it returns a typed RunStartRejection so the MCP adapter can share it. See server/src/api/sessions.ts.",
-        },
+        ...PREPARE_RUN_FORMS.flatMap((form) => [
+          {
+            selector: `${form} > Identifier[name=/^(reply|res|response)$/]`,
+            message: PREPARE_RUN_MESSAGE,
+          },
+          {
+            selector: `${form} > ArrowFunctionExpression > Identifier[name=/^(reply|res|response)$/]`,
+            message: PREPARE_RUN_MESSAGE,
+          },
+          {
+            selector: `${form} TSTypeReference[typeName.name="FastifyReply"]`,
+            message: PREPARE_RUN_MESSAGE,
+          },
+          {
+            selector: `${form} MemberExpression[object.name=/^(reply|res|response)$/]`,
+            message: PREPARE_RUN_MESSAGE,
+          },
+        ]),
       ],
 
       complexity: ["error", 62],

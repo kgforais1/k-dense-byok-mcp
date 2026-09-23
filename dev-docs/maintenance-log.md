@@ -35,6 +35,15 @@
   within a week. Three mutations were checked: dropping the const-arrow
   selector, narrowing to `.code`, and unscoping from `prepareRun` each turn a
   test red.
+- **A fourth review round, on the comments themselves.** kilo stepfun found
+  that the config claimed the file threads Fastify types "in eight places". It
+  counted seven; the answer is six `FastifyRequest["log"]` threadings plus one
+  `FastifyInstance`. All three of us were wrong, so the count is gone rather
+  than corrected — a number in a comment is a claim that rots, and this branch
+  had already shipped three claims that outran the code. It also found the
+  mutation the tests could not see: `PREPARE_RUN_FORMS` lists four shapes and
+  only two were exercised, so deleting the class-method and object-property
+  entries left the suite green. Covered now.
 - **CodeRabbit round.** Two more, both valid. A parameter that binds a reply
   through a destructuring, default or rest pattern and then *forwards* it was
   unguarded: the bare-identifier selector matches only a direct child, and

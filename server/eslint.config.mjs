@@ -44,7 +44,11 @@ const REPLY_NAMES = "/^(reply|res|response)$/";
  * AST the module string sits at `argument.literal.value`, so it matched
  * nothing. Spelled correctly it would have fired on
  * `import("fastify").FastifyRequest["log"]` and on `FastifyInstance` — types
- * this file threads legitimately in eight places (`sessions.ts:348` onward).
+ * this file threads legitimately through its run helpers (`sessions.ts:348`
+ * onward) and its route registration. No count here on purpose: the first
+ * version of this comment said "eight places", a reviewer counted seven, and
+ * the answer is six plus one of a different type. A number in a comment is a
+ * claim that rots, and this branch has already shipped three of those.
  * So the entry was both dead and, once fixed, wrong. The invariant is about
  * the reply, not about touching Fastify, and the negative test pins the
  * working spelling rather than the dead one. */

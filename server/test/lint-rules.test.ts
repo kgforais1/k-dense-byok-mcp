@@ -204,7 +204,7 @@ describe("prepareRun must not touch the HTTP reply", () => {
   });
 
   it("allows FastifyRequest['log'], which this file threads legitimately", async () => {
-    // `sessions.ts` passes `FastifyRequest["log"]` through eight functions.
+    // `sessions.ts` passes `FastifyRequest["log"]` through its run helpers.
     // A rule keyed on the fastify *package* rather than on the reply fires
     // here — verified by adding `TSImportType[argument.literal.value=
     // "fastify"]`, which turns this test red. The config briefly carried that
@@ -218,6 +218,29 @@ describe("prepareRun must not touch the HTTP reply", () => {
     ];
     for (const form of forms) {
       expect(await lint(form), form).toEqual([]);
+    }
+  });
+
+  it("rejects prepareRun as a class method or an object property", async () => {
+    // `PREPARE_RUN_FORMS` lists four shapes, and until a reviewer went
+    // looking, only two of them were exercised — deleting the method and
+    // property entries left every test green. Both are plausible if the run
+    // helpers are ever gathered into a service object.
+    const forms = [
+      `import type { FastifyReply } from "fastify";
+       export class Runs {
+         async prepareRun(sink: FastifyReply) { return sink; }
+       }`,
+      `import type { FastifyReply } from "fastify";
+       export const runs = {
+         async prepareRun(sink: FastifyReply) { return sink; },
+       };`,
+      `export const runs = {
+         prepareRun: async (reply: { code: (n: number) => void }) => reply,
+       };`,
+    ];
+    for (const form of forms) {
+      expect((await lint(form)).length, form).toBeGreaterThan(0);
     }
   });
 

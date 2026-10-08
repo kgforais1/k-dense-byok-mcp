@@ -1,6 +1,6 @@
 # Maintenance Log
 
-### 2026-10-08 — Upstream 0.15.0 integration (issue #50)
+### 2026-10-08 — Upstream 0.15.0 integration (PR #51, issue #50)
 
 - **Category:** Upstream sync / runtime / security / dependencies
 - **Scope:** Merge 44 upstream commits through `44c52cee8e9f` onto fork `c8ed0c0`; the initial Git merge reported 51 conflicting files (24 docs, 18 backend, 5 frontend, 4 root/CI).

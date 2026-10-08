@@ -21,6 +21,7 @@ function savedSession() {
 }
 
 describe("cold session opens", () => {
+  // FORK: verify headless identity with real sessions after the native MCP migration.
   it.each([true, false])("preserves interview availability on real cold opens (interactive=%s)", async (interactive) => {
     const { paths, sessionId } = savedSession();
     if (!interactive) markHeadlessSession(projectId, sessionId);

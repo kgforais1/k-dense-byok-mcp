@@ -10,6 +10,7 @@ updated: "2026-10-08"
 
 ## Scope
 Merge upstream 44c52cee8e9f (44 commits, issue #50) onto fork c8ed0c0.
+Draft review: [PR #51](https://github.com/kgforais1/k-dense-byok-mcp/pull/51).
 
 ## Decisions
 Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session identity, run admission/results, security gates and fork dependency fixes. Session deletion now awaits extension cleanup and marks deletion before yielding.
@@ -33,4 +34,4 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 - None for preparing the draft PR.
 
 ## Next action
-Commit and push the sync branch, and open a draft fork PR closing issue #50. Finalize plan/handoff closeout in the same PR after review approval.
+Check CI and review on PR #51. After review approval, finalize the plan/handoff closeout in the same PR before merge.

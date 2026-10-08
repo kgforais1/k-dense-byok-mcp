@@ -43,6 +43,28 @@ export const SKILLS_REPO =
   process.env.KADY_SKILLS_REPO ?? "K-Dense-AI/scientific-agent-skills";
 export const SKILLS_BRANCH = process.env.KADY_SKILLS_BRANCH ?? "main";
 
+/** A GitHub repo contributing named skills to the catalogue. */
+export interface CatalogueSource {
+  /** `owner/repo`; skills live under its `skills/` directory. */
+  repo: string;
+  branch: string;
+  skills: readonly string[];
+}
+
+/**
+ * Sources merged into the catalogue after `SKILLS_REPO`. They are part of it:
+ * synced daily, archived when dropped upstream, and placed by the same
+ * default-enabled policy. A later source wins a name clash, so these copies
+ * replace any the primary repo still ships under the same name.
+ */
+export const CATALOGUE_EXTRA_SOURCES: readonly CatalogueSource[] = [
+  {
+    repo: "anthropics/skills",
+    branch: "main",
+    skills: ["docx", "pdf", "pptx", "xlsx"],
+  },
+];
+
 /**
  * Staging cache the `skills` CLI fetches into. Deliberately outside any
  * project sandbox: one download per source serves every project, and nothing
@@ -203,8 +225,14 @@ export const DEFAULT_MODEL_PROVIDER =
 export const DEFAULT_MODEL_ID =
   process.env.DEFAULT_MODEL_ID ?? "openai/gpt-6-astra";
 
-export const OLLAMA_BASE_URL =
-  process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
+/**
+ * Local model-server URLs are read per call rather than captured at import:
+ * Settings → Providers can set them live (PUT /credentials), and a cleared
+ * value must fall back to the default without a restart.
+ */
+export function ollamaBaseUrl(): string {
+  return process.env.OLLAMA_BASE_URL?.trim() || "http://localhost:11434";
+}
 
 /**
  * Local OpenAI-compatible model server (LM Studio, vLLM, text-generation-webui,
@@ -212,17 +240,18 @@ export const OLLAMA_BASE_URL =
  * Studio's port so that case needs no configuration; vLLM's default (8000)
  * collides with this backend, so those users must move one of the two.
  */
-export const OPENAI_COMPATIBLE_BASE_URL =
-  process.env.OPENAI_COMPATIBLE_BASE_URL?.trim() || "http://localhost:1234";
+export function openaiCompatibleBaseUrl(): string {
+  return process.env.OPENAI_COMPATIBLE_BASE_URL?.trim() || "http://localhost:1234";
+}
 
 /**
  * Whether the user explicitly pointed us at a server. The picker hides the
  * section entirely unless this is true or a server actually answers, so the
  * majority who have never run one never see a dead "not running" row.
  */
-export const OPENAI_COMPATIBLE_CONFIGURED = Boolean(
-  process.env.OPENAI_COMPATIBLE_BASE_URL?.trim(),
-);
+export function openaiCompatibleConfigured(): boolean {
+  return Boolean(process.env.OPENAI_COMPATIBLE_BASE_URL?.trim());
+}
 
 /** Whether Modal-style remote compute is configured (kept for /config parity). */
 export function modalConfigured(): boolean {

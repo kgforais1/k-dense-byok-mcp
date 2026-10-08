@@ -16,6 +16,7 @@ import { normalizeAnalysisPlan } from "../../../web/src/lib/notebook-plans.ts";
 import { normalizeRobustnessDraft } from "../../../web/src/lib/notebook-robustness.ts";
 import { normalizeResultLinks } from "../../../web/src/lib/notebook-result-links.ts";
 import fs from "node:fs";
+import { normalizeNotebookExecution } from "../../../web/src/lib/notebook-execution.ts";
 import { stripSandboxRoot } from "./events.ts";
 import type { NotebookEntry, NotebookEntryType } from "./notebook-store.ts";
 
@@ -82,6 +83,7 @@ function entryFromArgs(
     type: args.type,
     title,
     body: typeof args.body === "string" ? args.body : undefined,
+    execution: normalizeNotebookExecution(args.execution),
     // Same sandbox-relative normalization the lead's notebook tool applies —
     // subagents may echo absolute host paths.
     artifacts: Array.isArray(args.artifacts)
@@ -137,18 +139,30 @@ export function notebookEntriesFromSessionFile(
   } catch {
     return [];
   }
-  const out: NotebookEntry[] = [];
+  type Row = {
+    timestamp?: string;
+    message?: { role?: string; content?: unknown; toolCallId?: unknown; isError?: unknown };
+  };
+  const rows: Row[] = [];
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    let row: {
-      timestamp?: string;
-      message?: { role?: string; content?: unknown };
-    };
     try {
-      row = JSON.parse(line);
+      rows.push(JSON.parse(line));
     } catch {
       continue;
     }
+  }
+  // A call whose result is an error logged nothing in the child (rejected
+  // arguments, or a failed execute). Harvesting it would duplicate the retry.
+  const failedCalls = new Set(
+    rows.flatMap(({ message }) =>
+      message?.role === "toolResult" && message.isError === true && typeof message.toolCallId === "string"
+        ? [message.toolCallId]
+        : [],
+    ),
+  );
+  const out: NotebookEntry[] = [];
+  for (const row of rows) {
     const msg = row.message;
     if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
     const ts = row.timestamp ? Date.parse(row.timestamp) : NaN;
@@ -164,6 +178,7 @@ export function notebookEntriesFromSessionFile(
       }
       const b = block as { id?: unknown; arguments?: unknown };
       const callId = typeof b.id === "string" ? b.id : "";
+      if (callId && failedCalls.has(callId)) continue;
       const args = (b.arguments ?? {}) as Record<string, unknown>;
       const entry = entryFromArgs(args, `${agentName}:${callId}`, agentName, timestamp, sandboxRoot);
       if (entry) out.push(entry);

@@ -7,6 +7,13 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+// These HTTP tests use fake sessions; interpreter startup is not part of the
+// steering/abort contract. Real environment probes have their own coverage and
+// can take up to 15s on Windows, exceeding the HTTP test's timeout.
+vi.mock("../src/provenance/environment.ts", async (original) => ({
+  ...await original<Record<string, unknown>>(), captureEnvironment: async () => null,
+}));
+
 const fakeSessions = new Map<string, FakeSession>();
 
 class FakeSession {
@@ -136,7 +143,7 @@ class FakeSession {
 
 vi.mock("../src/agent/session-registry.ts", () => ({
   getModelRuntime: vi.fn(() => ({
-    checkAuth: vi.fn(async () => ({ type: "api_key", source: "test" })),
+    checkAuth: vi.fn(async (provider: string) => ({ type: provider === "openai-codex" ? "oauth" : "api_key", source: "test" })),
     login: vi.fn(),
     logout: vi.fn(),
     listCredentials: vi.fn(async () => []),
@@ -161,7 +168,8 @@ vi.mock("../src/agent/session-registry.ts", () => ({
 import { buildApp } from "../src/index.ts";
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { createProject } from "../src/projects.ts";
-import { recordRun } from "../src/cost/ledger.ts";
+import { sessionCostSummary, recordRun } from "../src/cost/ledger.ts";
+import { readRunResult } from "../src/agent/run-results.ts";
 import { runBroker } from "../src/agent/run-broker.ts";
 import { attachSessionObserver } from "../src/agent/session-observer.ts";
 import { resolvePaths } from "../src/projects.ts";
@@ -170,16 +178,18 @@ import { pendingFollowUpWaiters } from "../src/agent/follow-up-receipts.ts";
 
 const app = await buildApp();
 
-beforeEach(() => {
+beforeEach(async () => {
   fakeSessions.clear();
   runBroker.clear();
-  fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+  // Windows may briefly retain directory handles after child processes exit.
+  await fs.promises.rm(PROJECTS_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
 });
 
 afterAll(async () => {
   await app.close();
-  fs.rmSync(PROJECTS_ROOT, { recursive: true, force: true });
+  // Windows may briefly retain directory handles after child processes exit.
+  await fs.promises.rm(PROJECTS_ROOT, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function steer(id: string, body: unknown, projectId = "default") {
@@ -327,6 +337,57 @@ function sseFrames(body: string): Record<string, unknown>[] {
 }
 
 describe("persistent run routes", () => {
+  it("refuses to apply an old run's replay cursor to a newer run", async () => {
+    const old = runBroker.start("default", "s1", {
+      runId: "old-run", prompt: "old", images: [], baseline: { messages: [], contextUsage: null },
+    });
+    old.publish({ type: "done" });
+    old.complete();
+    const current = runBroker.start("default", "s1", {
+      runId: "new-run", prompt: "new", images: [], baseline: { messages: [], contextUsage: null },
+    });
+    current.publish({ type: "run_start", runId: "new-run" });
+    current.publish({ type: "text_delta", delta: "new answer" });
+    current.publish({ type: "done" });
+    current.complete();
+    const stale = await app.inject({
+      method: "GET", url: "/sessions/s1/run/events?runId=old-run&after=10",
+      headers: { "x-project-id": "default" },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ runId: "new-run" });
+    const fresh = await app.inject({
+      method: "GET", url: "/sessions/s1/run/events?runId=new-run&after=1",
+      headers: { "x-project-id": "default" },
+    });
+    expect(fresh.statusCode).toBe(200);
+    expect(sseFrames(fresh.body)).toMatchObject([
+      { type: "text_delta", delta: "new answer", seq: 2 }, { type: "done", seq: 3 },
+    ]);
+  });
+
+  it("bills tool-model usage separately from a subscription chat and persists it for MCP polling", async () => {
+    const session = new FakeSession();
+    session.model = { id: "fake-model", provider: "openai-codex" };
+    session.isStreaming = false;
+    session.holdPrompt();
+    fakeSessions.set("s1", session);
+    const response = app.inject({ method: "POST", url: "/sessions/s1/run", payload: { message: "Generate a figure" } }).then(response => response);
+    await waitFor(() => expect(session.isStreaming).toBe(true));
+    const usage = (cost: number) => ({ input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15,
+      cost: { input: cost, output: 0, cacheRead: 0, cacheWrite: 0, total: cost } });
+    session.emit({ type: "turn_end", message: { role: "assistant", usage: usage(1) }, toolResults: [
+      { toolName: "generate_image", usage: usage(2), details: { model: "openrouter/test/image-model" } },
+    ] });
+    session.releasePrompt();
+    expect((await response).statusCode).toBe(200);
+    const entries = sessionCostSummary("s1", "default").entries;
+    expect(entries).toContainEqual(expect.objectContaining({ model: "openai-codex/fake-model", costUsd: 0 }));
+    expect(entries).toContainEqual(expect.objectContaining({ model: "openrouter/test/image-model", costUsd: 2 }));
+    const handle = runBroker.get("default", "s1")!;
+    expect(readRunResult("default", handle.runId)?.frames).toContainEqual(expect.objectContaining({ type: "cost", runCost: 2 }));
+  });
+
   it("reports running state and replays sequenced events through completion", async () => {
     const session = new FakeSession();
     session.isStreaming = false;
@@ -547,9 +608,8 @@ describe("system-initiated runs vs POST /sessions/:id/run", () => {
       s.emit({ type: "agent_end" });
       s.isStreaming = false;
       s.emit({ type: "agent_settled" });
-      await waitFor(() => {
-        expect(runBroker.state("default", "s1").status).toBe("complete");
-      });
+      await runBroker.get("default", "s1")!.waitForCompletion();
+      expect(runBroker.state("default", "s1").status).toBe("complete");
 
       const state = await app.inject({
         method: "GET",

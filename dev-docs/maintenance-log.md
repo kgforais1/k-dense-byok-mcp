@@ -1,5 +1,16 @@
 # Maintenance Log
 
+### 2026-10-08 — Upstream 0.15.0 integration (issue #50)
+
+- **Category:** Upstream sync / runtime / security / dependencies
+- **Scope:** Merge 44 upstream commits through `44c52cee8e9f` onto fork `c8ed0c0`; the initial Git merge reported 51 conflicting files (24 docs, 18 backend, 5 frontend, 4 root/CI).
+- **Resolution:** Adopt upstream product code and native Pi MCP support, while porting inbound MCP, headless identity, deletion, scheduler budget-hold, rate-limit and atomic output-rollback seams. REST and inbound MCP now share upstream's run claim and accounting pipeline; durable terminal snapshots are written before `done`.
+- **Gates:** Preserve CI matrices, coverage floors and lint rules. Extract queue/message presentation, Modal wrapper/identity helpers and bounded registration/validation functions rather than raising size or complexity limits. Pin the new setup-uv action to a commit SHA.
+- **Dependencies:** Preserve fork direct dependency fixes, adopt exact Pi 1.0.0 / pi-subagents 0.74.0 / pi-web-access 0.35.0 / skills 1.7.0, regenerate lockfiles, apply compatible audit updates and pin undici 8.11.2. A narrow pi-web-access override reuses the patched direct MCP SDK without changing the extension pin. After these updates npm reports no critical findings; backend retains 1 high finding (brace-expansion in Pi’s published shrinkwrap), frontend retains 9 high and 7 low findings (including Next 16.3.7 and developer-tool dependency chains). Broader framework/harness upgrades are outside this sync; no force/downgrade workaround was used.
+- **Verification:** Backend/frontend typechecks and lint pass; frontend 928 tests and coverage pass. Production webpack build passes. Backend: 1,885 tests pass (8 intentionally skipped), coverage 82.59% statements / 75.05% branches / 85.67% functions / 85.91% lines. Frontend coverage: 64.88% statements / 58.71% branches / 60.28% functions / 67.18% lines. `npm run verify -- all` passes. Both history secret scans pass, and tracked-path fixture fixes use explicit placeholders. Exact synthetic upstream test key values are allowlisted without exempting files or changing real-key rules.
+- **Build environment:** Turbopack fails when its CSS worker binds an internal port (`Operation not permitted`), including elevated retries. `npm run build -- --webpack` builds the same application successfully; default-builder validation remains a CI check.
+
+
 ### 2026-09-22 — Semgrep answered: one rule, in the lint that already runs (PR #48)
 
 - **Category:** CI / lint

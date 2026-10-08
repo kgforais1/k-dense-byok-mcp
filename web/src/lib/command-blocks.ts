@@ -4,6 +4,8 @@
  * chip instead of the full expanded text. Mirrors Pi's `parseSkillBlock`
  * regex for skills; templates use Kady's own `<prompt-template>` wrapper.
  */
+import { stripComposerContext } from "./composer-context";
+
 export interface CommandBlock {
   kind: "skill" | "template";
   name: string;
@@ -22,6 +24,17 @@ export function parseCommandBlock(text: string): CommandBlock | null {
   const template = text.match(TEMPLATE_RE);
   if (template) return { kind: "template", name: template[1], body: template[2], tail: template[3] ?? "" };
   return null;
+}
+
+/** Compact session labels, including server-truncated command expansions. */
+export function commandPreview(raw: string): string {
+  const text = stripComposerContext(raw);
+  const prefix = text.match(/^<(skill|prompt-template) name="([^"]+)"/);
+  if (!prefix) return text;
+  const command = prefix[1] === "skill" ? `/skill:${prefix[2]}` : `/${prefix[2]}`;
+  const block = parseCommandBlock(text);
+  const detail = block?.tail || (block?.kind === "template" ? block.body : "");
+  return detail ? `${command} — ${detail}` : command;
 }
 
 export interface SlashMenuItem {

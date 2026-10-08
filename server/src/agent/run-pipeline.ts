@@ -38,7 +38,7 @@ import {
   type RunKind,
   type RunOrigin,
 } from "./run-broker.ts";
-import { pinSession, unpinSession } from "./session-registry.ts";
+import { getModelRuntime, pinSession, unpinSession } from "./session-registry.ts";
 import { ProvenanceRecorder } from "../provenance/recorder.ts";
 import {
   addTurnUsage,
@@ -52,7 +52,13 @@ import {
   untrackInFlightRun,
   type CostSnapshot,
 } from "../cost/ledger.ts";
-import { billingCountsTowardBudget, type BillingContext } from "../cost/billing.ts";
+import { billingCountsTowardBudget, billingForProvider, type BillingContext } from "../cost/billing.ts";
+import {
+  addToolResultUsage,
+  emptyToolUsageSplit,
+  snapshotMinus,
+  splitTotal,
+} from "../cost/tool-usage.ts";
 
 /** The slice of AgentSession the pipeline touches (fakes implement exactly this). */
 export type PipelineSession = Pick<
@@ -81,7 +87,7 @@ export function snapshot(session: Pick<PipelineSession, "getSessionStats">): Cos
 // flips true only after awaits inside prompt(), so concurrent POSTs could
 // otherwise both pass the guard and the loser's close handler would abort the
 // winner's live turn. The key doubles as the in-flight budget tracking key.
-const activeRuns = new Set<string>();
+const activeRuns = new Map<string, Promise<void>>();
 const runKeyFor = (projectId: string, sessionId: string) => `${projectId}:${sessionId}`;
 
 export interface RunClaim {
@@ -100,7 +106,8 @@ export interface RunClaim {
 export function claimRun(projectId: string, sessionId: string): RunClaim | null {
   const key = runKeyFor(projectId, sessionId);
   if (activeRuns.has(key)) return null;
-  activeRuns.add(key);
+  let resolveReleased!: () => void;
+  activeRuns.set(key, new Promise<void>((resolve) => { resolveReleased = resolve; }));
   pinSession(projectId, sessionId);
   let released = false;
   return {
@@ -112,12 +119,20 @@ export function claimRun(projectId: string, sessionId: string): RunClaim | null 
       released = true;
       unpinSession(projectId, sessionId);
       activeRuns.delete(key);
+      resolveReleased();
     },
   };
 }
 
 export function isRunClaimed(projectId: string, sessionId: string): boolean {
   return activeRuns.has(runKeyFor(projectId, sessionId));
+}
+
+/** Wait through accounting/cleanup as well as model streaming, without polling. */
+export async function waitForRunRelease(projectId: string, sessionId: string): Promise<void> {
+  const key = runKeyFor(projectId, sessionId);
+  let pending: Promise<void> | undefined;
+  while ((pending = activeRuns.get(key))) await pending;
 }
 
 export interface OpenRunOptions {
@@ -132,6 +147,8 @@ export interface OpenRunOptions {
   runId?: string;
   /** Runs first in cleanup on every exit path (route: restore fusion tool set). */
   onCleanup?: () => void;
+  // FORK: persist terminal snapshots before done for inbound MCP polling.
+  beforeComplete?: (handle: RunHandle) => void;
 }
 
 export interface OpenedRun {
@@ -156,6 +173,7 @@ class OpenedRunImpl implements OpenedRun {
     readonly claim: RunClaim,
     private readonly session: Pick<PipelineSession, "getContextUsage" | "messages">,
     private readonly onCleanup: (() => void) | undefined,
+    private readonly beforeComplete: ((handle: RunHandle) => void) | undefined,
   ) {}
 
   publishContextUsage(): void {
@@ -176,6 +194,13 @@ class OpenedRunImpl implements OpenedRun {
     }
   }
 
+  complete(): void {
+    if (this.handle.isComplete) return;
+    this.beforeComplete?.(this.handle);
+    this.handle.publish({ type: "done" });
+    this.handle.complete();
+  }
+
   abandon(error?: Error): void {
     if (this.handedOff) return;
     // Route code calls abandon() from both a catch and a finally; only the
@@ -184,10 +209,7 @@ class OpenedRunImpl implements OpenedRun {
     if (error && !this.handle.isComplete) {
       this.handle.publish({ type: "error", message: error.message });
     }
-    if (!this.handle.isComplete) {
-      this.handle.publish({ type: "done" });
-      this.handle.complete();
-    }
+    this.complete();
     this.cleanup();
   }
 }
@@ -228,7 +250,7 @@ export function openRun(claim: RunClaim, opts: OpenRunOptions): OpenedRun {
     claim.release();
     throw err;
   }
-  return new OpenedRunImpl(handle, runId, claim, opts.session, opts.onCleanup);
+  return new OpenedRunImpl(handle, runId, claim, opts.session, opts.onCleanup, opts.beforeComplete);
 }
 
 export interface ExecuteRunOptions {
@@ -250,6 +272,16 @@ export interface ExecuteRunOptions {
   budgetPolicy: "refuse" | "abort";
   onBudgetAbort?: () => void;
   log: Pick<FastifyBaseLogger, "warn" | "error">;
+  /** Billing for a model a tool ran itself (codemode `models.*`, `generate_image`). */
+  toolModelBilling?: (modelRef: string) => Promise<BillingContext>;
+}
+
+/** Billing for a `provider/model` ref, from the credential Pi resolves for it. */
+async function defaultToolModelBilling(modelRef: string): Promise<BillingContext> {
+  const provider = modelRef.split("/", 1)[0] || "unknown";
+  if (provider === "ollama" || provider === "openai-compatible") return billingForProvider(provider, "local");
+  const auth = await getModelRuntime().checkAuth(provider);
+  return billingForProvider(provider, auth?.type ?? "none");
 }
 
 const FAIL_CLOSED_BILLING: BillingContext = {
@@ -269,12 +301,17 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
   const { projectId, sessionId } = claim;
   const { session, paths, log } = opts;
   let unsubscribePi: (() => void) | null = null;
+  let pendingProvenance: ProvenanceRecorder | null = null;
   try {
     // Usage tallied straight from turn_end events. getSessionStats() is
     // recomputed from the in-context messages, so auto-compaction mid-run can
     // shrink the cumulative stats and make the before/after delta lie low; the
     // per-turn events are immune to that.
     const turnTally = emptySnapshot();
+    // Tool-reported usage that is not the turn's model: models a tool ran
+    // itself (billed by their own provider) and child-agent usage the
+    // subagent meter already ledgered (see cost/tool-usage.ts).
+    const toolUsage = emptyToolUsageSplit();
     // Observational provenance: binds each tool call to the sandbox files it
     // actually read and wrote. Constructed before the first model round-trip so
     // its baseline sandbox walk overlaps it.
@@ -286,6 +323,7 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
       getModel: () => (session.model ? modelReference(session.model) : undefined),
       onError: (err) => log.warn({ err }, "provenance recorder step failed"),
     });
+    pendingProvenance = provenance;
     // A provider refusal reaches the client as an opaque "Provider
     // finish_reason: content_filter". Attach what to do about it, naming the
     // enabled skills known to cause it — the classifier reads the system
@@ -308,6 +346,7 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
       if (ev.type === "turn_end") {
         const usage = (ev.message as { usage?: Parameters<typeof addTurnUsage>[1] }).usage;
         if (usage) addTurnUsage(turnTally, usage);
+        addToolResultUsage(toolUsage, (ev as { toolResults?: readonly unknown[] }).toolResults);
       }
       if (ev.type === "message_start" && handle.origin === "system") {
         const message = ev.message as { role?: string; customType?: string };
@@ -338,10 +377,11 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
       );
     }
 
-    // Explicit POST /abort may have raced with awaited model setup. In that
-    // case abort is authoritative and prompt must never start.
-    let refused = handle.isAbortRequested;
-    if (!refused && billingCountsTowardBudget(billing)) {
+    // A user prompt must not start after Stop during model setup. An adopted
+    // system turn already started, however: still await its settled boundary
+    // and ledger incurred usage even if Stop raced with billing resolution.
+    let refused = handle.isAbortRequested && opts.budgetPolicy === "refuse";
+    if (!handle.isAbortRequested && billingCountsTowardBudget(billing)) {
       // Hard budget cap: refuse to run if the project has reached its limit.
       const budget = isBudgetExceeded(projectId);
       if (budget.exceeded) {
@@ -378,12 +418,17 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
           await provenance.flush();
         } catch (err) {
           log.warn({ err }, "failed to flush provenance");
+        } finally {
+          pendingProvenance = null;
         }
         // Ledger in the finally: a run that threw mid-turn still spent real
         // tokens. The stats delta catches a partial turn that never reached
         // turn_end; the tally catches compaction — take the max of the two.
         try {
-          const run = snapshotMax(snapshotDelta(before, snapshot(session)), turnTally);
+          const run = snapshotMax(
+            snapshotMinus(snapshotDelta(before, snapshot(session)), splitTotal(toolUsage)),
+            turnTally,
+          );
           const entry = recordRun({
             sessionId,
             projectId,
@@ -392,6 +437,26 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
             after: run,
             billing,
           });
+          let toolCostUsd = 0;
+          let toolTokens = 0;
+          for (const [modelRef, usage] of toolUsage.models) {
+            let toolBilling: BillingContext;
+            try {
+              toolBilling = await (opts.toolModelBilling ?? defaultToolModelBilling)(modelRef);
+            } catch {
+              toolBilling = FAIL_CLOSED_BILLING;
+            }
+            const toolEntry = recordRun({
+              sessionId,
+              projectId,
+              model: modelRef,
+              before: emptySnapshot(),
+              after: usage,
+              billing: toolBilling,
+            });
+            toolCostUsd += toolEntry?.costUsd ?? 0;
+            toolTokens += usage.total;
+          }
           const stats = session.getSessionStats();
           // `cost` is the session's full ledgered spend (subagents included,
           // restart/compaction-proof); `tokens` is Pi's in-context cumulative;
@@ -402,8 +467,8 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
               type: "cost",
               cost: sessionCostSummary(sessionId, projectId).totalUsd,
               tokens: stats.tokens,
-              runCost: entry?.costUsd ?? 0,
-              runTokens: run.total,
+              runCost: (entry?.costUsd ?? 0) + toolCostUsd,
+              runTokens: run.total + toolTokens,
               runBillingMode: billing.billingMode,
               runProvider: billing.provider,
               ...(entry?.listPriceUsd !== undefined ? { runListPriceUsd: entry.listPriceUsd } : {}),
@@ -421,10 +486,14 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
     }
   } finally {
     unsubscribePi?.();
-    if (!handle.isComplete) {
-      handle.publish({ type: "done" });
-      handle.complete();
+    // Refused/aborted admission skips the normal turn-finalization block, but
+    // its baseline scan and environment probes still own filesystem/process
+    // handles. Drain them before claiming the run has finished.
+    if (pendingProvenance) {
+      try { await pendingProvenance.flush(); }
+      catch (err) { log.warn({ err }, "failed to flush refused-run provenance"); }
     }
+    impl.complete();
     impl.cleanup();
   }
 }

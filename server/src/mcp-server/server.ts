@@ -341,7 +341,7 @@ export function createKadyMcpServer(log: FastifyBaseLogger): McpServer {
       // no status code to carry it.
       let result;
       try {
-        result = deleteSession(currentProjectId(), activePaths(), sessionId);
+        result = await deleteSession(currentProjectId(), activePaths(), sessionId);
       } catch (err) {
         return failure((err as Error).message, { sessionId });
       }

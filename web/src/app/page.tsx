@@ -16,7 +16,7 @@ import { useModalJobs } from "@/lib/use-modal-jobs";
 import { useProjects } from "@/lib/use-projects";
 import { APP_VERSION, isVersioned, useUpdateCheck } from "@/lib/version";
 import { useSkills } from "@/lib/use-skills";
-import { flattenFiles, useSandbox } from "@/lib/use-sandbox";
+import { flattenFiles, flattenFolders, useSandbox } from "@/lib/use-sandbox";
 import { ProjectScopeProvider } from "@/lib/projects";
 import {
   hasProjectActivity,
@@ -26,6 +26,7 @@ import {
 } from "@/lib/project-activity";
 import { onChatPrefill } from "@/lib/chat-prefill";
 import { makeTabId } from "@/lib/tab-ids";
+import { onOpenSettings, type OpenSettingsRequest } from "@/lib/settings-nav";
 import {
   OPEN_MODAL_JOB_EVENT,
   type ModalComputeScope,
@@ -62,6 +63,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 
 const MAX_CHAT_TABS = 10;
@@ -238,6 +240,7 @@ export default function HomePage() {
         aria-hidden={screen !== "projects"}
       >
         <ProjectView
+          isActive={screen === "projects"}
           onOpenProject={openProject}
           projectActivities={displayedProjectActivities}
         />
@@ -313,6 +316,7 @@ function WorkspacePage({
   const toggleSandbox = useCallback(() => setSandboxOpen((value) => !value), []);
   const toggleChat = useCallback(() => setChatOpen((value) => !value), []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsRequest, setSettingsRequest] = useState<OpenSettingsRequest | null>(null);
   const [showNotebook, setShowNotebook] = useState(
     () => initialState?.showNotebook ?? false,
   );
@@ -594,10 +598,23 @@ function WorkspacePage({
     return onChatPrefill(() => setView("chat"));
   }, [isActive]);
 
+  // Deep links into Settings ("raise the limit in project settings", …).
+  useEffect(() => {
+    if (!isActive) return;
+    return onOpenSettings((request) => {
+      setSettingsRequest(request);
+      setSettingsOpen(true);
+    });
+  }, [isActive]);
+
   // Flat list of all sandbox file paths for @ mentions (shared across tabs).
   // Cache artifacts are excluded — mentioning __pycache__/*.pyc is never useful.
   const allFiles = useMemo(
     () => flattenFiles(sandbox.tree).filter((p) => !isJunkFilePath(p)),
+    [sandbox.tree],
+  );
+  const allFolders = useMemo(
+    () => flattenFolders(sandbox.tree).filter((p) => !isJunkFilePath(p)),
     [sandbox.tree],
   );
 
@@ -723,11 +740,11 @@ function WorkspacePage({
   // ------------------------------------------------------------------
 
   const handleWorkflowLaunch = useCallback(
-    async (prompt: string, model: Model, uploadedFiles: string[]) => {
+    async (prompt: string, model: Model, inputFiles: string[]) => {
       const handle = tabHandles.current.get(activeTabId);
       if (!handle) return;
       setView("chat");
-      await handle.launchWorkflow(prompt, model, uploadedFiles);
+      await handle.launchWorkflow(prompt, model, inputFiles);
     },
     [activeTabId],
   );
@@ -792,6 +809,9 @@ function WorkspacePage({
   // ------------------------------------------------------------------
 
   const activeSessionId = activeMeta?.sessionId ?? null;
+  // A jump targets the chat it came from; a notebook view remounting under
+  // another chat must not replay it ("That notebook entry isn't in this chat").
+  useEffect(() => { setNotebookFocus(null); }, [activeSessionId]);
   const {
     activeCount: activeModalJobCount,
     loading: modalJobsLoading,
@@ -862,10 +882,10 @@ function WorkspacePage({
   );
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex h-dvh min-w-0 flex-col">
       {/* Header */}
-      <header className="relative flex items-center justify-between border-b px-6 py-3">
-        <div className="flex items-center gap-2">
+      <header className="relative flex flex-wrap items-center justify-between gap-2 border-b px-3 py-3 sm:px-6">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={onOpenProjectView}
@@ -913,10 +933,10 @@ function WorkspacePage({
           <span className="mx-1 h-4 w-px bg-border/60" aria-hidden />
           <ProjectSwitcher onOpenProjectView={onOpenProjectView} />
         </div>
-        <p className="absolute left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground/60 tracking-wide select-none">
+        <p className="absolute left-1/2 hidden -translate-x-1/2 text-[11px] text-muted-foreground/60 tracking-wide select-none 2xl:block">
           Brought to you by K-Dense, Inc.
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isActive && <ResourceMonitor />}
           <SessionCostPill
             summary={costSummary}
@@ -999,12 +1019,16 @@ function WorkspacePage({
               <>
                 <b>Settings</b>
                 <br />
-                Model providers, API keys, skills, specialists, connectors, and appearance.
+                Model providers and defaults, this project&apos;s budget, skills and
+                specialists, and services like web search and Modal.
               </>
             }
           >
             <button
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => {
+                setSettingsRequest(null);
+                setSettingsOpen(true);
+              }}
               aria-label="Open settings"
               className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
@@ -1036,11 +1060,17 @@ function WorkspacePage({
       </header>
 
       {/* Main content area — three columns: file tree | preview | chat */}
-      <div className={cn("flex flex-1 overflow-hidden", isResizing && "select-none")}>
+      <div
+        className={cn("grid min-h-0 flex-1 overflow-hidden xl:flex", isResizing && "select-none")}
+        style={{
+          gridTemplateColumns: sandboxOpen ? `min(${treeWidth}px, 30vw) minmax(0, 1fr)` : "minmax(0, 1fr)",
+          gridTemplateRows: chatOpen ? "minmax(0, 1fr) minmax(0, 1fr)" : "minmax(0, 1fr)",
+        }}
+      >
 
         {/* Left: file tree */}
         {isActive && sandboxOpen && (
-          <div className="shrink-0 overflow-hidden" style={{ width: treeWidth }}>
+          <div className="min-h-0 min-w-0 shrink-0 overflow-hidden xl:w-[var(--tree-width)]" style={{ "--tree-width": `${treeWidth}px` } as CSSProperties}>
             <FileTreePanel
               tree={sandbox.tree}
               selectedPath={sandbox.activeTabPath}
@@ -1063,14 +1093,14 @@ function WorkspacePage({
         )}
 
         {/* Drag handle: tree ↔ preview */}
-        {isActive && sandboxOpen && <ResizeHandle onMouseDown={startDrag("tree")} />}
+        {isActive && sandboxOpen && <div className="hidden xl:flex"><ResizeHandle onMouseDown={startDrag("tree")} /></div>}
 
         {/* Middle: file preview with tabs — always shown; it is the pane the
             side panels make room for (e.g. the LaTeX editor + PDF). */}
-        <div className="flex-1 min-w-0 overflow-hidden">
-          {isActive && (
+        <div className="min-h-0 flex-1 min-w-0 overflow-hidden">
             <FilePreviewPanel
               projectId={projectId}
+              isActive={isActive}
               activeModelRef={tabWorkspaceStates[activeTabId]?.selectedModel.id}
               tabs={sandbox.tabs}
               activeTabPath={sandbox.activeTabPath}
@@ -1113,20 +1143,19 @@ function WorkspacePage({
               onNotebookJumpToChat={handleNotebookJumpToChat}
               onOpenNotebookEntry={handleViewInNotebook}
             />
-          )}
         </div>
 
         {/* Drag handle: preview ↔ chat */}
-        {isActive && chatOpen && <ResizeHandle onMouseDown={startDrag("chat")} />}
+        {isActive && chatOpen && <div className="hidden xl:flex"><ResizeHandle onMouseDown={startDrag("chat")} /></div>}
 
         {/* Right: chat / workflows. Kept mounted (hidden via CSS when
             collapsed) so background chat streams keep running. */}
         <div
           className={cn(
-            "flex flex-col border-l overflow-hidden shrink-0",
+            "col-span-full flex min-h-0 min-w-0 flex-col border-l overflow-hidden shrink-0 xl:w-[var(--chat-width)]",
             !chatOpen && "hidden",
           )}
-          style={{ width: chatWidth }}
+          style={{ "--chat-width": `${chatWidth}px` } as CSSProperties}
         >
 
           <ChatTabsBar
@@ -1182,6 +1211,10 @@ function WorkspacePage({
               <WorkflowsPanel
                 onLaunch={handleWorkflowLaunch}
                 onUploadFiles={sandbox.uploadFiles}
+                availableFiles={allFiles}
+                availableFolders={allFolders}
+                filesReady={sandbox.tree !== null}
+                onRefreshFiles={sandbox.fetchTree}
                 budgetBlocked={projectCost.budget.state === "exceeded"}
               />
             </div>
@@ -1190,7 +1223,7 @@ function WorkspacePage({
 
       </div>
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} request={settingsRequest} />
     </div>
   );
 }

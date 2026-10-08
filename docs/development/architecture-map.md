@@ -274,23 +274,17 @@ is a product behavior change and is reviewed separately.
 
 ### E. Subagent delegation
 
-1. The lead calls the `subagent` tool (from the **pi-subagents**
-   package), which takes one `workflowScript` JavaScript string
-   declaring children as `runs.run(key, { agent, task })`. Top-level
-   `agent` now only addresses management actions; top-level `model`
-   is a per-run override forwarded to every child.
-2. `workflowScriptTargets()` reads the `agent:` / `model:` literals
-   out of the script (the surface is opaque to structural walks).
-   `pinWorkflowScriptModel` refuses to pin when names are computed
-   because per-run `model` outranks agent frontmatter,
-   `agentOverrides.<name>.model`, and `subagents.defaultModel`
-   (all checked first in `settingsPinnedModels`).
-3. Launches default to **async**, so the lead's tool allowlist in
-   `session-registry.ts` must carry `subagent_wait` alongside
-   `subagent` or Pi filters out the only way to block on the
-   children it started.
-4. Budget gating and cost ledgering for child runs live in
-   `server/src/agent/subagent-bridge.ts`.
+1. The lead calls the `subagent` tool from **pi-subagents** 0.74 using
+   `workflow: true` plus one JavaScript workflow block in the issuing message,
+   or a workflow path. `workflowScript` remains an internal carrier.
+2. `workflowCallTargets()` locates the script; `workflowScriptTargets()`
+   extracts literal agent/model references. Computed targets disable pinning.
+3. Top-level launches run asynchronously; `bg_wait` waits for background work.
+   The lead uses a tool denylist so dynamically connected Pi MCP tools remain
+   available. Headless inbound MCP sessions omit `interview` at construction.
+4. Actual child provider requests are admitted and metered through
+   `subagent-host.mjs` and `subagent-meter.ts`; the bridge retains completion
+   accounting for older unmetered children.
 5. Notebook entries from children are harvested on completion
    (`server/src/agent/notebook-harvest.ts`), role-stamped with the
    agent name, and appended to the parent notebook (the parent is

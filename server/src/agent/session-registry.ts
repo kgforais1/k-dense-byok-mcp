@@ -1,3 +1,8 @@
+import { makeSubagentControlExtension, subagentHost } from "./subagent-control.ts";
+import { pathToFileURL } from "node:url";
+import { patchSubagents } from "../../scripts/patch-subagents.mjs";
+import { setHostMeter } from "./subagent-host.mjs";
+import { handleSubagentMeter } from "./subagent-meter.ts";
 /**
  * Live AgentSession registry.
  *
@@ -14,7 +19,11 @@ import {
   ModelRegistry,
   ModelRuntime,
   SessionManager,
+  SettingsManager,
   createAgentSession,
+  createCodemodeExtension,
+  createMcpExtension,
+  createToolSearchExtension,
   getAgentDir,
   type AgentSession,
   type SessionInfo,
@@ -22,7 +31,7 @@ import {
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
-import { getMcpTools } from "./mcp.ts";
+import { migrateDisabledMcpServers } from "./mcp.ts";
 import { catalogueEntryFor, defaultModel, isLocalProvider, resolveModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
 import {
@@ -35,7 +44,8 @@ import { makeNotebookTool } from "./notebook.ts";
 import { notebookSearchTool } from "../../pi-packages/kady-notebook/memory-tool.ts";
 import { executeMemoryRecall } from "./notebook-memory.ts";
 import { makeScientificResultTool } from "./scientific-result.ts";
-import { clearSessionCompute, makeModalTools, MODAL_TOOL_NAMES } from "./modal-tool.ts";
+import { clearSessionCompute, makeModalTools } from "./modal-tool.ts";
+import { makeCodemodeModelBudgetExtension, makeImageTool } from "./image-tool.ts";
 import {
   makeSubagentLedgerExtension,
   makeSubagentRefusalExtension,
@@ -49,7 +59,7 @@ import { readSchedulerState } from "./scheduler-state.ts";
 import { seedGuardPackage } from "./guard-bridge.ts";
 import { seedPromptTemplates } from "./prompts.ts";
 import { seedWatchdogGuidance } from "./watchdog-settings.ts";
-import { WEB_ACCESS_TOOLS, ensureWebAccess } from "./web-access-bridge.ts";
+import { ensureWebAccess } from "./web-access-bridge.ts";
 import {
   seedNotebookPackage,
   seedBuiltinAgentNotebookTools,
@@ -70,14 +80,14 @@ import { setSessionRunId } from "./run-ids.ts";
 import { runBroker } from "./run-broker.ts";
 import {
   makePdfAnnotationTools,
-  PDF_ANNOTATION_TOOL_NAMES,
 } from "./pdf-annotation-tool.ts";
 import {
   seedBuiltinAgentPdfAnnotationTools,
   seedPdfAnnotationPackage,
 } from "./pdf-annotation-bridge.ts";
-import { BUILTIN_TOOLS } from "./tools.ts";
+import { LEAD_DEFAULT_TOOLS, LEAD_EXCLUDED_TOOLS } from "./tools.ts";
 import { seedSubagentRuntimeSettings } from "./subagent-runtime-settings.ts";
+import { applyVerifierDefault } from "./verifier-models.ts";
 
 // Entry points normally establish this in env.ts. Keep the registry safe when
 // imported directly (tests/scripts) so child Pi processes still share the same
@@ -94,6 +104,9 @@ if (!(process.env.PATH ?? "").split(path.delimiter).includes(localBin)) {
   process.env.PATH = `${localBin}${path.delimiter}${process.env.PATH ?? ""}`;
 }
 
+patchSubagents();
+process.env.KADY_SUBAGENT_HOST_MODULE = pathToFileURL(path.join(import.meta.dirname, "subagent-host.mjs")).href;
+setHostMeter(handleSubagentMeter);
 const modelRuntime = await ModelRuntime.create({
   allowModelNetwork: false,
   authPath: path.join(KADY_PI_AGENT_DIR, "auth.json"),
@@ -108,8 +121,18 @@ export function getModelRegistry(): ModelRegistry {
   return modelRegistry;
 }
 
+/** A model ref resolves and its provider has working credentials now. */
+export function modelRefAvailable(ref: string): boolean {
+  try {
+    return modelRuntime.hasConfiguredAuth(resolveModel(ref, modelRegistry).provider);
+  } catch {
+    return false;
+  }
+}
+
 /** Max live (in-memory) sessions kept per project; oldest idle ones are evicted. */
 const MAX_LIVE_PER_PROJECT = 10;
+export const SHUTDOWN_GRACE_MS = 5_000;
 
 /**
  * Hook for the session observer (agent/session-observer.ts). Registered from
@@ -132,6 +155,10 @@ const observers = new Map<string, () => void>();
 // Insertion-ordered Map doubles as an LRU: we delete+re-set an entry on access
 // so the first matching key for a project is always the least-recently-used.
 const live = new Map<string, AgentSession>();
+// History, controls and run requests can cold-open the same session together.
+// Share construction as well as the resulting live object: duplicate builds
+// register conflicting extension hosts and can route Stop to the wrong agent.
+const opening = new Map<string, Promise<AgentSession | null>>();
 const keyFor = (projectId: string, sessionId: string) => `${projectId}:${sessionId}`;
 
 // Sessions with a claimed run. A run holds its claim across async model setup
@@ -144,7 +171,7 @@ const pinned = new Set<string>();
 /**
  * Sessions deleted in this process, so a run cannot start on one.
  *
- * `deleteSession` is synchronous end to end, but `prepareRun` awaits
+ * `deleteSession` marks deletion before awaiting shutdown; `prepareRun` awaits
  * `getSession` *before* it checks whether the session is busy. A delete landing
  * inside that await passes its own busy check — no run has claimed anything
  * yet — and the run then resumes holding a session whose transcript is gone,
@@ -222,43 +249,6 @@ export const HEADLESS_PROMPT_NOTE = [
   "  `notebook` tool, which is available and does not block.",
 ].join("\n");
 
-/**
- * Return the allowlist supplied to Pi when creating a session.
- *
- * MCP clients are headless, so their sessions intentionally omit `interview`:
- * the tool waits for the browser UI to submit an answer. Keeping this as a
- * pure helper makes that boundary testable without starting a full Pi session.
- */
-export function sessionToolNames(
-  includeInterview: boolean,
-  mcpToolNames: readonly string[],
-): string[] {
-  return [
-    ...BUILTIN_TOOLS,
-    "subagent",
-    // pi-subagents registers the wait tool alongside `subagent` and enables it by
-    // default. Since 0.47 a workflowScript launch is async by default and
-    // returns a receipt, so without it in this allowlist Pi filters out the
-    // lead's only way to block on the children it just started. 0.61 renamed
-    // it `subagent_wait` → `bg_wait`; the old name is harmless here (unknown
-    // names are ignored) and covers a deliberate pin rollback.
-    "bg_wait",
-    "subagent_wait",
-    ...(includeInterview ? ["interview"] : []),
-    // pi-subagents' parent side of the supervisor channel: reply to a
-    // background specialist that called `contact_supervisor` (the request
-    // arrives as a custom message and starts a system run; see AGENTS.md).
-    "subagent_supervisor",
-    "notebook",
-    "notebook_search",
-    "scientific_result",
-    ...PDF_ANNOTATION_TOOL_NAMES,
-    ...WEB_ACCESS_TOOLS,
-    ...MODAL_TOOL_NAMES,
-    ...mcpToolNames,
-  ];
-}
-
 /** Dispose the least-recently-used idle sessions for a project over the cap. */
 function evictOverCap(projectId: string): void {
   const prefix = `${projectId}:`;
@@ -268,14 +258,14 @@ function evictOverCap(projectId: string): void {
     if (remaining <= MAX_LIVE_PER_PROJECT) break;
     const s = live.get(k);
     if (!s || s.isStreaming || pinned.has(k)) continue; // in-flight or claimed
-    release(projectId, k, s);
+    void release(projectId, k, s);
     remaining--;
   }
 }
 
 /** Dispose one live session and drop everything keyed off it. */
-function release(projectId: string, key: string, session: AgentSession): void {
-  // FORK: session disposal invalidates Kady's follow-up admission receipts.
+function release(projectId: string, key: string, session: AgentSession): Promise<void> {
+  // FORK: release invalidates headless follow-up admission receipts.
   clearFollowUpReceipts(projectId, session.sessionId);
   // Detach before dispose so an in-flight system run can finalize its handle
   // while the session is still queryable.
@@ -291,14 +281,26 @@ function release(projectId: string, key: string, session: AgentSession): void {
   // Pi's dispose() does not tell extensions the session is going away;
   // pi-subagents releases its supervisor-channel watchers and pollers on
   // `session_shutdown`, so emit it the way Pi's own quit path does.
-  void session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }).catch(() => {
+  const shutdown = session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }).catch(() => {
     /* best effort: a failing shutdown handler must not block disposal */
   });
-  session.dispose();
   live.delete(key);
   pinned.delete(key);
   systemSessions.delete(key);
   clearSessionCompute(projectId, key.slice(projectId.length + 1));
+  // Keep extension contexts valid until asynchronous MCP/worker cleanup has
+  // completed (Windows cannot remove a live child's cwd), but never longer
+  // than SHUTDOWN_GRACE_MS: Pi awaits each handler with no timeout, and one
+  // that never settles must not hang project deletion or leak the session.
+  let timer: NodeJS.Timeout | undefined;
+  const grace = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, SHUTDOWN_GRACE_MS);
+    timer.unref();
+  });
+  return Promise.race([shutdown, grace]).finally(() => {
+    clearTimeout(timer);
+    session.dispose();
+  });
 }
 
 export type DeleteSessionResult = "deleted" | "not_found" | "run_active" | "not_deleted";
@@ -312,11 +314,11 @@ export type DeleteSessionResult = "deleted" | "not_found" | "run_active" | "not_
  * its marker survives means a later reused session id cold-opens headless and
  * silently loses the `interview` tool.
  */
-export function deleteSession(
+export async function deleteSession(
   projectId: string,
   paths: ProjectPaths,
   sessionId: string,
-): DeleteSessionResult {
+): Promise<DeleteSessionResult> {
   // Validated before the directory is even listed. Thrown rather than returned
   // as `not_found`: this id could never name a session, and the route answers
   // 400 for it.
@@ -344,10 +346,13 @@ export function deleteSession(
   // unlink itself fails — a Windows handle, a permission problem — stop here
   // and say so rather than stripping the notebook and provenance off a chat
   // whose transcript is still on disk.
-  disposeSession(projectId, sessionId);
+  // FORK: finish Pi shutdown before deleting the transcript.
+  tombstone(projectId, sessionId);
   try {
+    await disposeSession(projectId, sessionId);
     fs.rmSync(file, { force: true });
   } catch {
+    deletedSessions.delete(runKey);
     return "not_deleted";
   }
   // Best-effort like the artifact loop below, and for the same reason.
@@ -534,6 +539,8 @@ export function persistedModel(
   provider: string,
   modelId: string,
 ): Model<Api> | undefined {
+  // FORK: a stored Fusion alias has no panel configuration to restore.
+  if (provider === "openrouter" && modelId === "openrouter/fusion") return undefined;
   if (!isLocalProvider(provider)) {
     const fromRuntime = runtime.getModel(provider, modelId);
     if (fromRuntime) return fromRuntime;
@@ -579,7 +586,9 @@ async function build(
     (options.modelPolicy === "project" ? undefined : restoredSessionModel(sessionManager, modelRuntime)) ??
     (await latestProjectModel(paths, modelRuntime, new Set(ownId ? [ownId] : []))) ??
     fallbackModel;
-  const mcpTools = await getMcpTools(projectId, paths);
+  // Pi's MCP extension reads only mcp.json (`enabled: false` marks a disabled
+  // server); fold in the separate disabled-servers file older Kady wrote.
+  migrateDisabledMcpServers(paths);
   // Make the scientific agent roster visible to pi-subagents' project-agent
   // discovery (sandbox/.pi/agents/) before the session starts.
   seedAgentFiles(paths);
@@ -614,12 +623,19 @@ async function build(
   // launches; and keep the external-CLI builtins (Claude Code/Codex/Cursor)
   // off until a user turns one on in Settings → Specialists.
   seedSubagentRuntimeSettings(paths);
+  // Route verifier specialists to the Settings → Defaults verifier model
+  // (re-checked before every delegation by the ledger extension below).
+  applyVerifierDefault(paths, modelRefAvailable);
   // The ledger extension is created before the session exists, so it reads
   // the live sessionId through this holder (set right after creation).
   const holder: { session?: AgentSession } = {};
+  // One settings manager for the loader and the session, so the lead's
+  // default-tool additions apply on top of the user's own `defaultTools`.
+  const settingsManager = SettingsManager.create(paths.sandbox, getAgentDir());
   const resourceLoader = new DefaultResourceLoader({
     cwd: paths.sandbox,
     agentDir: getAgentDir(),
+    settingsManager,
     additionalExtensionPaths: [subagentsExtensionPath()],
     extensionFactories: [
       makeSubagentLedgerExtension(
@@ -627,14 +643,21 @@ async function build(
         () => holder.session?.sessionId ?? "",
         () => holder.session?.model,
         (providerId) => modelRuntime.isUsingOAuth(providerId),
+        modelRefAvailable,
       ),
+      // Over the spend cap, refuse codemode scripts that run models
+      // themselves (image generation, classifiers): their cost is unknown
+      // until the script runs.
+      makeCodemodeModelBudgetExtension(projectId),
       // Rewrites the outgoing provider body to an OpenRouter Fusion request when
       // the /run handler stashed a Fusion config for this session (setFusionConfig).
       makeFusionRequestExtension(projectId, () => holder.session?.sessionId ?? ""),
       // Science-aware context compaction: a deterministic state preamble (plan,
       // notebook, results, environment) plus a summary generated under
       // science-focused instructions; falls back to Pi's default on error.
-      makeScientificCompactionExtension(projectId, () => holder.session?.sessionId ?? ""),
+      makeScientificCompactionExtension(projectId, () => holder.session?.sessionId ?? "", {
+        readChildStatus: async () => subagentHost(projectId, holder.session?.sessionId ?? "").rpc("status"),
+      }),
       // Harvest notebook entries the roster's subagents logged (child pi
       // processes get the notebook tool via seedNotebookPackage above) into
       // the parent notebook — the parent is the single writer.
@@ -654,9 +677,22 @@ async function build(
       // before destructive shell commands. Registered after the subagent
       // bridge so budget gates run first.
       makeDataGuardExtension(projectId, () => holder.session?.sessionId ?? "", paths.sandbox),
+      // Pi's MCP support (the CLI loads these three as built-ins; SDK sessions
+      // must add them). The MCP extension connects the servers in the global
+      // `<agentDir>/mcp.json` and the project's `.pi/mcp.json` on
+      // session_start and registers their tools as `mcp__<server>__<tool>`;
+      // codemode and tool_search are registered inactive and switched on by
+      // it for servers whose exposure needs them. Every MCP call runs through
+      // Pi's tool pipeline, so the data guard and provenance see it too.
+      createCodemodeExtension(),
+      createToolSearchExtension(),
+      createMcpExtension(),
+      makeSubagentControlExtension(projectId),
     ],
   });
   await resourceLoader.reload();
+  // After reload(): it re-reads the settings files, which drops overrides.
+  settingsManager.applyOverrides({ defaultTools: LEAD_DEFAULT_TOOLS });
   // The interview tool blocks mid-run on answers posted to the HTTP API; it
   // reads the live sessionId through the same holder as the ledger extension.
   // It is included by default for regular chat sessions; set includeInterview
@@ -684,6 +720,9 @@ async function build(
   // reported at submission time, so warm sessions become compatible
   // immediately after credentials are configured live.
   const modalTools = makeModalTools(projectId, () => holder.session?.sessionId ?? "");
+  // Pi 1.0 image models (OpenRouter's), saved into the sandbox and billed by
+  // their own provider; reachable without codemode.
+  const imageTool = makeImageTool(projectId, (provider) => modelRuntime.checkAuth(provider));
   const { session } = await createAgentSession({
     cwd: paths.sandbox,
     // A cold-opened session starts on the model it last ran with (or the
@@ -695,7 +734,13 @@ async function build(
     modelRuntime,
     sessionManager,
     resourceLoader,
-    tools: sessionToolNames(includeInterview, mcpTools.map((t) => t.name)),
+    settingsManager,
+    // A denylist, not an allowlist: an allowlist would drop the MCP tools Pi's
+    // extension registers after connecting (their names are unknown here).
+    // Every other tool — built-ins, custom tools below, and the extension
+    // tools (`subagent`, `bg_wait`, `subagent_supervisor`, web access,
+    // codemode/tool_search when MCP needs them) — is active by default.
+    excludeTools: LEAD_EXCLUDED_TOOLS,
     customTools: [
       ...(includeInterview && interviewTool ? [interviewTool] : []),
       notebookTool,
@@ -703,7 +748,7 @@ async function build(
       scientificResultTool,
       ...pdfAnnotationTools,
       ...modalTools,
-      ...mcpTools,
+      imageTool,
     ],
   });
   // Pi emits `session_start` only from bindExtensions(); without it the
@@ -717,6 +762,14 @@ async function build(
       console.warn(`[session-registry] extension error in ${session.sessionId}:`, error);
     },
   });
+  // Extension event failures are logged by Pi. A failed mandatory host setup
+  // must also fail session construction, otherwise children could launch ungated.
+  try { subagentHost(projectId, session.sessionId); }
+  catch (error) {
+    await session.extensionRunner?.emit({ type: "session_shutdown", reason: "quit" });
+    session.dispose();
+    throw error;
+  }
   holder.session = session;
   if (observerFactory) {
     observers.set(keyFor(projectId, session.sessionId), observerFactory({ projectId, paths, session }));
@@ -759,20 +812,29 @@ export async function getSession(
     return existing;
   }
 
-  const infos = await SessionManager.list(paths.sandbox, paths.sessionsDir);
-  const info = infos.find((i) => i.id === sessionId);
-  if (!info) return null;
-  const sm = SessionManager.open(info.path, paths.sessionsDir, paths.sandbox);
-  // Cold open: an explicit caller option wins, but a session created headless
-  // must not silently regain the blocking `interview` tool just because it was
-  // evicted from the live map and rebuilt here.
-  const session = await build(projectId, paths, sm, {
-    ...options,
-    includeInterview: options?.includeInterview ?? !isHeadlessSession(projectId, sessionId),
-  });
-  live.set(k, session);
-  evictOverCap(projectId);
-  return session;
+  const pending = opening.get(k);
+  if (pending) return pending;
+  const operation = (async () => {
+    const infos = await SessionManager.list(paths.sandbox, paths.sessionsDir);
+    const info = infos.find((i) => i.id === sessionId);
+    if (!info || isDeletedSession(projectId, sessionId)) return null;
+    const sm = SessionManager.open(info.path, paths.sessionsDir, paths.sandbox);
+    const session = await build(projectId, paths, sm, {
+      ...options,
+      // FORK: preserve the durable headless choice on cold open.
+      includeInterview: options.includeInterview ?? !isHeadlessSession(projectId, sessionId),
+    });
+    live.set(k, session);
+    evictOverCap(projectId);
+    return session;
+  })();
+  opening.set(k, operation);
+  try {
+    return await operation;
+  } finally {
+    // Missing sessions and failed loads must remain retryable.
+    opening.delete(k);
+  }
 }
 
 export async function listSessions(paths: ProjectPaths): Promise<SessionInfo[]> {
@@ -800,10 +862,12 @@ export async function listSessionsLabelled(
   }));
 }
 
-export function disposeSession(projectId: string, sessionId: string): void {
+export async function disposeSession(projectId: string, sessionId: string): Promise<void> {
   const k = keyFor(projectId, sessionId);
+  const pending = opening.get(k);
+  if (pending) await pending.catch(() => null);
   const s = live.get(k);
-  if (s) release(projectId, k, s);
+  if (s) await release(projectId, k, s);
 }
 
 /** Stop every live session before its project directory is removed. */
@@ -820,10 +884,8 @@ export async function abortProjectSessions(projectId: string): Promise<void> {
 }
 
 /** Release every live session after its project runs have finalized. */
-export function disposeProjectSessions(projectId: string): void {
+export async function disposeProjectSessions(projectId: string): Promise<void> {
   const prefix = `${projectId}:`;
   const sessions = [...live.entries()].filter(([key]) => key.startsWith(prefix));
-  for (const [key, session] of sessions) {
-    release(projectId, key, session);
-  }
+  await Promise.all(sessions.map(([key, session]) => release(projectId, key, session)));
 }

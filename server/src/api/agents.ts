@@ -1,7 +1,7 @@
 /**
  * Sub-agent settings endpoints (per active project).
  *
- * Backs the Settings → "Sub-agents" panel: list the agents available to the
+ * Backs Settings → Project → Specialists: list the agents available to the
  * pi-subagents `subagent` tool (project files + package builtins), edit or
  * create project agents, delete them, and restore the default scientific
  * roster. Project agents live in `sandbox/.pi/agents/*.md`; builtins are
@@ -25,6 +25,8 @@ import {
   restoreDefaultAgents,
   seedAgentFiles,
   setSpecialistEnabled,
+  setSubagentDefaultModel,
+  settingsPinnedModels,
   writeProjectAgent,
   type AgentFilePatch,
   type AgentMemory,
@@ -37,7 +39,9 @@ import {
   type WatchdogPatch,
 } from "../agent/watchdog-settings.ts";
 import { resolveModel } from "../agent/models.ts";
-import { getModelRegistry } from "../agent/session-registry.ts";
+import { getModelRegistry, modelRefAvailable } from "../agent/session-registry.ts";
+import { invalidModelRef } from "../app-settings.ts";
+import { applyVerifierDefault, isVerifierAgent, routedVerifiers } from "../agent/verifier-models.ts";
 
 function patchFromBody(body: Record<string, unknown>): AgentFilePatch | string {
   const description = String(body.description ?? "").trim();
@@ -52,11 +56,11 @@ function patchFromBody(body: Record<string, unknown>): AgentFilePatch | string {
     return `systemPromptMode must be "append" or "replace"`;
   }
   const boolOrUndef = (v: unknown) => (v === undefined || v === null ? undefined : Boolean(v));
-  let extra: Record<string, string> | undefined;
+  let extra: Record<string, unknown> | undefined;
   if (body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)) {
     extra = {};
     for (const [k, v] of Object.entries(body.extra as Record<string, unknown>)) {
-      extra[k] = String(v);
+      extra[k] = v;
     }
     if (Object.keys(extra).length === 0) extra = undefined;
   }
@@ -89,7 +93,56 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
     // Older projects may predate seeding; make sure the roster exists before
     // the first listing (no-op once the marker file is present).
     seedAgentFiles(paths);
-    return { agents: listAgents(paths) };
+    // Mark the specialists the verifier model covers, and the model Kady
+    // currently routes them to (Settings → Defaults → Verifier model). Seeding
+    // may just have added verifiers, so bring the routing up to date first.
+    applyVerifierDefault(paths, modelRefAvailable, { createSettings: true });
+    const routed = routedVerifiers(paths);
+    return {
+      agents: listAgents(paths).map((agent) => !isVerifierAgent(agent.name) ? agent : {
+        ...agent,
+        verifier: true,
+        ...(routed?.agents.includes(agent.name) ? { verifierModel: routed.model } : {}),
+      }),
+    };
+  });
+
+  // Project-wide specialist model (`subagents.defaultModel` in
+  // sandbox/.pi/settings.json): what a specialist runs on when neither its
+  // frontmatter nor `agentOverrides.<name>.model` pins one. Static paths win
+  // over `/agents/:name` in Fastify's router, so these are reachable even
+  // though "defaults" would pass AGENT_NAME_RE.
+  app.get("/agents/defaults", async () => ({
+    defaultModel: settingsPinnedModels(activePaths()).defaultModel ?? null,
+  }));
+
+  app.put<{ Body: { defaultModel?: unknown } }>("/agents/defaults", async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const raw = body.defaultModel;
+    if (raw === undefined || (raw !== null && typeof raw !== "string")) {
+      reply.code(400);
+      return { detail: "defaultModel must be a model ref string, or null to clear it" };
+    }
+    const model = typeof raw === "string" && raw.trim() ? raw.trim() : null;
+    if (model) {
+      const error = invalidModelRef(model, "defaultModel");
+      if (error) {
+        reply.code(400);
+        return { detail: error };
+      }
+      try {
+        resolveModel(model, getModelRegistry());
+      } catch (err) {
+        reply.code(400);
+        return { detail: `Unknown specialist default model: ${(err as Error).message}` };
+      }
+    }
+    const paths = activePaths();
+    if (!setSubagentDefaultModel(paths, model)) {
+      reply.code(409);
+      return { detail: "sandbox/.pi/settings.json is not valid JSON; fix it before changing the specialists' default model" };
+    }
+    return { defaultModel: settingsPinnedModels(paths).defaultModel ?? null };
   });
 
   app.put<{ Params: { name: string } }>("/agents/:name", async (req, reply) => {
@@ -191,12 +244,12 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
-  // pi-subagents watchdog (Settings → Specialists → Watchdog). Stored in
+  // pi-subagents watchdog (Settings → Project → Specialists → Watchdog). Stored in
   // sandbox/.pi/settings.json under subagents.watchdog; applies to new tabs.
   app.get("/watchdog", async () => {
     const paths = activePaths();
     seedWatchdogGuidance(paths);
-    return { ...readWatchdogSettings(paths), metered: false };
+    return { ...readWatchdogSettings(paths), metered: true };
   });
 
   app.put<{ Body: WatchdogPatch }>("/watchdog", async (req, reply) => {
@@ -228,7 +281,7 @@ export async function registerAgentRoutes(app: FastifyInstance): Promise<void> {
       reply.code(409);
       return { detail: "sandbox/.pi/settings.json is not valid JSON; fix it before changing watchdog settings" };
     }
-    return { ...written, metered: false };
+    return { ...written, metered: true };
   });
 
   app.post<{ Params: { name: string } }>("/agents/:name/disable", async (req, reply) => {

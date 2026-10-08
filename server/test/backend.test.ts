@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PROJECTS_ROOT } from "../src/config.ts";
@@ -27,11 +28,15 @@ import {
   makeSubagentLedgerExtension,
   pinInheritedChildModels,
   usageFromSessionFile,
+  workflowCallTargets,
   workflowScriptTargets,
 } from "../src/agent/subagent-bridge.ts";
-import { writeProjectAgent } from "../src/agent/agent-files.ts";
+import { setSubagentDefaultModel, writeProjectAgent } from "../src/agent/agent-files.ts";
+import { writePiSettings } from "../src/agent/capability-state.ts";
 import {
   WEB_ACCESS_TOOLS,
+  SCIENTIFIC_SUMMARY_INSTRUCTIONS,
+  seedWebAccessDefaults,
   seedWebAccessPackage,
   trustSandbox,
   webAccessPackageDir,
@@ -329,8 +334,9 @@ describe("subagent model inheritance", () => {
     ]);
   });
 
-  // Since pi-subagents 0.43 children are declared inside a `workflowScript`
-  // source string, so none of them are reachable by walking the tool input.
+  // Since pi-subagents 0.43 children are declared inside a workflow script,
+  // so none of them are reachable by walking the tool input; since 0.74 the
+  // script is a ```js workflow block in the reply that issues `workflow: true`.
   const parent = {
     provider: "openai-codex",
     id: "gpt-5.6-sol",
@@ -352,6 +358,64 @@ describe("subagent model inheritance", () => {
     expect(targets.dynamic).toBe(true);
   });
 
+  const replyBranch = (toolCallId: string, text: string, calls = 1) => [
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "run it" }] } },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text },
+          ...Array.from({ length: calls }, (_, index) => ({
+            type: "toolCall", id: index === 0 ? toolCallId : `${toolCallId}-${index}`,
+            name: "subagent", arguments: { workflow: true },
+          })),
+        ],
+      },
+    },
+  ];
+  const fenced = (script: string) => "Plan:\n```js workflow\n" + script + "\n```\nLaunching.";
+
+  it("reads a workflow: true script from the reply that issued the call", () => {
+    const script = `return runs.run("main", { agent: "scout", model: "ollama/llama4", task: "a" })`;
+    const sessionManager = { getBranch: () => replyBranch("call-1", fenced(script)) };
+    const targets = workflowCallTargets({ workflow: true }, { toolCallId: "call-1", sessionManager });
+    expect([...targets!.agents]).toEqual(["scout"]);
+    expect([...targets!.models]).toEqual(["ollama/llama4"]);
+    expect(targets!.dynamic).toBe(false);
+
+    // pi-subagents refuses each of these, so none of them may look literal.
+    const unknown = (branch: unknown[], toolCallId = "call-1") =>
+      workflowCallTargets({ workflow: true }, { toolCallId, sessionManager: { getBranch: () => branch } })!.dynamic;
+    expect(unknown(replyBranch("call-1", fenced(script)), "another-call")).toBe(true);
+    expect(unknown(replyBranch("call-1", fenced(script) + "\n" + fenced(script)))).toBe(true);
+    expect(unknown(replyBranch("call-1", fenced(script), 2))).toBe(true);
+    expect(unknown(replyBranch("call-1", "```js workflow\n" + script))).toBe(true);
+    expect(unknown(replyBranch("call-1", "No block, just prose."))).toBe(true);
+    expect(workflowCallTargets({ workflow: true })!.dynamic).toBe(true);
+
+    // A workflow fence quoted inside another fence is documentation, not the script.
+    const quoted = "````md\n```js workflow\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n````\n" + fenced(script);
+    expect([...workflowCallTargets({ workflow: true }, {
+      toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", quoted) },
+    })!.agents]).toEqual(["scout"]);
+  });
+
+  it("reads a workflow script path relative to the request cwd", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-workflow-path-"));
+    fs.mkdirSync(path.join(dir, "ci"));
+    fs.writeFileSync(path.join(dir, "ci", "sweep.js"), `return runs.run("main", { agent: "worker", task: "sweep" })`);
+    expect([...workflowCallTargets({ workflow: "./ci/sweep.js" }, { cwd: dir })!.agents]).toEqual(["worker"]);
+    expect([...workflowCallTargets({ workflow: "./sweep.js", cwd: "ci" }, { cwd: dir })!.agents]).toEqual(["worker"]);
+    expect(workflowCallTargets({ workflow: "./missing.js" }, { cwd: dir })!.dynamic).toBe(true);
+    // A named workflow resource is extension code we cannot read.
+    expect(workflowCallTargets({ workflow: "review" }, { cwd: dir })!.dynamic).toBe(true);
+    // Management calls and structured single-child launches run no script.
+    expect(workflowCallTargets({ action: "list" })).toBeUndefined();
+    expect(workflowCallTargets({ agent: "worker", task: "a" })).toBeUndefined();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("pins the parent model as the workflow-wide child default", () => {
     ensureProjectExists("default");
     const input: Record<string, unknown> = {
@@ -359,6 +423,15 @@ describe("subagent model inheritance", () => {
     };
     pinInheritedChildModels("default", input, parent);
     expect(input.model).toBe("openai-codex/gpt-5.6-sol");
+
+    const reply: Record<string, unknown> = { workflow: true };
+    const sessionManager = { getBranch: () => replyBranch("call-pin", fenced(`return runs.run("main", { agent: "scout", task: "a" })`)) };
+    pinInheritedChildModels("default", reply, parent, workflowCallTargets(reply, { toolCallId: "call-pin", sessionManager }));
+    expect(reply.model).toBe("openai-codex/gpt-5.6-sol");
+    // Without the reply the script is unknown, and an unknown script is never pinned.
+    const blind: Record<string, unknown> = { workflow: true };
+    pinInheritedChildModels("default", blind, parent);
+    expect(blind.model).toBeUndefined();
   });
 
   it("leaves a workflowScript alone when the pin would outrank a child's own model", () => {
@@ -383,9 +456,50 @@ describe("subagent model inheritance", () => {
     }
   });
 
+  // The pin is a per-run override, which pi-subagents ranks above
+  // `agentOverrides.<name>.model` and `subagents.defaultModel`: pinning over
+  // either would silently discard the model the user chose in Settings.
+  it("does not outrank a model pinned in project settings", () => {
+    ensureProjectExists("pin-settings");
+    const paths = resolvePaths("pin-settings");
+    writePiSettings(paths, {
+      subagents: { agentOverrides: { scout: { model: "openrouter/openai/gpt-5.5" } } },
+    });
+    const tasks = () => [
+      { agent: "scout", task: "a" },
+      { agent: "worker", task: "b" },
+    ];
+
+    const overridden: Record<string, unknown> = { tasks: tasks() };
+    pinInheritedChildModels("pin-settings", overridden, parent);
+    expect(overridden.tasks).toEqual([
+      { agent: "scout", task: "a" },
+      { agent: "worker", task: "b", model: "openai-codex/gpt-5.6-sol" },
+    ]);
+
+    expect(setSubagentDefaultModel(paths, "openrouter/anthropic/claude-sonnet-5")).toBe(true);
+    const defaulted: Record<string, unknown> = { tasks: tasks(), agent: "worker", task: "c" };
+    pinInheritedChildModels("pin-settings", defaulted, parent);
+    expect(defaulted.tasks).toEqual(tasks());
+    expect(defaulted.model).toBeUndefined();
+
+    // The workflowScript path already honoured both; keep it that way.
+    const script: Record<string, unknown> = {
+      workflowScript: `return runs.run("main", { agent: "worker", task: "a" })`,
+    };
+    pinInheritedChildModels("pin-settings", script, parent);
+    expect(script.model).toBeUndefined();
+
+    // Clearing the default restores inheritance for unpinned agents.
+    expect(setSubagentDefaultModel(paths, null)).toBe(true);
+    const cleared: Record<string, unknown> = { agent: "worker", task: "d" };
+    pinInheritedChildModels("pin-settings", cleared, parent);
+    expect(cleared.model).toBe("openai-codex/gpt-5.6-sol");
+  });
+
   it("ledgers cross-provider attempts separately and gates resume work", async () => {
     createProject({ name: "Subagent billing", projectId: "sub-billing", spendLimitUsd: 0.5 });
-    const handlers = new Map<string, (event: any) => any>();
+    const handlers = new Map<string, (event: any, ctx?: any) => any>();
     const eventHandlers = new Map<string, (event: unknown) => void>();
     const extension = makeSubagentLedgerExtension(
       "sub-billing",
@@ -398,7 +512,7 @@ describe("subagent model inheritance", () => {
       (providerId) => providerId === "openai-codex",
     );
     extension({
-      on: (name: string, handler: (event: any) => any) => handlers.set(name, handler),
+      on: (name: string, handler: (event: any, ctx?: any) => any) => handlers.set(name, handler),
       events: {
         on: (name: string, handler: (event: unknown) => void) =>
           eventHandlers.set(name, handler),
@@ -450,19 +564,20 @@ describe("subagent model inheritance", () => {
       reason: expect.stringMatching(/subscription login/i),
     });
 
-    // The same gate has to see a model named inside a workflowScript, which is
-    // the only execution surface pi-subagents still offers.
-    const scripted = await handlers.get("tool_call")!({
-      toolName: "subagent",
-      input: {
-        workflowScript:
-          `return runs.run("main", { agent: "custom", model: "github-copilot/claude-sonnet-5", task: "test" })`,
-      },
-    });
+    // The same gate has to see a model named inside a workflow script, which
+    // since pi-subagents 0.74 lives in the reply that issues `workflow: true`.
+    const script = `return runs.run("main", { agent: "custom", model: "github-copilot/claude-sonnet-5", task: "test" })`;
+    const scripted = await handlers.get("tool_call")!(
+      { toolName: "subagent", toolCallId: "call-gate", input: { workflow: true } },
+      { cwd: resolvePaths("sub-billing").sandbox, sessionManager: { getBranch: () => replyBranch("call-gate", fenced(script)) } },
+    );
     expect(scripted).toMatchObject({
       block: true,
       reason: expect.stringMatching(/subscription login/i),
     });
+    // The internal carrier is still read for host-originated calls.
+    const carried = await handlers.get("tool_call")!({ toolName: "subagent", input: { workflowScript: script } });
+    expect(carried).toMatchObject({ block: true });
   });
 });
 
@@ -768,6 +883,40 @@ describe("web access bridge", () => {
     fs.writeFileSync(settingsPath(paths.sandbox), "{not json", "utf-8");
     expect(seedWebAccessPackage(paths)).toBe(false);
     expect(fs.readFileSync(settingsPath(paths.sandbox), "utf-8")).toBe("{not json");
+  });
+
+  it("seeds eager web tools, scientific summary instructions and model-free fetch modes without overriding a user choice", () => {
+    const agentDir = path.join(PROJECTS_ROOT, "fake-agent-dir");
+    const configFile = path.join(agentDir, "web-search.json");
+    const seeded = {
+      toolActivation: "eager",
+      summaryInstructions: SCIENTIFIC_SUMMARY_INSTRUCTIONS,
+      fetch: { allowedModes: ["readable", "raw"] },
+    };
+    expect(seedWebAccessDefaults(agentDir)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configFile, "utf-8"))).toEqual(seeded);
+    expect(seedWebAccessDefaults(agentDir)).toBe(false);
+    expect(SCIENTIFIC_SUMMARY_INSTRUCTIONS.split("\n").every((line) => line.startsWith("- "))).toBe(true);
+
+    // Existing credentials survive; explicit choices stick (a blank string
+    // keeps pi-web-access's default summary prompt).
+    fs.writeFileSync(configFile, JSON.stringify({ exaApiKey: "k" }), "utf-8");
+    expect(seedWebAccessDefaults(agentDir)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configFile, "utf-8"))).toEqual({ exaApiKey: "k", ...seeded });
+    fs.writeFileSync(configFile, JSON.stringify({ toolActivation: "dynamic", summaryInstructions: "", fetch: { allowedModes: ["readable", "raw", "answer"] } }), "utf-8");
+    expect(seedWebAccessDefaults(agentDir)).toBe(false);
+    // Other fetch settings survive; a default of "answer" keeps its mode (the package rejects a disallowed default).
+    fs.writeFileSync(configFile, JSON.stringify({ toolActivation: "eager", summaryInstructions: "", fetch: { timeout: 45 } }), "utf-8");
+    expect(seedWebAccessDefaults(agentDir)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configFile, "utf-8")).fetch).toEqual({ timeout: 45, allowedModes: ["readable", "raw"] });
+    fs.writeFileSync(configFile, JSON.stringify({ toolActivation: "eager", summaryInstructions: "", fetch: { defaultMode: "answer" } }), "utf-8");
+    expect(seedWebAccessDefaults(agentDir)).toBe(false);
+    fs.writeFileSync(configFile, JSON.stringify({ toolActivation: "dynamic" }), "utf-8");
+    expect(seedWebAccessDefaults(agentDir)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configFile, "utf-8")).toolActivation).toBe("dynamic");
+    fs.writeFileSync(configFile, "{not json", "utf-8");
+    expect(seedWebAccessDefaults(agentDir)).toBe(false);
+    expect(fs.readFileSync(configFile, "utf-8")).toBe("{not json");
   });
 
   it("pre-trusts the sandbox without overriding an explicit distrust", () => {

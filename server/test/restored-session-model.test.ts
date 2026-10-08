@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   getModelRegistry,
@@ -121,23 +121,25 @@ describe("restoring the model a session last ran with", () => {
     // The runtime is a process singleton, so the same instance is reused
     // across tests. The precondition below is measured against the live
     // runtime: 3 of 170 OpenRouter catalogue rows are missing, all :batch
-    // variants (z-ai/glm-5.2:batch, z-ai/glm-5.3:batch,
+    // variants (z-ai/glm-5.3:batch, z-ai/glm-5.3:batch,
     // deepseek/deepseek-v4-flash-vision-exp:batch), measured 2026-09-19.
     // If Pi ever starts carrying one of them, the precondition stops the
     // test being vacuous.
 
     it("restores a :batch model the runtime does not know but the catalogue does", () => {
       const runtime = getModelRuntime();
-      const modelId = "z-ai/glm-5.2:batch";
+      const modelId = "z-ai/glm-5.3:batch";
 
-      expect(runtime.getModel("openrouter", modelId)).toBeUndefined();
-
-      const model = persistedModel(runtime, getModelRegistry(), "openrouter", modelId);
-      expect(model?.id).toBe(modelId);
+      // FORK: exercise a missing runtime row even when a Pi upgrade adds it.
+      const lookup = vi.spyOn(runtime, "getModel").mockReturnValue(undefined);
+      try {
+        const model = persistedModel(runtime, getModelRegistry(), "openrouter", modelId);
+        expect(model?.id).toBe(modelId);
+      } finally { lookup.mockRestore(); }
     });
 
     it("prices a restored :batch model from the catalogue, not $0", () => {
-      const modelId = "z-ai/glm-5.2:batch";
+      const modelId = "z-ai/glm-5.3:batch";
       const cataloguePrice = (modelsJson as Array<{ id: string; pricing: { prompt: number } }>)
         .find((r) => r.id === `openrouter/${modelId}`)?.pricing.prompt;
       // Pinned first. Read straight into the comparison, a renamed catalogue
@@ -158,7 +160,7 @@ describe("restoring the model a session last ran with", () => {
         persistedModel(getModelRuntime(), getModelRegistry(), "openrouter", "totally/made-up-model"),
       ).toBeUndefined();
       expect(
-        persistedModel(getModelRuntime(), getModelRegistry(), "openrouter", "z-ai/glm-5.2:batch-typo"),
+        persistedModel(getModelRuntime(), getModelRegistry(), "openrouter", "z-ai/glm-5.3:batch-typo"),
       ).toBeUndefined();
       expect(
         persistedModel(getModelRuntime(), getModelRegistry(), "openrouter", ""),

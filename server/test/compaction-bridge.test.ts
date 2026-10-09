@@ -207,6 +207,14 @@ const event = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("previousNarrative / compactionFileLists", () => {
+  // FORK: malformed tags and long newline runs cannot trigger repeated suffix scans.
+  it("keeps malformed tags and removes complete mixed file lists", () => {
+    const malformed = "<read-files>\n".repeat(20_000);
+    expect(previousNarrative(malformed)).toBe(malformed.trim());
+    expect(compactionFileLists(undefined, malformed)).toEqual({ readFiles: [], modifiedFiles: [] });
+    expect(previousNarrative("Narrative" + "\n".repeat(50_000) + "<read-files>\na\n</read-files>\n<modified-files>\nb\n</modified-files>\nTail"))
+      .toBe("Narrative\nTail");
+  });
   it("drops Kady records and file tags, keeps Pi summaries, and unions file lists", () => {
     expect(previousNarrative("## Kady scientific state\n- x\n\n## Current turn so far\nT.")).toBe("## Current turn so far\nT.");
     expect(previousNarrative("## Kady scientific state\n- only records")).toBeUndefined();

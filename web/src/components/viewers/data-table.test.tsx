@@ -29,6 +29,10 @@ describe("data table previews", () => {
     expect(screen.getByText(/2 numeric pairs from 4 preview rows/)).toBeInTheDocument();
   });
   it("does not mistake nulls, booleans, identifiers, or nonfinite values for measurements", () => {
+    // FORK: long nonnumeric fields cannot repartition adjacent digit runs.
+    expect(numericCell("9".repeat(100_000) + "x")).toBeNull();
+    expect(numericCell("12.")).toBe(12);
+    expect(numericCell(".25e+2")).toBe(25);
     for (const value of [null, undefined, "", " ", false, "NaN", "Infinity", "0x10", "9007199254740993"])
       expect(numericCell(value)).toBeNull();
     expect(numericCell("-1.25e-3")).toBe(-0.00125);

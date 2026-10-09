@@ -24,6 +24,8 @@
  * for one on their next turn.
  */
 import fs from "node:fs";
+// FORK: share linear URL suffix trimming with model registration.
+import { trimTrailingSlashes } from "../trim-slashes.ts";
 import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -237,8 +239,9 @@ export interface RadiusConnectorState {
 }
 
 /** Whether a config's `url` names the endpoint `b`, ignoring trailing slashes. */
+// FORK: suffix trimming must not backtrack on operator-configured URLs.
 export const sameUrl = (a: unknown, b: string) =>
-  typeof a === "string" && a.replace(/\/+$/u, "") === b.replace(/\/+$/u, "");
+  typeof a === "string" && trimTrailingSlashes(a) === trimTrailingSlashes(b);
 
 /** Where the Radius MCP server stands in the global mcp.json. */
 export function radiusConnectorState(

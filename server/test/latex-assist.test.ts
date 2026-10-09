@@ -36,6 +36,12 @@ function fakeMessage(text: string): AssistantMessage {
 }
 
 describe("parseLatexAssistDecision", () => {
+  // FORK: delimiters and malformed large bodies must not backtrack across the response.
+  it("handles whitespace fences and rejects malformed long bodies", () => {
+    const decision = { status: "replacement", replacement: "\\alpha\n" };
+    expect(parseLatexAssistDecision("```json  \r\n" + JSON.stringify(decision) + "```" )).toEqual(decision);
+    expect(parseLatexAssistDecision("```json" + " ".repeat(100_000) + "x")).toBeNull();
+  });
   it("preserves exact replacement whitespace and LaTeX backslashes", () => {
     const decision = { status: "replacement", replacement: "  \\textbf{fixed}\n" };
     expect(parseLatexAssistDecision(JSON.stringify(decision))).toEqual(decision);

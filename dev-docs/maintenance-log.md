@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-10-09 — Targeted SonarCloud quality corrections (PR #51)
+
+- **Scope:** The 18 fix-worthy static findings: two ignored scheduler promises, twelve regex sites (including mirrored classifier copies and repeated URL expressions), three connector label associations and Office runtime language.
+- **Implementation:** Await manual-action listeners and propagate the registered scheduler refresh promise. Use linear trailing-slash trimming, cached compaction-tag terminators, direct fence delimiters and disjoint numeric/package grammar repetitions. Keep standalone classifier parity, deterministic ordering, scriptless previews and runtime CSP behavior intact.
+- **Regression coverage:** Async listener rejection propagates for pause/resume/delete; malformed repeated tags, long whitespace/digit/slash inputs and valid scientific values retain correct behavior. Connector labels identify their controls.
+- **Review:** After verification and commit, Kilo's free NVIDIA Nemotron Ultra and OpenCode's NVIDIA-hosted Kimi K3 will independently review this correction. No SonarCloud findings are dismissed as part of these code changes; runtime unsafe-eval remains a separate evidence gap.
+
 ### 2026-10-09 — Modal reserved-directory transfer correction (PR #51)
 
 - **Category:** Security / cross-platform transfer

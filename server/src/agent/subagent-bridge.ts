@@ -715,7 +715,8 @@ export function makeSubagentLedgerExtension(
         typeof event.input.action === "string" ? event.input.action : undefined;
       if (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete") {
         const scheduleId = typeof event.input.id === "string" ? event.input.id : undefined;
-        scheduleActivityListener?.(projectId, action, scheduleId);
+        // FORK: honor asynchronous scheduler listeners on manual actions too.
+        await scheduleActivityListener?.(projectId, action, scheduleId);
       }
       // Anything that resolves child models from settings from here on: bring
       // the verifier-model overrides up to date first (a provider may have

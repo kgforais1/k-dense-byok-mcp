@@ -51,7 +51,8 @@ function clampLog(log: string): string {
 /** Which bibliography tool does this source need, if any? Ignores comments. */
 export function detectBibTool(src: string): "bibtex" | "biber" | null {
   src = src.replace(/(?<!\\)%.*$/gm, "");
-  const biblatex = /\\usepackage\s*(?:\[([^\]]*)\])?\s*\{([^}]+)\}/g;
+  // FORK: whitespace without options is consumed once, not by adjacent repeats.
+  const biblatex = /\\usepackage\s*(?:\[([^\]]*)\]\s*)?\{([^}]+)\}/g;
   for (const match of src.matchAll(biblatex)) {
     if (match[2].split(",").some((p) => p.trim() === "biblatex")) {
       return /\bbackend\s*=\s*bibtex\b/.test(match[1] ?? "") ? "bibtex" : "biber";

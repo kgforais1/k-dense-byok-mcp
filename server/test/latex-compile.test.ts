@@ -11,6 +11,11 @@ import {
 } from "../src/latex/compile.ts";
 
 describe("detectBibTool", () => {
+  // FORK: absent options must not partition a long whitespace run between repeats.
+  it("handles package whitespace and incomplete packages", () => {
+    expect(detectBibTool("\\usepackage" + " ".repeat(100_000) + "{biblatex}")).toBe("biber");
+    expect(detectBibTool("\\usepackage" + " ".repeat(100_000) + "!")).toBeNull();
+  });
   it("detects biber for biblatex/addbibresource", () => {
     expect(detectBibTool("\\usepackage{biblatex}\n\\addbibresource{x.bib}")).toBe("biber");
     expect(detectBibTool("\\usepackage[backend=biber]{biblatex}")).toBe("biber");

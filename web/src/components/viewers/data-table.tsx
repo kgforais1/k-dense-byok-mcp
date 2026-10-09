@@ -22,7 +22,8 @@ export interface TableSummary {
 /** Empty cells and booleans are not quantitative measurements. */
 export function numericCell(value: unknown): number | null {
   if (typeof value !== "number" && typeof value !== "string") return null;
-  if (typeof value === "string" && (!value.trim() || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))) return null;
+  // FORK: integer digits cannot repartition into two adjacent repetitions.
+  if (typeof value === "string" && (!value.trim() || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))) return null;
   const n = Number(value);
   if (!Number.isFinite(n) || (Number.isInteger(n) && !Number.isSafeInteger(n))) return null;
   return n;

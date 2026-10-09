@@ -110,10 +110,16 @@ export function resolveSandboxPath(
   }
   if (value.startsWith("/") || (windows && /^[a-z]:\//i.test(value))) {
     if (!sandboxRoot) return null;
-    const root = sandboxRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    // FORK: trim in linear time; keep the standalone child copy identical.
+    const trimSlashes = (s: string) => {
+      let end = s.length;
+      while (end > 0 && s[end - 1] === "/") end--;
+      return s.slice(0, end);
+    };
+    const root = trimSlashes(sandboxRoot.replace(/\\/g, "/"));
     const comparable = windows ? value.toLowerCase() : value;
     const comparableRoot = windows ? root.toLowerCase() : root;
-    if (comparable.replace(/\/+$/, "") === comparableRoot) return "";
+    if (trimSlashes(comparable) === comparableRoot) return "";
     if (!comparable.startsWith(comparableRoot + "/")) return null;
     value = value.slice(root.length + 1);
     return normalizeRel(value);

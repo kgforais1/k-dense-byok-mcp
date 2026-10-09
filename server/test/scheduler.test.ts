@@ -279,6 +279,15 @@ describe("subagent bridge schedule handling", () => {
     return { toolCall: requireValue(handlers.get("tool_call")), toolResult: requireValue(handlers.get("tool_result")), asyncComplete: requireValue(events.get("subagent:async-complete")) };
   }
 
+  // FORK: manual actions must propagate asynchronous listener failures.
+  it.each(["schedule.pause", "schedule.resume", "schedule.delete"])("awaits the %s scheduler listener", async (action) => {
+    setScheduleActivityListener(async () => { throw new Error("refresh failed"); });
+    try {
+      await expect(install(projectId).toolCall({ toolName: "subagent", input: { action, id: "s" } }))
+        .rejects.toThrow("refresh failed");
+    } finally { setScheduleActivityListener(null); }
+  });
+
   it("gates schedule.create like a launch and notifies the scheduler; blocks runs over the cap", async () => {
     const seen: string[] = [];
     setScheduleActivityListener((pid, action) => seen.push(`${pid}:${action}`));

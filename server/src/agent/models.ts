@@ -19,6 +19,8 @@
  * `model.cost`, so we populate it from the catalogue's per-1M pricing.
  */
 import fs from "node:fs";
+// FORK: trim local-provider URL suffixes without regex backtracking.
+import { trimTrailingSlashes } from "../trim-slashes.ts";
 import path from "node:path";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -232,7 +234,7 @@ function buildOllamaModel(name: string): Model<Api> {
     name,
     api: "openai-completions",
     provider: "ollama",
-    baseUrl: `${ollamaBaseUrl().replace(/\/+$/, "")}/v1`,
+    baseUrl: `${trimTrailingSlashes(ollamaBaseUrl())}/v1`,
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -265,7 +267,7 @@ export function buildOpenAICompatibleModel(name: string): Model<Api> {
     name,
     api: "openai-completions",
     provider: "openai-compatible",
-    baseUrl: `${openaiCompatibleBaseUrl().replace(/\/+$/, "")}/v1`,
+    baseUrl: `${trimTrailingSlashes(openaiCompatibleBaseUrl())}/v1`,
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -321,7 +323,7 @@ export function nvidiaExtraModelIds(): string[] {
 export function registerLocalProviders(modelRuntime: ModelRuntime): void {
   modelRuntime.registerProvider("ollama", {
     name: "Ollama",
-    baseUrl: `${ollamaBaseUrl().replace(/\/+$/, "")}/v1`,
+    baseUrl: `${trimTrailingSlashes(ollamaBaseUrl())}/v1`,
     api: "openai-completions",
     apiKey: "ollama",
   });
@@ -330,7 +332,7 @@ export function registerLocalProviders(modelRuntime: ModelRuntime): void {
   // before it will dispatch — same placeholder arrangement as Ollama.
   modelRuntime.registerProvider("openai-compatible", {
     name: "OpenAI-Compatible",
-    baseUrl: `${openaiCompatibleBaseUrl().replace(/\/+$/, "")}/v1`,
+    baseUrl: `${trimTrailingSlashes(openaiCompatibleBaseUrl())}/v1`,
     api: "openai-completions",
     apiKey: "openai-compatible",
   });

@@ -128,12 +128,35 @@ function joinInstructions(parts: Array<string | undefined>, custom: string | und
 type FileTag = "read-files" | "modified-files";
 
 function taggedFiles(summary: string | undefined, tag: FileTag): string[] {
-  const match = summary?.match(new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`));
-  return match ? match[1].split("\n").map((line) => line.trim()).filter(Boolean) : [];
+  // FORK: the same malformed summaries reach file-list extraction as narrative stripping.
+  if (!summary) return [];
+  const opening = `<${tag}>\n`, start = summary.indexOf(opening);
+  if (start < 0) return [];
+  const content = start + opening.length, end = summary.indexOf(`\n</${tag}>`, content);
+  return end < 0 ? [] : summary.slice(content, end).split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
 function stripFileTags(text: string): string {
-  return text.replace(/\n*<(read-files|modified-files)>\n[\s\S]*?\n<\/\1>/g, "");
+  // FORK: cache each tag's next terminator; malformed repeated tags cannot rescan the suffix.
+  const closing = new Map<string, number>();
+  const parts: string[] = [];
+  let kept = 0;
+  for (const match of text.matchAll(/<(read-files|modified-files)>\n/g)) {
+    const start = match.index;
+    if (start < kept) continue;
+    const tag = match[1], content = start + match[0].length;
+    let end = closing.get(tag);
+    if (end === undefined || (end >= 0 && end < content)) {
+      end = text.indexOf(`\n</${tag}>`, content);
+      closing.set(tag, end);
+    }
+    if (end < 0) continue;
+    let cut = start;
+    while (cut > kept && text[cut - 1] === "\n") cut--;
+    parts.push(text.slice(kept, cut));
+    kept = end + tag.length + 4;
+  }
+  return parts.join("") + text.slice(kept);
 }
 
 /**

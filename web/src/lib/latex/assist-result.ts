@@ -5,9 +5,12 @@ export type LatexAssistDecision =
 
 export function parseLatexAssistDecision(text: string): LatexAssistDecision | null {
   const trimmed = text.trim();
-  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n?```$/.exec(trimmed);
+  // FORK: delimit fences directly rather than backtracking across whitespace/body.
+  const firstNewline = trimmed.indexOf("\n");
+  const fenced = firstNewline >= 0 && trimmed.endsWith("```")
+    && /^```(?:json)?\s*$/.test(trimmed.slice(0, firstNewline));
   try {
-    const value = JSON.parse(fenced ? fenced[1] : trimmed);
+    const value = JSON.parse(fenced ? trimmed.slice(firstNewline + 1, -3) : trimmed);
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     if (value.status === "replacement" && typeof value.replacement === "string"
       && Object.keys(value).every((key) => key === "status" || key === "replacement")) {

@@ -278,11 +278,12 @@ if (isMain) {
   // open those hosts now and keep the budget hold reconciled (not in
   // buildApp: tests must not open Pi sessions).
   configureScheduler({ log: app.log });
-  setScheduleActivityListener((projectId, action, scheduleId) => {
+  // FORK: propagate scheduler refresh failures to the awaiting bridge handler.
+  setScheduleActivityListener(async (projectId, action, scheduleId) => {
     if (scheduleId && (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete")) {
       recordManualScheduleAction(projectId, scheduleId, action.slice("schedule.".length) as "pause" | "resume" | "delete");
     }
-    onScheduleActivity(projectId);
+    await onScheduleActivity(projectId);
   });
   void bootSchedulerSessions().then((started) => {
     if (started.length) app.log.info({ projects: started }, "scheduler sessions opened");

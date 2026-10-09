@@ -11,7 +11,8 @@
  * token (`auth.provider`, e.g. Radius), which Pi refuses in project files.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// FORK: use instance-unique IDs to associate visible labels with controls.
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -273,12 +274,14 @@ function statusLabel(status: McpServerStatus): { text: string; tone: "ok" | "war
 }
 
 function ExposureSelect({
+  id,
   value,
   onChange,
   disabled,
   label,
   className,
 }: {
+  id?: string;
   value: McpExposure;
   onChange: (value: McpExposure) => void;
   disabled?: boolean;
@@ -287,7 +290,7 @@ function ExposureSelect({
 }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as McpExposure)} disabled={disabled}>
-      <SelectTrigger size="sm" className={cn("h-7 text-[11px]", className)} aria-label={label}>
+      <SelectTrigger id={id} size="sm" className={cn("h-7 text-[11px]", className)} aria-label={label}>
         {/* Explicit children: the items carry a description the trigger must not mirror. */}
         <SelectValue>{MCP_EXPOSURE_OPTIONS.find((opt) => opt.value === value)?.label}</SelectValue>
       </SelectTrigger>
@@ -310,6 +313,7 @@ function ExposureSelect({
 }
 
 export function ConnectorsPanel() {
+  const formId = useId();
   const { activeProject, activeProjectId } = useProjects();
   const [scope, setScope] = useState<McpScope>("project");
   const [servers, setServers] = useState<McpServers>({});
@@ -952,8 +956,9 @@ export function ConnectorsPanel() {
               {form.type === "http" ? (
                 <>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium">Server URL</label>
+                    <label htmlFor={`${formId}-url`} className="text-xs font-medium">Server URL</label>
                     <Input
+                      id={`${formId}-url`}
                       value={form.url}
                       placeholder="https://mcp.example.com/mcp"
                       className="h-8 text-xs"
@@ -1062,12 +1067,12 @@ export function ConnectorsPanel() {
 
                   {form.authMode === "provider" && (
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium">Provider</label>
+                      <label htmlFor={`${formId}-provider`} className="text-xs font-medium">Provider</label>
                       <Select
                         value={form.authProvider || undefined}
                         onValueChange={(v) => setForm({ ...form, authProvider: v })}
                       >
-                        <SelectTrigger size="sm" className="h-8 w-full text-xs" aria-label="Provider">
+                        <SelectTrigger id={`${formId}-provider`} size="sm" className="h-8 w-full text-xs" aria-label="Provider">
                           <SelectValue placeholder="Choose a signed-in provider">
                             {form.authProvider ? providerName(form.authProvider) : undefined}
                           </SelectValue>
@@ -1148,8 +1153,9 @@ export function ConnectorsPanel() {
               )}
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium">How the agent reaches the tools</label>
+                <label htmlFor={`${formId}-exposure`} className="text-xs font-medium">How the agent reaches the tools</label>
                 <ExposureSelect
+                  id={`${formId}-exposure`}
                   value={form.exposure}
                   onChange={(exposure) => setForm({ ...form, exposure })}
                   label="Exposure"

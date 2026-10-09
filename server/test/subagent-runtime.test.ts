@@ -68,7 +68,11 @@ it("loads child MCP and mandatory tools with ambient extensions disabled, and me
   const callback = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
     try { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(handleSubagentMeter(requireValue(requireValue(req.url).split("/").at(-1)), JSON.parse(body)))); }
-    catch (e) { res.statusCode = 400; res.end(JSON.stringify({ detail: (e as Error).message })); }
+    catch (e) {
+      // FORK: make the JSON content type explicit on the failure branch too.
+      res.writeHead(400, { "Content-Type": "application/json", "X-Content-Type-Options": "nosniff" });
+      res.end(JSON.stringify({ detail: (e as Error).message }));
+    }
   });
   await new Promise<void>((resolve) => callback.listen(0, "127.0.0.1", resolve));
   vi.stubEnv("KADY_INTERNAL_URL", `http://127.0.0.1:${(callback.address() as AddressInfo).port}`);

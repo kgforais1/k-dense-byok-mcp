@@ -92,6 +92,16 @@ function engineExecutable(raw: string): "pdflatex" | "xelatex" | "lualatex" {
   }
 }
 
+// FORK: validate the actual launch separately from the mixed argv plan.
+function compilerExecutable(raw: string): string {
+  switch (raw) {
+    case "latexmk": return "latexmk";
+    case "bibtex": return "bibtex";
+    case "biber": return "biber";
+    default: return engineExecutable(raw);
+  }
+}
+
 /** Ordered list of commands (argv arrays) to run in the target's directory. */
 export function buildCompilePlan(opts: {
   engine: string;
@@ -193,7 +203,7 @@ async function doCompile(
       };
     }
     try {
-      const { stdout, stderr } = await execFileAsync(cmd, args, {
+      const { stdout, stderr } = await execFileAsync(compilerExecutable(cmd), args, {
         cwd: workDir,
         timeout: COMMAND_TIMEOUT_MS,
         maxBuffer: MAX_LOG_BUFFER,

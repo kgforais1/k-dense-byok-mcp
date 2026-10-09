@@ -713,11 +713,6 @@ export function makeSubagentLedgerExtension(
       if (event.toolName !== "subagent") return;
       const action =
         typeof event.input.action === "string" ? event.input.action : undefined;
-      if (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete") {
-        const scheduleId = typeof event.input.id === "string" ? event.input.id : undefined;
-        // FORK: honor asynchronous scheduler listeners on manual actions too.
-        await scheduleActivityListener?.(projectId, action, scheduleId);
-      }
       // Anything that resolves child models from settings from here on: bring
       // the verifier-model overrides up to date first (a provider may have
       // been disconnected, or a verifier given its own model), so both the
@@ -829,7 +824,9 @@ export function makeSubagentLedgerExtension(
           ["schedule.create", "schedule.resume", "schedule.pause", "schedule.delete", "schedule.run", "schedule.run-due"].includes(action)) {
         try {
           // The schedule must exist before the resident reads and arms it.
-          await scheduleActivityListener?.(projectId, action);
+          // FORK: record manual ownership only after the schedule operation succeeds.
+          const scheduleId = typeof event.input.id === "string" ? event.input.id : undefined;
+          await scheduleActivityListener?.(projectId, action, scheduleId);
         } catch (error) {
           return {
             isError: true,

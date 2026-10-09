@@ -26,7 +26,7 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 - Full `npm run verify -- all` passes; secret-history scans pass; exact synthetic fixture literals are narrowly allowlisted, and fixture paths use explicit placeholders.
 
 ## Known failures / Rough edges
-- The 18 targeted Sonar quality fixes are implemented with regressions; Kilo free and NVIDIA Kimi K3 review is requested after their commit. Runtime unsafe-eval remains unresolved; intentional-behavior findings have not been dismissed remotely.
+- The 18 targeted Sonar quality fixes have regression coverage. Kimi identified a pre-action scheduler ownership regression; notifications now run only after successful tool results. Kilo free review remains pending. Runtime unsafe-eval remains unresolved; intentional-behavior findings have not been dismissed remotely.
 - Modal reserved-root case handling is corrected with regression coverage; Muse reconciled its earlier concerns with Opus, and both agree the current CodeQL root-escape findings are false positives. Authorized dispositions are recorded; CodeQL is green. SonarCloud remains blocked on its reliability/security ratings (46 findings); its newly introduced trailing-trim regex is corrected with a linear scan.
 - Initial Windows backend CI failed a fixed-delay Modal recovery assertion; follow-up waits for the observed failure.
 - DeepSource JavaScript passes after the type and host-global corrections. CodeQL's failed-auth alert is resolved; its remaining guarded path/command and test-response annotations require follow-up review. Static triage evidence is retained privately; no alerts or verification rules were suppressed.

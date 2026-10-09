@@ -279,12 +279,22 @@ describe("subagent bridge schedule handling", () => {
     return { toolCall: requireValue(handlers.get("tool_call")), toolResult: requireValue(handlers.get("tool_result")), asyncComplete: requireValue(events.get("subagent:async-complete")) };
   }
 
-  // FORK: manual actions must propagate asynchronous listener failures.
-  it.each(["schedule.pause", "schedule.resume", "schedule.delete"])("awaits the %s scheduler listener", async (action) => {
-    setScheduleActivityListener(async () => { throw new Error("refresh failed"); });
+  // FORK: failed/unexecuted manual operations must never change ownership markers.
+  it.each(["schedule.pause", "schedule.resume", "schedule.delete"])("notifies %s only after successful execution", async (action) => {
+    const listener = vi.fn(async () => { throw new Error("refresh failed"); });
+    setScheduleActivityListener(listener);
     try {
-      await expect(install(projectId).toolCall({ toolName: "subagent", input: { action, id: "s" } }))
-        .rejects.toThrow("refresh failed");
+      const { toolCall, toolResult } = install(projectId);
+      const event = { toolName: "subagent", input: { action, id: "s" }, content: [] };
+      await expect(toolCall(event)).resolves.toBeUndefined();
+      expect(listener).not.toHaveBeenCalled();
+      await toolResult({ ...event, isError: true });
+      expect(listener).not.toHaveBeenCalled();
+      expect(await toolResult({ ...event, isError: false })).toMatchObject({
+        isError: true,
+        content: [{ type: "text", text: "Schedule saved, but its background host could not be refreshed: refresh failed" }],
+      });
+      expect(listener).toHaveBeenCalledWith(projectId, action, "s");
     } finally { setScheduleActivityListener(null); }
   });
 

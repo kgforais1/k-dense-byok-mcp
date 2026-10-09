@@ -278,7 +278,7 @@ if (isMain) {
   // open those hosts now and keep the budget hold reconciled (not in
   // buildApp: tests must not open Pi sessions).
   configureScheduler({ log: app.log });
-  // FORK: propagate scheduler refresh failures to the awaiting bridge handler.
+  // FORK: successful-result notifications record ownership before refreshing the host.
   setScheduleActivityListener(async (projectId, action, scheduleId) => {
     if (scheduleId && (action === "schedule.pause" || action === "schedule.resume" || action === "schedule.delete")) {
       recordManualScheduleAction(projectId, scheduleId, action.slice("schedule.".length) as "pause" | "resume" | "delete");

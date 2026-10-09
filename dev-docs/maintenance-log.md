@@ -6,6 +6,7 @@
 - **Implementation:** Await manual-action listeners and propagate the registered scheduler refresh promise. Use linear trailing-slash trimming, cached compaction-tag terminators, direct fence delimiters and disjoint numeric/package grammar repetitions. Keep standalone classifier parity, deterministic ordering, scriptless previews and runtime CSP behavior intact.
 - **Regression coverage:** Async listener rejection propagates for pause/resume/delete; malformed repeated tags, long whitespace/digit/slash inputs and valid scientific values retain correct behavior. Connector labels identify their controls.
 - **Review:** After verification and commit, Kilo's free NVIDIA Nemotron Ultra and OpenCode's NVIDIA-hosted Kimi K3 will independently review this correction. No SonarCloud findings are dismissed as part of these code changes; runtime unsafe-eval remains a separate evidence gap.
+- **Kimi follow-up:** Its first review found a real state-ordering regression: a pre-action refresh failure could prevent a manual schedule action after recording its ownership marker. Manual notifications now occur only on successful tool results and include the schedule id; failed/unexecuted operations leave markers untouched, while a post-success refresh failure retains the existing saved-but-refresh-failed response. Typecheck, lint and 15 focused scheduler tests pass; a follow-up review is in progress.
 
 ### 2026-10-09 — Modal reserved-directory transfer correction (PR #51)
 

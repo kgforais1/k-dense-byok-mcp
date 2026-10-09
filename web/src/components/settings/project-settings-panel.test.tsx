@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../../lib/required";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,7 +60,7 @@ describe("ProjectSettingsPanel", () => {
 
     const limit = await screen.findByLabelText(/Spend limit/);
     await user.type(limit, "25");
-    const general = limit.closest("fieldset")!;
+    const general = requireValue(limit.closest("fieldset"));
     await user.click(within(general as HTMLElement).getByRole("button", { name: "Save" }));
 
     await waitFor(() =>

@@ -1,4 +1,6 @@
+// FORK: check required values at runtime instead of asserting away nullability.
 "use client";
+import { required as requireValue } from "../lib/required";
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -15,7 +17,7 @@ export function OfficeWorkspace({ path, projectId }: { path: string; projectId: 
   const [commandState, setCommandState] = useState<OfficeCommandState>({});
   const [cell, setCell] = useState("A1"), [formula, setFormula] = useState("");
   const formulaDraft = useRef<string | null>(null);
-  const kind = path.split(".").pop()!.toLowerCase();
+  const kind = requireValue(path.split(".").pop()).toLowerCase();
   const FileIcon = kind === "xlsx" ? Table2Icon : kind === "pptx" ? PresentationIcon : FileTextIcon;
   const frame = useRef<HTMLIFrameElement>(null);
   const source = useRef<{ bytes: ArrayBuffer; kind: string; readOnly: boolean } | null>(null);
@@ -62,7 +64,7 @@ export function OfficeWorkspace({ path, projectId }: { path: string; projectId: 
         const bytes = await res.arrayBuffer(); if (controller.signal.aborted) return;
         revision.current = hash;
         const protectedFile = res.headers.get("X-Office-Read-Only") === "true";
-        latest.current.readOnly = protectedFile; setReadOnly(protectedFile); source.current = { bytes, kind: path.split(".").pop()!.toLowerCase(), readOnly: protectedFile };
+        latest.current.readOnly = protectedFile; setReadOnly(protectedFile); source.current = { bytes, kind: requireValue(path.split(".").pop()).toLowerCase(), readOnly: protectedFile };
         loadIntoEngine();
       } catch (e) { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "Could not open document"); }
     };

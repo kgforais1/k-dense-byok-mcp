@@ -81,6 +81,17 @@ export function userLatexmkrc(home = os.homedir(), env = process.env): string | 
   return null;
 }
 
+// FORK: resolve to executable literals at the compiler boundary as well as
+// validating the HTTP request, so internal callers cannot choose a command.
+function engineExecutable(raw: string): "pdflatex" | "xelatex" | "lualatex" {
+  switch (raw) {
+    case "pdflatex": return "pdflatex";
+    case "xelatex": return "xelatex";
+    case "lualatex": return "lualatex";
+    default: throw new Error("Unsupported LaTeX engine");
+  }
+}
+
 /** Ordered list of commands (argv arrays) to run in the target's directory. */
 export function buildCompilePlan(opts: {
   engine: string;
@@ -89,12 +100,13 @@ export function buildCompilePlan(opts: {
   bibTool: "bibtex" | "biber" | null;
   userRc?: string | null;
 }): string[][] {
+  const executable = engineExecutable(opts.engine);
   if (opts.hasLatexmk) {
     return [[
       "latexmk",
       "-norc",
       ...(opts.userRc ? ["-r", opts.userRc] : []),
-      `-${opts.engine}`,
+      `-${executable}`,
       "-interaction=nonstopmode",
       "-cd",
       "-file-line-error",
@@ -105,7 +117,7 @@ export function buildCompilePlan(opts: {
   const base = path.basename(opts.targetAbs);
   const stem = base.replace(/\.(tex|latex)$/, "");
   const engine = [
-    opts.engine,
+    executable,
     "-interaction=nonstopmode",
     "-file-line-error",
     "-synctex=1",

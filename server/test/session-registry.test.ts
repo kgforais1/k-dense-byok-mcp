@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -25,11 +27,11 @@ describe("cold session opens", () => {
   it.each([true, false])("preserves interview availability on real cold opens (interactive=%s)", async (interactive) => {
     const { paths, sessionId } = savedSession();
     if (!interactive) markHeadlessSession(projectId, sessionId);
-    const first = (await getSession(projectId, paths, sessionId))!;
+    const first = requireValue((await getSession(projectId, paths, sessionId)));
     expect(first.getAllTools().some(tool => tool.name === "interview")).toBe(interactive);
     expect(first.getActiveToolNames()).toContain("notebook");
     await disposeSession(projectId, sessionId);
-    const reopened = (await getSession(projectId, paths, sessionId))!;
+    const reopened = requireValue((await getSession(projectId, paths, sessionId)));
     expect(reopened).not.toBe(first);
     expect(reopened.getAllTools().some(tool => tool.name === "interview")).toBe(interactive);
   });
@@ -80,7 +82,7 @@ describe("cold session opens", () => {
 describe("session release", () => {
   it("disposes after the grace period when a shutdown handler never settles", async () => {
     const { paths, sessionId } = savedSession();
-    const session = (await getSession(projectId, paths, sessionId))!;
+    const session = requireValue((await getSession(projectId, paths, sessionId)));
     const emit = vi.spyOn(session.extensionRunner, "emit").mockReturnValue(new Promise(() => {}));
     const dispose = vi.spyOn(session, "dispose");
     vi.useFakeTimers();

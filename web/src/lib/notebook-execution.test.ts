@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required";
 import { describe, expect, it } from "vitest";
 import { normalizeNotebookExecution } from "./notebook-execution";
 import { normalizeNotebookEntries, parseNotebookFrame } from "./notebook";
@@ -13,7 +15,7 @@ describe("notebook execution state", () => {
     const execution = { status: "completed", evidence: "uv run python analysis.py; exit 0; derived/run-2/log.txt" };
     const entry = parseNotebookFrame({ type: "tool_start", toolName: "notebook", toolCallId: "m", args: { type: "method", title: "Analysis", execution } });
     expect(entry?.execution).toEqual(execution);
-    expect(normalizeNotebookEntries([entry!])[0].execution).toEqual(execution);
-    expect(normalizeNotebookEntries([{ ...entry!, execution: { status: "completed" } }])[0].execution?.status).toBe("unverified");
+    expect(normalizeNotebookEntries([requireValue(entry)])[0].execution).toEqual(execution);
+    expect(normalizeNotebookEntries([{ ...requireValue(entry), execution: { status: "completed" } }])[0].execution?.status).toBe("unverified");
   });
 });

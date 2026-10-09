@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * Server-owned scheduling: store readers, the resident session, the budget
  * hold, the automation routes, and the schedule gate in the subagent bridge.
@@ -274,7 +276,7 @@ describe("subagent bridge schedule handling", () => {
       on: (name: string, h: Handler) => handlers.set(name, h),
       events: { on: (name: string, h: (p: unknown) => void) => events.set(name, h) },
     } as never);
-    return { toolCall: handlers.get("tool_call")!, toolResult: handlers.get("tool_result")!, asyncComplete: events.get("subagent:async-complete")! };
+    return { toolCall: requireValue(handlers.get("tool_call")), toolResult: requireValue(handlers.get("tool_result")), asyncComplete: requireValue(events.get("subagent:async-complete")) };
   }
 
   it("gates schedule.create like a launch and notifies the scheduler; blocks runs over the cap", async () => {

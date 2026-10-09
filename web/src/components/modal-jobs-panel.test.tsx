@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../lib/required";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -161,11 +163,11 @@ describe("ModalJobsPanel", () => {
   });
 
   it("shows cleanup uncertainty even when the remote command succeeded", () => {
-    const pending = parseModalJob({
+    const pending = requireValue(parseModalJob({
       id: "job-123", state: "succeeded", sandboxId: "sb-running",
       cleanupUncertain: true,
       accounting: { reconciled: true, conservative: true, estimatedCostUsd: 1.5 },
-    })!;
+    }));
     hooks.useModalJob.mockReturnValue({
       job: pending, loading: false, mutating: null, error: null,
       refresh: vi.fn(), cancel: hooks.cancel, retry: hooks.retry, results: hooks.results,

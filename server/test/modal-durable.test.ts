@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -789,7 +791,7 @@ describe("Durable Modal transfer hardening", () => {
     const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
     expect(terminal.state).toBe("failed");
     expect(terminal.error).toMatchObject({ code: "RUNTIME_UNAVAILABLE", retryable: false });
-    const sandbox = [...fake.sandboxes.values()][0]!;
+    const sandbox = requireValue([...fake.sandboxes.values()][0]);
     expect(sandbox.filesystem.files.size).toBe(0);
     expect(sandbox.terminated).toBe(true);
     expect(sandbox.execParams).toHaveLength(1);
@@ -1017,7 +1019,12 @@ describe("Durable Modal manager safety nets", () => {
     const job = manager.submit("default", { command: "work" }, { sessionId: "s-broken", submittedBy: "api" });
     // Both finalization attempts fail; the worker chain must swallow that
     // (logged), leave the job non-terminal, and not reject unhandled.
-    const stuck = await manager.wait("default", job.id, 1500);
+    // FORK: wait for the observed finalization failure, not a fixed wall-clock
+    // budget that can expire before a loaded Windows worker reaches it.
+    await waitFor(() => expect(errors.mock.calls.some((call) =>
+      String(call[0]).includes("[modal] failed to finalize job"),
+    )).toBe(true));
+    const stuck = await manager.wait("default", job.id, 0);
     expect(["preparing", "running"]).toContain(stuck.state);
     expect(errors.mock.calls.some((call) => String(call[0]).includes("[modal] failed to finalize job"))).toBe(true);
     expect(errors.mock.calls.some((call) => String(call[0]).includes("[modal] worker crashed"))).toBe(false);

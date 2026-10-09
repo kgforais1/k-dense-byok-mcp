@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../lib/required";
 import React, { Suspense, useEffect, useState } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -94,7 +96,7 @@ it("retains annotations across navigation and treats a new stroke after saving a
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => callback(new Blob(["image"])));
   const { container, rerender } = render(<FilePreviewPanel {...props} />);
   await act(async () => { fireEvent.click(screen.getByTitle("Annotate with red marker")); });
-  const canvas = container.querySelector("canvas")!;
+  const canvas = requireValue(container.querySelector("canvas"));
   vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 100, 100));
   fireEvent.mouseDown(canvas, { clientX: 10, clientY: 10 });
   fireEvent.mouseUp(canvas);

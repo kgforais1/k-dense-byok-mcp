@@ -1,4 +1,6 @@
 /* Kady's isolated browser Office host. Document bytes never leave this origin. */
+// FORK: the pinned Emscripten loader provides its filesystem to this script.
+/* global FS */
 'use strict';
 var canvas = document.getElementById('qtcanvas');
 var base = location.origin + '/office-assets/zeta-2025-05-13/';

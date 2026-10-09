@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, describe, it, expect } from "vitest";
@@ -75,7 +77,7 @@ describe("notebook-store", () => {
       { entryId: "tc_1", relation: "supports" },
       { entryId: "tc_9", sessionId: "sess-other", relation: "context" },
     ]);
-    expect(readProjectNotebooks("default").find((n) => n.sessionId === s)!.entries[0].evidence![0]).toEqual({ entryId: "tc_1", relation: "supports" });
+    expect(requireValue(requireValue(readProjectNotebooks("default").find((n) => n.sessionId === s)).entries[0].evidence)[0]).toEqual({ entryId: "tc_1", relation: "supports" });
   });
 });
 

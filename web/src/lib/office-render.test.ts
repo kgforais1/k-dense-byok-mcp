@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,6 +12,6 @@ describe("Office render isolation", () => {
   it("renders a real deck with images, styled text and tables to passive SVG images", async () => {
     const data = readFileSync(resolve(process.cwd(), "../server/test/fixtures/office/slides.pptx")).toString("base64");
     const result = await renderOffice({ kind: "pptx", revision: "test", data, groups: [], readOnly: false }); expect(result.slides).toHaveLength(2);
-    const svg = decodeURIComponent(result.slides![0].split(",").slice(1).join(",")); expect(svg).toContain("Research overview"); expect(svg).toContain("<image"); expect(svg).not.toContain("foreignObject");
+    const svg = decodeURIComponent(requireValue(result.slides)[0].split(",").slice(1).join(",")); expect(svg).toContain("Research overview"); expect(svg).toContain("<image"); expect(svg).not.toContain("foreignObject");
   });
 });

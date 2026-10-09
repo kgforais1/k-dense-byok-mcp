@@ -1,4 +1,6 @@
 /* Kady <-> LibreOffice UNO adapter. Runs in the WASM worker, not the page. */
+// FORK: the pinned Emscripten worker provides Module to UNO scripts.
+/* global Module */
 'use strict';
 Module.zetajs.then(zeta => {
   const css = zeta.uno.com.sun.star, context = zeta.getUnoComponentContext();

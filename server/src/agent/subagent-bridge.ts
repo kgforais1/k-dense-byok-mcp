@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../required.ts";
 import { parse } from "acorn";
 import { annotateMeteredChild, childIsMetered, recoverSubagentUsage } from "./subagent-meter.ts";
 /**
@@ -132,7 +134,7 @@ function scheduleOutcomeText(projectId: string, payload: AsyncCompletePayload): 
         const buffer = Buffer.alloc(OUTCOME_READ_BYTES);
         const read = fs.readSync(fd, buffer, 0, OUTCOME_READ_BYTES, 0);
         const text = buffer.subarray(0, read).toString("utf-8").trim();
-        if (text) outputs.push((payload.results!.length > 1 && result.agent ? `${result.agent}: ` : "") + text);
+        if (text) outputs.push((requireValue(payload.results).length > 1 && result.agent ? `${result.agent}: ` : "") + text);
       } finally {
         fs.closeSync(fd);
       }
@@ -938,7 +940,7 @@ export function makeSubagentLedgerExtension(
           tokens: { input: reported.input ?? 0, output: reported.output ?? 0, cacheRead: reported.cacheRead ?? 0,
             total: (reported.input ?? 0) + (reported.output ?? 0) + (reported.cacheRead ?? 0) + (reported.cacheWrite ?? 0) },
           provider: undefined as string | undefined, model: undefined as string | undefined,
-        } : result.context === "fork" ? null : usageDeltaFromSessionFile(result.sessionFile!);
+        } : result.context === "fork" ? null : usageDeltaFromSessionFile(requireValue(result.sessionFile));
         if (usage) {
           const billing = billingFromModelRef(
             usage.provider

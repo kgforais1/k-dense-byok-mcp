@@ -10,7 +10,9 @@ export function sandboxMarkdownPath(value: unknown): string | undefined {
   } catch {
     return;
   }
-  if (!decoded || /[\\\x00-\x1f:]/.test(decoded) || decoded.startsWith("/")) return;
+  // FORK: explicit character checks retain the relative-path restrictions.
+  if (!decoded || decoded.includes("\\") || decoded.includes(":") ||
+      Array.from(decoded).some((character) => character.charCodeAt(0) < 0x20) || decoded.startsWith("/")) return;
   const parts = decoded.split("/").filter((part) => part !== "." && part !== "");
   if (!parts.length || parts.some((part) => part === "..")) return;
   return parts.join("/");

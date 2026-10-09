@@ -1,3 +1,7 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
+// FORK: type captured SDK callbacks instead of erasing fixture data.
+import type { FixtureExtensionHandler } from "./helpers/extension-types.ts";
 /**
  * generate_image: Pi 1.0 image models saved into the sandbox, billed by their
  * own provider, gated by the spend cap and the raw-data guard.
@@ -127,31 +131,31 @@ describe("generate_image", () => {
   });
 
   it("is covered by the raw-data guard", async () => {
-    const handlers = new Map<string, (event: any) => any>();
+    const handlers = new Map<string, FixtureExtensionHandler>();
     makeDataGuardExtension(projectId, () => "s", resolvePaths(projectId).sandbox)({
-      on: (name: string, handler: (event: any) => any) => handlers.set(name, handler),
+      on: (name: string, handler: FixtureExtensionHandler) => handlers.set(name, handler),
     } as never);
-    const blocked = await handlers.get("tool_call")!({ toolName: "generate_image", toolCallId: "c", input: { prompt: "x", path: "user_data/raw.png" } });
+    const blocked = await requireValue(handlers.get("tool_call"))({ toolName: "generate_image", toolCallId: "c", input: { prompt: "x", path: "user_data/raw.png" } });
     expect(blocked).toMatchObject({ block: true });
-    expect(await handlers.get("tool_call")!({ toolName: "generate_image", toolCallId: "c", input: { prompt: "x" } })).toBeUndefined();
+    expect(await requireValue(handlers.get("tool_call"))({ toolName: "generate_image", toolCallId: "c", input: { prompt: "x" } })).toBeUndefined();
   });
 });
 
 describe("codemode model-call budget gate", () => {
   it("refuses scripts that run models only once the cap is reached", async () => {
-    const handlers = new Map<string, (event: any) => any>();
+    const handlers = new Map<string, FixtureExtensionHandler>();
     const install = (id: string) => makeCodemodeModelBudgetExtension(id)({
-      on: (name: string, handler: (event: any) => any) => handlers.set(name, handler),
+      on: (name: string, handler: FixtureExtensionHandler) => handlers.set(name, handler),
     } as never);
     const script = { toolName: "codemode", input: { code: 'const m = await models.getModelOfType("image", "openrouter", "google/gemini-2.5-flash-image"); image((await models.generateImages(m, { input: [] })).output[0]);' } };
     install(projectId);
-    expect(await handlers.get("tool_call")!(script)).toBeUndefined();
+    expect(await requireValue(handlers.get("tool_call"))(script)).toBeUndefined();
 
     const capped = createProject({ name: "Capped", spendLimitUsd: 0.01 }).id;
     const zero = { costUsd: 0, input: 0, output: 0, cacheRead: 0, total: 0 };
     recordRun({ sessionId: "s", projectId: capped, model: "m", before: zero, after: { ...zero, costUsd: 0.02, total: 10 } });
     install(capped);
-    expect(await handlers.get("tool_call")!(script)).toMatchObject({ block: true, reason: expect.stringMatching(/spend limit/) });
-    expect(await handlers.get("tool_call")!({ toolName: "codemode", input: { code: "return await tools.read({ path: 'a' })" } })).toBeUndefined();
+    expect(await requireValue(handlers.get("tool_call"))(script)).toMatchObject({ block: true, reason: expect.stringMatching(/spend limit/) });
+    expect(await requireValue(handlers.get("tool_call"))({ toolName: "codemode", input: { code: "return await tools.read({ path: 'a' })" } })).toBeUndefined();
   });
 });

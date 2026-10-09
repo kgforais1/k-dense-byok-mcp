@@ -309,13 +309,15 @@ async function prepareRun(
   try {
     const prompt = expandChatCommand(paths, body.message);
     const dispatchExtensionCommand = prompt === body.message && /^\/[a-z]/i.test(prompt);
+    // FORK: cleanup may run before preparation has finished.
+    const preparation: { run?: PreparedRun } = {};
     const opened = openRun(claim, {
       origin: "user", kind: "turn", runId, prompt,
       images: parsedImages.images.map(({ data, mimeType }) => ({ data, mimeType })),
       baseline, session,
       // FORK: persist user runs for late inbound MCP polling before done.
       beforeComplete: (handle) => persistTerminalResult(projectId, handle, log),
-      onCleanup: () => prepared.restoreTools?.(),
+      onCleanup: () => preparation.run?.restoreTools?.(),
     });
     const handle = opened.handle;
     const prepared: PreparedRun = {
@@ -336,6 +338,7 @@ async function prepareRun(
       handle,
       opened,
     };
+    preparation.run = prepared;
     return prepared;
   } catch (error) {
     setSessionRunId(projectId, session.sessionId, null);

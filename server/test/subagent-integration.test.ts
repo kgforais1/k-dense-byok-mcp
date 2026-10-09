@@ -1,3 +1,5 @@
+// FORK: type captured SDK callbacks instead of erasing fixture data.
+import type { FixtureExtensionHandler } from "./helpers/extension-types.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,8 +25,8 @@ function resultStream(stopReason = "stop") {
 }
 function owner() { const paths = resolvePaths("meter"); return { projectId: "meter", sandbox: paths.sandbox, sessionId: "parent", childSessionId: "child", sessionFile: path.join(paths.sessionsDir, "child.jsonl"), runId: "run", kind: "subagent" }; }
 function bridge(projectId = "meter") {
-  const handlers: Record<string, any> = {}, events: Record<string, any> = {};
-  makeSubagentLedgerExtension(projectId, () => "parent", () => ({ provider: "openai-codex", id: "test" } as any), () => true)({ on: (n: string, f: any) => handlers[n] = f, events: { on: (n: string, f: any) => events[n] = f } } as any);
+  const handlers: Record<string, FixtureExtensionHandler> = {}, events: Record<string, FixtureExtensionHandler> = {};
+  makeSubagentLedgerExtension(projectId, () => "parent", () => ({ provider: "openai-codex", id: "test" } as Parameters<typeof pinInheritedChildModels>[2]), () => true)({ on: (n: string, f: FixtureExtensionHandler) => handlers[n] = f, events: { on: (n: string, f: FixtureExtensionHandler) => events[n] = f } } as Parameters<ReturnType<typeof makeSubagentLedgerExtension>>[0]);
   return { handlers, events };
 }
 
@@ -103,9 +105,9 @@ describe("workflow and definition compatibility", () => {
     'return runs.run("x", { ...opts, task: "hi" })',
   ])("does not replace computed models or agents: %s", (workflowScript) => {
     ensureProjectExists("meter");
-    const input: any = { workflowScript };
+    const input: Record<string, unknown> = { workflowScript };
     expect(workflowScriptTargets(workflowScript).dynamic).toBe(true);
-    pinInheritedChildModels("meter", input, model as any);
+    pinInheritedChildModels("meter", input, model as Parameters<typeof pinInheritedChildModels>[2]);
     expect(input.model).toBeUndefined();
   });
   it("parses async scripts and ignores fake targets inside comments and strings", () => {

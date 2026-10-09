@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -95,7 +97,7 @@ describe("authentication with the installed Pi runtime", () => {
         if (event?.type === "auth_url") {
           const hostId = new URL(event.url).searchParams.get("ext_agent_host_id");
           expect(hostId).toMatch(/^urn:uuid:[0-9a-f-]{36}$/);
-          hostIds[attempt] = hostId!;
+          hostIds[attempt] = requireValue(hostId);
         }
       });
       await auth.logout("openai");
@@ -108,7 +110,7 @@ describe("authentication with the installed Pi runtime", () => {
     const auth = manager(await runtime());
     const flow = await auth.start("anthropic");
     await vi.waitFor(() => expect(auth.get(flow.id).prompt?.type).toBe("select"));
-    const choice = auth.get(flow.id).prompt!;
+    const choice = requireValue(auth.get(flow.id).prompt);
     expect(choice.type === "select" && choice.options.map((option) => option.id)).toEqual(["browser", "copy_code"]);
     auth.respond(flow.id, choice.id, "copy_code");
     await vi.waitFor(() => expect(auth.get(flow.id).prompt?.type).toBe("manual_code"));
@@ -116,7 +118,7 @@ describe("authentication with the installed Pi runtime", () => {
     expect(event?.type === "auth_url" && new URL(event.url).searchParams.get("redirect_uri"))
       .toBe("https://platform.claude.com/oauth/code/callback");
     // A pasted code from another sign-in (its state differs) is refused before any exchange.
-    auth.respond(flow.id, auth.get(flow.id).prompt!.id, "the-code#another-state");
+    auth.respond(flow.id, requireValue(auth.get(flow.id).prompt).id, "the-code#another-state");
     await vi.waitFor(() => expect(auth.get(flow.id).status).toBe("error"));
     expect(auth.get(flow.id).error).toMatch(/state/i);
     expect(fetch).not.toHaveBeenCalled();
@@ -157,10 +159,10 @@ describe("authentication with the installed Pi runtime", () => {
     });
     const auth = manager(value);
     const { flow, url } = await waiting(auth, "openrouter");
-    const redirect = new URL(url.searchParams.get("callback_url")!);
+    const redirect = new URL(requireValue(url.searchParams.get("callback_url")));
     redirect.searchParams.set("code", "test-code");
     if (mode === "callback") expect(await callback(redirect)).toBe(200);
-    else auth.respond(flow.id, flow.prompt!.id, redirect.toString());
+    else auth.respond(flow.id, requireValue(flow.prompt).id, redirect.toString());
     await vi.waitFor(() => expect(auth.get(flow.id).status).toBe("complete"));
     expect(JSON.stringify(auth.get(flow.id))).not.toContain("new-oauth-test-key");
     for (const current of [value, await runtime()]) {
@@ -198,12 +200,12 @@ describe("authentication with the installed Pi runtime", () => {
     });
     const auth = manager(value);
     const { flow, url } = await waiting(auth, "openai");
-    const redirect = new URL(url.searchParams.get("redirect_uri")!);
+    const redirect = new URL(requireValue(url.searchParams.get("redirect_uri")));
     redirect.searchParams.set("code", "test-code");
     redirect.searchParams.set("client_id", "issued-test-client");
-    redirect.searchParams.set("state", url.searchParams.get("state")!);
+    redirect.searchParams.set("state", requireValue(url.searchParams.get("state")));
     if (mode === "callback") expect(await callback(redirect)).toBe(200);
-    else auth.respond(flow.id, flow.prompt!.id, redirect.toString());
+    else auth.respond(flow.id, requireValue(flow.prompt).id, redirect.toString());
     await vi.waitFor(() => expect(auth.get(flow.id).status).toBe("complete"));
     expect(JSON.stringify(auth.get(flow.id))).not.toContain("test-refresh");
     expect(await value.checkAuth("openai")).toMatchObject({ type: "oauth" });
@@ -221,9 +223,9 @@ describe("authentication with the installed Pi runtime", () => {
   it("rejects a pasted ChatGPT callback with the wrong OAuth state", async () => {
     const auth = manager(await runtime());
     const { flow, url } = await waiting(auth, "openai");
-    const redirect = new URL(url.searchParams.get("redirect_uri")!);
+    const redirect = new URL(requireValue(url.searchParams.get("redirect_uri")));
     redirect.search = "code=test-code&client_id=test-client&state=wrong-state";
-    auth.respond(flow.id, flow.prompt!.id, redirect.toString());
+    auth.respond(flow.id, requireValue(flow.prompt).id, redirect.toString());
     await vi.waitFor(() => expect(auth.get(flow.id)).toMatchObject({ status: "error", error: "OAuth state mismatch" }));
     expect(fetch).not.toHaveBeenCalled();
   });

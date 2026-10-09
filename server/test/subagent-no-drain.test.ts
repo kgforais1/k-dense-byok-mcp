@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * Kady chat sessions are headless to Pi, so pi-subagents would hold every
  * turn's agent_end open until all background work drains. The
@@ -34,10 +36,10 @@ it("ends a chat turn while background work is still running", async () => {
   expect(await settledWithin(session.extensionRunner.emit({ type: "agent_end", messages: [] }), 2_000)).toBe(true);
 
   // Control: the same session treated as a plain headless session drains first.
-  interactive!.delete(owner);
+  requireValue(interactive).delete(owner);
   const draining = session.extensionRunner.emit({ type: "agent_end", messages: [] });
   expect(await settledWithin(draining, 500)).toBe(false);
   active = false;
-  interactive!.add(owner);
+  requireValue(interactive).add(owner);
   await expect(settledWithin(draining, 10_000)).resolves.toBe(true);
 }, 30_000);

@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../lib/required";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { OfficeWorkspace } from "./office-workspace";
@@ -11,7 +13,7 @@ function message(cmd: string, data = {}, origin = window.location.origin, source
 }
 async function open() {
   render(<OfficeWorkspace path="folder/report.docx" projectId="office-project" />);
-  const send = vi.spyOn((screen.getByTitle("Office editing workspace") as HTMLIFrameElement).contentWindow!, "postMessage");
+  const send = vi.spyOn(requireValue((screen.getByTitle("Office editing workspace") as HTMLIFrameElement).contentWindow), "postMessage");
   message("ready"); await waitFor(() => expect(send).toHaveBeenCalled()); message("opened"); return send;
 }
 it("loads scoped bytes, rejects unrelated window messages, and saves with the original revision", async () => {
@@ -20,15 +22,15 @@ it("loads scoped bytes, rejects unrelated window messages, and saves with the or
   message("modified", {}, "https://untrusted.example"); expect(screen.getByRole("status")).toHaveTextContent("Ready");
   message("modified", {}, window.location.origin, window); expect(screen.getByRole("status")).toHaveTextContent("Ready");
   message("modified"); fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
-  const job = send.mock.calls.at(-1)![0]; expect(job.cmd).toBe("export");
+  const job = requireValue(send.mock.calls.at(-1))[0]; expect(job.cmd).toBe("export");
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ revision: "b".repeat(64) })));
   const bytes = new ArrayBuffer(10); message("exported", { id: job.id, bytes });
   await screen.findByText("Saved to project");
-  const init = fetcher.mock.calls.at(-1)![1]; expect(init.method).toBe("PUT"); expect(new Headers(init.headers).get("If-Match")).toBe(revision); expect(init.body).toBe(bytes);
+  const init = requireValue(fetcher.mock.calls.at(-1))[1]; expect(init.method).toBe("PUT"); expect(new Headers(init.headers).get("If-Match")).toBe(revision); expect(init.body).toBe(bytes);
 });
 it("retains newer changes made during export and warns before leaving", async () => {
   const send = await open(); message("modified"); fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
-  const job = send.mock.calls.at(-1)![0]; message("modified");
+  const job = requireValue(send.mock.calls.at(-1))[0]; message("modified");
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ revision: "b".repeat(64) })));
   message("exported", { id: job.id, bytes: new ArrayBuffer(10) }); await screen.findByText("Newer changes are not saved yet");
   const leave = new Event("beforeunload", { cancelable: true }); fireEvent(window, leave); expect(leave.defaultPrevented).toBe(true);
@@ -36,7 +38,7 @@ it("retains newer changes made during export and warns before leaving", async ()
 it("preserves the editor on conflicts and offers an export copy", async () => {
   const send = await open(); message("modified"); fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "File changed outside this editor" }), { status: 409 }));
-  message("exported", { id: send.mock.calls.at(-1)![0].id, bytes: new ArrayBuffer(10) });
+  message("exported", { id: requireValue(send.mock.calls.at(-1))[0].id, bytes: new ArrayBuffer(10) });
   expect(await screen.findByRole("alert")).toHaveTextContent("File changed"); expect(screen.getByRole("button", { name: "Download copy" })).toBeEnabled();
   vi.spyOn(window, "confirm").mockReturnValue(false); fireEvent.click(screen.getByTitle("Reload project file")); expect(fetcher).toHaveBeenCalledTimes(2);
 });
@@ -52,16 +54,16 @@ it("connects the Kady formatting controls to the existing document without remou
   message("command-state", { command: ".uno:Bold", enabled: true, value: true });
   expect(screen.getByRole("button", { name: /^Bold$/ })).toHaveAttribute("aria-pressed", "true");
   fireEvent.click(screen.getByRole("button", { name: /^Bold$/ }));
-  expect(send.mock.calls.at(-1)![0]).toMatchObject({ cmd: "command", command: ".uno:Bold" });
+  expect(requireValue(send.mock.calls.at(-1))[0]).toMatchObject({ cmd: "command", command: ".uno:Bold" });
   fireEvent.change(screen.getByRole("combobox", { name: "Font size" }), { target: { value: "14" } });
-  expect(send.mock.calls.at(-1)![0]).toMatchObject({ cmd: "command", command: ".uno:FontHeight", args: { "FontHeight.Height": 14 } });
+  expect(requireValue(send.mock.calls.at(-1))[0]).toMatchObject({ cmd: "command", command: ".uno:FontHeight", args: { "FontHeight.Height": 14 } });
   fireEvent.click(screen.getByRole("button", { name: "All tools" }));
-  expect(send.mock.calls.at(-1)![0]).toMatchObject({ cmd: "chrome", advanced: true });
+  expect(requireValue(send.mock.calls.at(-1))[0]).toMatchObject({ cmd: "chrome", advanced: true });
   expect(screen.getByTitle("Office editing workspace")).toBe(frame);
 });
 it("commits the Kady formula bar before a keyboard save and preserves edits made after export starts", async () => {
   render(<OfficeWorkspace path="workbook.xlsx" projectId="office-project" />);
-  const send = vi.spyOn((screen.getByTitle("Office editing workspace") as HTMLIFrameElement).contentWindow!, "postMessage");
+  const send = vi.spyOn(requireValue((screen.getByTitle("Office editing workspace") as HTMLIFrameElement).contentWindow), "postMessage");
   message("ready"); await waitFor(() => expect(send).toHaveBeenCalled()); message("opened");
   message("selection", { cell: "B2", formula: "12" });
   fireEvent.change(screen.getByRole("textbox", { name: "Cell value or formula" }), { target: { value: "=SUM(A1:A3)" } });
@@ -77,7 +79,7 @@ it("commits the Kady formula bar before a keyboard save and preserves edits made
 
 it("commits a formula draft before toolbar formatting can refresh the selected cell", async () => {
   render(<OfficeWorkspace path="workbook.xlsx" projectId="office-project" />);
-  const send = vi.spyOn((screen.getByTitle("Office editing workspace") as HTMLIFrameElement).contentWindow!, "postMessage");
+  const send = vi.spyOn(requireValue((screen.getByTitle("Office editing workspace") as HTMLIFrameElement).contentWindow), "postMessage");
   message("ready"); await waitFor(() => expect(send).toHaveBeenCalled()); message("opened");
   message("selection", { cell: "B2", formula: "12" });
   const formula = screen.getByRole("textbox", { name: "Cell value or formula" });

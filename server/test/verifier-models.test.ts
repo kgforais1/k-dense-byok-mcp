@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * Verifier model routing (Settings → Defaults → Verifier model): the
  * projection into `subagents.agentOverrides.<verifier>.model`, Kady's
@@ -117,7 +119,7 @@ describe("reconcileVerifierModels", () => {
   it("leaves a verifier that pins its own model alone, and steps back when one is pinned later", () => {
     const paths = seeded();
     reconcileVerifierModels(paths, MODEL);
-    const agent = listProjectAgents(paths).find((a) => a.name === "statistical-reviewer")!;
+    const agent = requireValue(listProjectAgents(paths).find((a) => a.name === "statistical-reviewer"));
     writeProjectAgent(paths, agent.name, { ...agent, model: OTHER });
     reconcileVerifierModels(paths, MODEL);
     // An override would outrank the frontmatter model, so Kady removes its own.
@@ -222,7 +224,7 @@ describe("seeding later roster and template additions", () => {
   });
 
   it("ships the prove-verify template with its loop contract", () => {
-    const template = SEEDED_TEMPLATES.find((t) => t.name === "prove-verify")!.content;
+    const template = requireValue(SEEDED_TEMPLATES.find((t) => t.name === "prove-verify")).content;
     for (const fragment of ["$ARGUMENTS", "Verification gate:", "comparative-reviewer", "investigator", "ledger.md", "report.md", "Excluded"]) {
       expect(template, fragment).toContain(fragment);
     }

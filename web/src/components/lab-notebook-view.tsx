@@ -1,4 +1,6 @@
+// FORK: check required values at runtime instead of asserting away nullability.
 "use client";
+import { required as requireValue } from "../lib/required";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpIcon, BookOpenIcon, StickyNoteIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -423,7 +425,7 @@ export function LabNotebookView({
           ? `Methods draft saved ($${data.costUsd.toFixed(4)})`
           : "Methods draft saved",
         typeof data.path === "string" ? {
-          action: { label: "Open draft", onClick: () => onOpenFile(data.path!) },
+          action: { label: "Open draft", onClick: () => onOpenFile(requireValue(data.path)) },
         } : undefined,
       );
     } catch {

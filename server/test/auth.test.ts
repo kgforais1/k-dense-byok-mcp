@@ -55,6 +55,31 @@ describe("auth policy", () => {
 });
 
 describe("auth hook", () => {
+  // FORK: an exhausted failed-auth bucket must not block a valid client or
+  // charge normal authenticated polling against the failed-login budget.
+  it("throttles failed token checks while leaving authenticated requests open", async () => {
+    process.env.KADY_REQUIRE_AUTH = "1";
+    process.env.KADY_AUTH_TOKEN = TOKEN;
+    const remoteAddress = "192.0.2.1";
+    for (let i = 0; i < 30; i++) {
+      const denied = await app.inject({ method: "GET", url: "/projects", remoteAddress });
+      expect(denied.statusCode).toBe(401);
+    }
+    const limited = await app.inject({ method: "GET", url: "/projects", remoteAddress });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["retry-after"]).toBeDefined();
+    for (let i = 0; i < 35; i++) {
+      const accepted = await app.inject({
+        method: "GET", url: "/projects", remoteAddress, headers: { "x-kady-token": TOKEN },
+      });
+      expect(accepted.statusCode).toBe(200);
+    }
+    const other = await app.inject({ method: "GET", url: "/projects", remoteAddress: "192.0.2.2" });
+    expect(other.statusCode).toBe(401);
+    const health = await app.inject({ method: "GET", url: "/health", remoteAddress });
+    expect(health.statusCode).toBe(200);
+  });
+
   it("leaves a default loopback install open", async () => {
     delete process.env.KADY_REQUIRE_AUTH;
     delete process.env.KADY_AUTH_TOKEN;

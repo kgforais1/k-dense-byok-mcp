@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import { describe, expect, it } from "vitest";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -113,7 +115,7 @@ describe("Modal image and resource contract", () => {
     const { client, sandboxParams } = stubClient({ published: false });
     const adapter = new SdkModalAdapter(undefined, undefined, client);
     const environment = await adapter.prepareEnvironment("proj", undefined, "python:3.13-slim", undefined, "none");
-    await adapter.createSandbox(environment, { instance: resolveInstance("t4")!, gpuCount: 2, timeoutMs: 1000, name: "test", tags: {} });
+    await adapter.createSandbox(environment, { instance: requireValue(resolveInstance("t4")), gpuCount: 2, timeoutMs: 1000, name: "test", tags: {} });
     expect(sandboxParams[0]).toMatchObject({ gpu: "T4:2", cpu: 2, cpuLimit: 2, memoryMiB: 8192, memoryLimitMiB: 8192 });
   });
 

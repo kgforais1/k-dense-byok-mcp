@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * The session observer adopts turns a Pi extension starts on an idle session
  * as system-initiated Kady runs: claimed, streamed through the broker,
@@ -126,7 +128,7 @@ describe("session observer", () => {
     attach(session);
     session.isStreaming = true;
     session.emit({ type: "agent_start" });
-    const handle = runBroker.get(projectId, session.sessionId)!;
+    const handle = requireValue(runBroker.get(projectId, session.sessionId));
     session.spend(0.025);
     handle.requestAbort();
     await session.abort();

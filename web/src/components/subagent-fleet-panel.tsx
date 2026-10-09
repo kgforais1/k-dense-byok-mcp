@@ -1,4 +1,6 @@
+// FORK: check required values at runtime instead of asserting away nullability.
 "use client";
+import { required as requireValue } from "../lib/required";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { commandPreview } from "@/lib/command-blocks";
@@ -52,7 +54,7 @@ export function SubagentFleetPanel({ projectId }: { projectId: string }) {
     setTranscript("Loading transcript…");
     async function refresh() {
       try {
-        const data = await controlSpecialist(projectId, sessionId, "transcript", selected!.runId, undefined, selected!.index);
+        const data = await controlSpecialist(projectId, sessionId, "transcript", requireValue(selected).runId, undefined, requireValue(selected).index);
         if (!cancelled) setTranscript(data.text || "No transcript available yet.");
       } catch (e) { if (!cancelled) setTranscript(`Transcript unavailable: ${(e as Error).message}`); }
       if (!cancelled) timer = setTimeout(refresh, 3000);
@@ -81,7 +83,7 @@ export function SubagentFleetPanel({ projectId }: { projectId: string }) {
   const childRows = (children: FleetNode[]) => children.map((child) => <div key={child.id} className="space-y-1 pl-3">
     <div className="flex items-center justify-between gap-2 text-xs">
       <span>{child.label} · {child.state}{child.activity?.currentTool ? ` · ${child.activity.currentTool}` : ""}</span>
-      {child.control && <Button size="sm" variant="ghost" disabled={busy} onClick={() => inspect({ ...child.control!, label: child.label })}>Inspect {child.label}</Button>}
+      {child.control && <Button size="sm" variant="ghost" disabled={busy} onClick={() => inspect({ ...requireValue(child.control), label: child.label })}>Inspect {child.label}</Button>}
     </div>
     {childRows(child.children ?? [])}
   </div>);

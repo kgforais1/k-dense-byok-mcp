@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import { describe, expect, it } from "vitest";
 import { createProject } from "../src/projects.ts";
 import {
@@ -75,7 +77,7 @@ describe("Modal tool requests and results", () => {
 
   it("reports failures as errors with a recovery hint", async () => {
     const projectId = createProject({ name: "Modal hints" }).id;
-    const submit = makeModalTools(projectId, () => "session").find((tool) => tool.name === "modal_submit")!;
+    const submit = requireValue(makeModalTools(projectId, () => "session").find((tool) => tool.name === "modal_submit"));
     const result = await submit.execute("call", { command: "python fit.py" }, undefined, undefined, {} as never);
     expect(result.isError).toBe(true);
     expect(result.details).toMatchObject({ error: "NOT_CONFIGURED" });

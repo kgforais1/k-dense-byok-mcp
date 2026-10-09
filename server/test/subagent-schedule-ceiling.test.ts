@@ -1,3 +1,9 @@
+// FORK: type the installed scheduler lifecycle and launch parameters.
+interface ScheduledManager {
+  stop(): void;
+  bindSession(context: unknown): void;
+  handleToolCall(input: Record<string, unknown>, context: unknown): Promise<{ isError?: boolean }>;
+}
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +16,7 @@ import { patchSubagents } from "../scripts/patch-subagents.mjs";
 patchSubagents();
 const { createScheduledRunManager } = await import(pathToFileURL(path.join(subagentsPackageDir(), "src/runs/background/scheduled-runs.js")).href);
 let dir: string;
-const managers: any[] = [];
+const managers: ScheduledManager[] = [];
 const policies: ReturnType<typeof registerSubagentCapabilityCeiling>[] = [];
 const sessionId = "qa-schedule-ceiling";
 const policy = (source: string, allowedTools: string[]) => {
@@ -25,7 +31,7 @@ function manager(launch = vi.fn(async () => ({ details: { asyncId: "qa-run" } })
   result.bindSession(context());
   return result;
 }
-const create = (m: any, id = "qa-check") => m.handleToolCall({ action: "schedule.create", id, every: "24h", workflowScript: "return runs.run('review', { agent: 'researcher', task: 'Read report' });" }, context());
+const create = (m: ScheduledManager, id = "qa-check") => m.handleToolCall({ action: "schedule.create", id, every: "24h", workflowScript: "return runs.run('review', { agent: 'researcher', task: 'Read report' });" }, context());
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-schedule-")); vi.stubEnv("KADY_SUBAGENT_HOST_MODULE", "test-host"); });
 afterEach(() => { managers.splice(0).forEach(m => m.stop()); policies.splice(0).forEach(p => p.dispose()); vi.unstubAllEnvs(); fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -37,7 +43,7 @@ it("retains a selected model across persistence and restart", async () => {
     workflowScript: "return runs.run('review', { agent: 'researcher', task: 'Read report' });" }, context())).isError).not.toBe(true);
   await first.handleToolCall({ action: "schedule.pause", id: "pinned" }, context());
   first.stop();
-  const launch = vi.fn(async (params: any) => {
+  const launch = vi.fn(async (params: { model?: string }) => {
     expect(params.model).toBe(model);
     return { details: { asyncId: "pinned-run" } };
   });

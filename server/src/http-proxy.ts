@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required.ts";
 /**
  * Proxy-aware global HTTP dispatcher for the backend process.
  *
@@ -96,7 +98,7 @@ const LOOPBACK_NO_PROXY = ["localhost", "127.0.0.1", "::1"];
  */
 export function withLoopbackNoProxy(noProxy: string | undefined): string {
   const entries = (noProxy ?? "").split(/[\s,]+/).filter(Boolean);
-  if (entries.includes("*")) return noProxy!.trim();
+  if (entries.includes("*")) return requireValue(noProxy).trim();
   const have = new Set(entries.map((e) => e.toLowerCase()));
   for (const host of LOOPBACK_NO_PROXY) if (!have.has(host)) entries.push(host);
   return entries.join(",");

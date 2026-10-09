@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * HTTP-level tests for the steering side-channel and abort queue restore.
  * The session registry is mocked so no real Pi session (auth, model) is
@@ -384,7 +386,7 @@ describe("persistent run routes", () => {
     const entries = sessionCostSummary("s1", "default").entries;
     expect(entries).toContainEqual(expect.objectContaining({ model: "openai-codex/fake-model", costUsd: 0 }));
     expect(entries).toContainEqual(expect.objectContaining({ model: "openrouter/test/image-model", costUsd: 2 }));
-    const handle = runBroker.get("default", "s1")!;
+    const handle = requireValue(runBroker.get("default", "s1"));
     expect(readRunResult("default", handle.runId)?.frames).toContainEqual(expect.objectContaining({ type: "cost", runCost: 2 }));
   });
 
@@ -608,7 +610,7 @@ describe("system-initiated runs vs POST /sessions/:id/run", () => {
       s.emit({ type: "agent_end" });
       s.isStreaming = false;
       s.emit({ type: "agent_settled" });
-      await runBroker.get("default", "s1")!.waitForCompletion();
+      await requireValue(runBroker.get("default", "s1")).waitForCompletion();
       expect(runBroker.state("default", "s1").status).toBe("complete");
 
       const state = await app.inject({

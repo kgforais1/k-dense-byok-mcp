@@ -224,7 +224,11 @@ export function validateCustomProviders(input: unknown): CustomProviderInput[] |
     }
     const apiKey = typeof p.apiKey === "string" ? p.apiKey.trim() : "";
     if (apiKey.length > 512) return `provider "${id}": apiKey is too long`;
-    if (/[\x00-\x1f\x7f]/.test(apiKey)) return `provider "${id}": apiKey contains control characters`;
+    // FORK: explicit code-point checks preserve rejection of ASCII controls.
+    if (Array.from(apiKey).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    })) return `provider "${id}": apiKey contains control characters`;
     // The access token is inherited by child processes, not a provider key.
     if (isEnvReference(apiKey) && /^\$\{?KADY_/.test(apiKey)) {
       return `provider "${id}": apiKey may not reference Kady's own variables`;

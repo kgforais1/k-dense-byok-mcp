@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Model } from "@earendil-works/pi-ai";
@@ -125,7 +127,7 @@ describe("provider catalogue covers Pi's built-in providers", () => {
       expect(await runtime.checkAuth("anthropic")).toBeUndefined();
       process.env.ANTHROPIC_IDENTITY_TOKEN_FILE = "/var/run/secrets/anthropic";
       expect(await runtime.checkAuth("anthropic")).toMatchObject({ type: "api_key", source: "workload identity federation" });
-      const anthropic = DIRECT_PROVIDERS.find((p) => p.id === "anthropic")!;
+      const anthropic = requireValue(DIRECT_PROVIDERS.find((p) => p.id === "anthropic"));
       for (const name of names.slice(3)) expect(anthropic.extraEnv.map((f) => f.envVar)).toContain(name);
     } finally {
       for (const [name, value] of saved) {

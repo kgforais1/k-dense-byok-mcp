@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../lib/required";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -59,7 +61,7 @@ describe("ResearchPickerBody", () => {
     await screen.findByText("Revised hypothesis");
     await user.type(screen.getByLabelText("Search research records"), "Harmony");
     await screen.findByText(memoryHit.title);
-    const call = fetch.mock.calls.find(([u]) => String(u).endsWith("/memory/search"))!;
+    const call = requireValue(fetch.mock.calls.find(([u]) => String(u).endsWith("/memory/search")));
     expect(call[2]).toBe("project-a");
     expect(JSON.parse(String(call[1]?.body))).toMatchObject({ query: "Harmony", limit: 12 });
     await user.click(screen.getByRole("checkbox", { name: new RegExp(memoryHit.title) }));
@@ -73,7 +75,7 @@ describe("ResearchPickerBody", () => {
     await screen.findByText("Revised hypothesis");
     await user.click(screen.getByRole("button", { name: "Decisions" }));
     await waitFor(() => expect(fetch.mock.calls.some(([u]) => String(u).endsWith("/memory/search"))).toBe(true));
-    const call = fetch.mock.calls.find(([u]) => String(u).endsWith("/memory/search"))!;
+    const call = requireValue(fetch.mock.calls.find(([u]) => String(u).endsWith("/memory/search")));
     expect(JSON.parse(String(call[1]?.body))).toEqual({ query: "", limit: 12, type: "decision" });
   });
 

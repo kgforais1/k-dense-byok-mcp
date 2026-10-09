@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -104,7 +106,7 @@ describe("useModels — hasAnyModelAccess", () => {
     ["OpenRouter", "/model-providers", { openrouterResolved: true }],
     ["a direct provider", "/providers/models", { directConfigured: true }],
   ] as const)("refreshes %s after credentials change during an older discovery request", async (_name, endpoint, patch) => {
-    const original = fetchMock.getMockImplementation()!;
+    const original = requireValue(fetchMock.getMockImplementation());
     let release!: () => void;
     let held = false;
     fetchMock.mockImplementation(async (input, init) => {

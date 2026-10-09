@@ -118,7 +118,8 @@ export async function buildApp() {
   });
 
   // After CORS so a 401 still carries the headers the UI needs to read it.
-  registerAuth(app);
+  // FORK: install the failed-authentication limiter before registering routes.
+  await registerAuth(app);
 
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
 

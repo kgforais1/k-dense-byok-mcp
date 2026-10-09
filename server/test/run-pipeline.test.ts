@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * The shared run pipeline: claim → open → execute. Ordering guarantees the
  * route relied on (claim before first await, run_start before model setup,
@@ -187,7 +189,7 @@ describe("executeRun", () => {
     // through OpenRouter and whose foreground subagent reported child usage.
     const session = new FakeSession();
     const subscription: BillingContext = { provider: "openai", authType: "oauth", billingMode: "subscription" };
-    const claim = claimRun(projectId, session.sessionId)!;
+    const claim = requireValue(claimRun(projectId, session.sessionId));
     const opened = openRun(claim, { origin: "user", kind: "turn", prompt: "x", images: [], baseline, session });
     const usage = (input: number, output: number, cost: number) => ({ input, output, cacheRead: 0, cacheWrite: 0, totalTokens: input + output, cost: { total: cost } });
     const toolModelBilling = vi.fn(async (ref: string) =>
@@ -225,7 +227,7 @@ describe("executeRun", () => {
     // The image: real OpenRouter spend that counts toward the cap.
     expect(rows[1]).toMatchObject({ model: "openrouter/google/gemini-2.5-flash-image", billingMode: "payg", totalTokens: 1330 });
     expect(rows[1].costUsd).toBeCloseTo(0.039);
-    const cost = opened.handle.state().run!.frames.find((f) => f.type === "cost") as { runCost?: number };
+    const cost = requireValue(opened.handle.state().run).frames.find((f) => f.type === "cost") as { runCost?: number };
     expect(cost.runCost).toBeCloseTo(0.039);
   });
 

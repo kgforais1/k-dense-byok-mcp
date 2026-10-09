@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -28,7 +30,7 @@ describe("source-linked research memory", () => {
     add("s", "ran", { type: "method", title: "Fit mixed model", execution: { status: "completed", evidence: "python fit.py exited 0; results/fit.json" } });
     add("s", "claimed", { type: "method", title: "Fit fixed model", execution: { status: "completed" } });
     const { hits } = await searchNotebookMemory(project, { query: "fit model" });
-    const qualifier = (id: string) => hits.find((h) => h.source.kind === "notebook" && h.source.entryId === id)!.qualifiers.find((q) => q.startsWith("Execution status"));
+    const qualifier = (id: string) => requireValue(hits.find((h) => h.source.kind === "notebook" && h.source.entryId === id)).qualifiers.find((q) => q.startsWith("Execution status"));
     expect(qualifier("ran")).toMatch(/^Execution status is completed/);
     // "completed" without evidence is never promoted.
     expect(qualifier("claimed")).toMatch(/^Execution status is unverified/);

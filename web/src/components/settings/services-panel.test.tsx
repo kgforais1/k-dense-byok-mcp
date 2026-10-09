@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../../lib/required";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,7 +51,7 @@ afterEach(() => vi.restoreAllMocks());
 
 const card = async () => {
   const legend = await screen.findByText("Paperclip literature search");
-  return legend.closest("fieldset")!;
+  return requireValue(legend.closest("fieldset"));
 };
 
 describe("Paperclip card", () => {

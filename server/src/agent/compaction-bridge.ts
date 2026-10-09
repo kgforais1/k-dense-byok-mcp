@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../required.ts";
 /**
  * Compaction you control.
  *
@@ -248,7 +250,7 @@ export function buildCompactionPreamble(projectId: string, sessionId: string): C
       if (frozen.plan.datasets?.length) lines.push(`- Datasets: ${frozen.plan.datasets.join(", ")}`);
       lines.push(`- Intent: ${frozen.plan.intent}; prior exposure: ${frozen.plan.priorExposure}`);
       lines.push("- This plan is intended work, not proof of execution or external preregistration.");
-      const deviations = entry.planHistory!.events.filter((event) => event.kind === "deviation");
+      const deviations = requireValue(entry.planHistory).events.filter((event) => event.kind === "deviation");
       for (const deviation of deviations.slice(-10)) {
         if (deviation.kind !== "deviation") continue;
         lines.push(`- Deviation ${deviation.id} for plan ${deviation.planId}: ${deviation.field} → ${clip(deviation.actual)}; reason: ${clip(deviation.reason)}; timing: ${deviation.timing}${deviation.corrects ? `; corrects ${deviation.corrects}` : ""}`);

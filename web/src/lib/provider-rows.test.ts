@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required";
 import { describe, expect, it } from "vitest";
 import { mergeProviderRows, providerStatusLabel, type DirectProviderStatus } from "@/lib/provider-rows";
 import type { ModelProviderStatus } from "@/lib/use-provider-auth";
@@ -53,7 +55,7 @@ describe("mergeProviderRows", () => {
       [direct("anthropic", { oauth: true }), direct("groq")],
       {},
     );
-    const anthropic = rows.find((row) => row.id === "anthropic")!;
+    const anthropic = requireValue(rows.find((row) => row.id === "anthropic"));
     expect(anthropic.oauth?.id).toBe("anthropic");
     expect(anthropic.direct?.id).toBe("anthropic");
     expect(rows.filter((row) => row.id === "anthropic")).toHaveLength(1);
@@ -61,7 +63,7 @@ describe("mergeProviderRows", () => {
 
   it("always has an OpenRouter row driven by its managed key", () => {
     const rows = mergeProviderRows([], [], { openrouter: { set: true, masked: "sk-…1" } });
-    const openrouter = rows.find((row) => row.id === "openrouter")!;
+    const openrouter = requireValue(rows.find((row) => row.id === "openrouter"));
     expect(openrouter.name).toBe("OpenRouter");
     expect(openrouter.openrouterKey).toBe(true);
     expect(openrouter.status).toBe("api-key");
@@ -83,19 +85,19 @@ describe("mergeProviderRows", () => {
       { groq: { set: true, masked: "gsk_…" } },
     );
     const byId = new Map(rows.map((row) => [row.id, row]));
-    expect(byId.get("openai")!.status).toBe("signed-in");
-    expect(byId.get("openai")!.modelCount).toBe(4);
-    expect(byId.get("xai")!.status).toBe("reauth");
-    expect(byId.get("xai")!.connected).toBe(false);
-    expect(byId.get("groq")!.status).toBe("api-key");
-    expect(providerStatusLabel(byId.get("bedrock")!)).toBe("Configured via AWS profile");
-    expect(byId.get("mistral")!.status).toBe("none");
+    expect(requireValue(byId.get("openai")).status).toBe("signed-in");
+    expect(requireValue(byId.get("openai")).modelCount).toBe(4);
+    expect(requireValue(byId.get("xai")).status).toBe("reauth");
+    expect(requireValue(byId.get("xai")).connected).toBe(false);
+    expect(requireValue(byId.get("groq")).status).toBe("api-key");
+    expect(providerStatusLabel(requireValue(byId.get("bedrock")))).toBe("Configured via AWS profile");
+    expect(requireValue(byId.get("mistral")).status).toBe("none");
   });
 
   it("puts popular providers first", () => {
     const rows = mergeProviderRows([], [direct("zai"), direct("anthropic"), direct("groq")], {});
     expect(rows.map((row) => row.id)).toEqual(["openrouter", "anthropic", "groq", "zai"]);
-    expect(rows.find((row) => row.id === "zai")!.popular).toBe(false);
+    expect(requireValue(rows.find((row) => row.id === "zai")).popular).toBe(false);
   });
 
   it("recognizes an OpenRouter key stored in Pi rather than .env", () => {

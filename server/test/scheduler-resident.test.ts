@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
@@ -33,7 +35,7 @@ async function action(session: AgentSession, input: Record<string, unknown>, scr
   if (script !== undefined) reply(session, id, input, script);
   const blocked = await session.extensionRunner.emitToolCall({ type: "tool_call", toolName: "subagent", toolCallId: id, input });
   expect(blocked?.block).not.toBe(true);
-  const tool = session.agent.state.tools.find((t) => t.name === "subagent")!;
+  const tool = requireValue(session.agent.state.tools.find((t) => t.name === "subagent"));
   const result = await tool.execute(id, input);
   expect(result.isError).not.toBe(true);
   const updated = await session.extensionRunner.emitToolResult({
@@ -75,7 +77,7 @@ describe("resident schedule ownership with real Pi sessions", () => {
     expect(listSchedules(projectId)).toMatchObject([{ id: "later", paused: false }]);
     expect(armed.size).toBe(1);
     const host = await ensureSchedulerSession(projectId);
-    await action(host!, { action: "schedule.delete", id: "later" });
+    await action(requireValue(host), { action: "schedule.delete", id: "later" });
     expect(armed.size).toBe(0);
     expect(listSchedules(projectId)).toEqual([]);
 

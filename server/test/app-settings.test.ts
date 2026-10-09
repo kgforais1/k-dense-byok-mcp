@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 /**
  * Global app defaults (`<agentDir>/kady-settings.json`): the read/validate/
  * write trio, the GET/PUT /settings/defaults routes, and the saved model's
@@ -168,7 +170,7 @@ describe("validateAppDefaultsPatch", () => {
 describe("GET/PUT /settings/defaults", () => {
   const apps: FastifyInstance[] = [];
   afterEach(async () => {
-    while (apps.length) await apps.pop()!.close();
+    while (apps.length) await requireValue(apps.pop()).close();
   });
 
   async function routes() {

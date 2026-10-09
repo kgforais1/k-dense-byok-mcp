@@ -1,3 +1,11 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
+// FORK: keep the installed child SDK and network fixture types explicit.
+import type { AddressInfo } from "node:net";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { FixtureChildSession } from "./helpers/extension-types.ts";
+import type { ModalJob } from "../src/modal/types.ts";
+interface PreflightResult { ok: boolean; contract: { extensions: { requiredExtensions: { id: string }[] }; tools: { capabilityCeiling: { allowedTools: string[] } } } }
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,13 +34,13 @@ it("binds the public RPC/preflight APIs with parent tool ceilings and required c
   const host = subagentHost("runtime", session.sessionId);
   const status = await host.rpc("status");
   expect(status.asyncSnapshot).toMatchObject({ version: 1, runs: [] });
-  const preview: any = await host.preflight({ agent: "statistical-reviewer", task: "Inspect data" });
+  const preview = await host.preflight({ agent: "statistical-reviewer", task: "Inspect data" }) as PreflightResult;
   expect(preview.ok).toBe(true);
   const contract = preview.contract;
   expect(contract.tools.requiredExtensionIds).toEqual(expect.arrayContaining(["kady-guard", "kady-modal", "kady-child-runtime", "pi-web-access"]));
   expect(contract.tools.capabilityCeiling.allowedTools).toContain("modal_submit");
   expect(contract.tools.capabilityCeiling.allowedTools).not.toContain("interview");
-  const prompt = await session.extensionRunner!.emitBeforeAgentStart("Review the analysis", undefined, {
+  const prompt = await requireValue(session.extensionRunner).emitBeforeAgentStart("Review the analysis", undefined, {
     cwd: paths.sandbox, selectedTools: session.getActiveToolNames(),
     customPrompt: "Preserve the lab's reporting convention.",
     sections: { lab: "Use SI units." },
@@ -42,8 +50,8 @@ it("binds the public RPC/preflight APIs with parent tool ceilings and required c
   expect(prompt.systemPromptOptions.sections.kady_delegation).toContain("completion criteria");
   expect(prompt.systemPromptOptions.sections.kady_delegation).toContain("Verify consequential claims");
   expect(prompt.systemPromptOptions.sections.kady_specialist).toBeUndefined();
-  expect((await host.preflight({ agent: "missing-agent-xyz" }) as any).ok).toBe(false);
-  vi.spyOn(modalJobManager, "list").mockReturnValue([{ id: "compute", state: "running" }, { id: "done", state: "succeeded" }] as any);
+  expect((await host.preflight({ agent: "missing-agent-xyz" }) as PreflightResult).ok).toBe(false);
+  vi.spyOn(modalJobManager, "list").mockReturnValue([{ id: "compute", state: "running" }, { id: "done", state: "succeeded" }] as ModalJob[]);
   // pi-subagents asks by its own session identity: the session file.
   const owner = session.sessionFile ?? session.sessionId;
   expect(snapshotBackgroundWork(owner).items).toContainEqual({ provider: `kady-modal:runtime:${session.sessionId}`, sessionId: owner, id: "modal:compute" });
@@ -59,11 +67,11 @@ it("loads child MCP and mandatory tools with ambient extensions disabled, and me
   setHostMeter(handleSubagentMeter);
   const callback = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
-    try { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(handleSubagentMeter(req.url!.split("/").at(-1)!, JSON.parse(body)))); }
+    try { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(handleSubagentMeter(requireValue(requireValue(req.url).split("/").at(-1)), JSON.parse(body)))); }
     catch (e) { res.statusCode = 400; res.end(JSON.stringify({ detail: (e as Error).message })); }
   });
   await new Promise<void>((resolve) => callback.listen(0, "127.0.0.1", resolve));
-  vi.stubEnv("KADY_INTERNAL_URL", `http://127.0.0.1:${(callback.address() as any).port}`);
+  vi.stubEnv("KADY_INTERNAL_URL", `http://127.0.0.1:${(callback.address() as AddressInfo).port}`);
   // Use the installed factory and actual SDK session. Only the provider stream
   // is replaced; this test makes no model-network requests.
   let captured: sdk.AgentSession | undefined;
@@ -72,25 +80,25 @@ it("loads child MCP and mandatory tools with ambient extensions disabled, and me
     return { async *[Symbol.asyncIterator]() { yield { type: "done", message }; }, async result() { return message; } };
   });
   const { createDefaultChildSessionFactory } = await internal("src/runs/shared/child-session.js");
-  const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({ ...sdk, createAgentSession: async (args: any) => {
-    const result = await sdk.createAgentSession(args); captured = result.session; captured.agent.streamFunction = provider as any; return result;
+  const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({ ...sdk, createAgentSession: async (args: Parameters<typeof sdk.createAgentSession>[0]) => {
+    const result = await sdk.createAgentSession(args); captured = result.session; captured.agent.streamFunction = provider as sdk.AgentSession["agent"]["streamFunction"]; return result;
   } }) });
   const required = ["kady-guard", "kady-notebook", "kady-modal", "kady-pdf-annotations", "kady-child-runtime"].map((id) => ({ id, path: path.resolve(import.meta.dirname, "../pi-packages", id, "index.ts") }));
-  const errors: any[] = [];
-  let child: any;
+  const errors: unknown[] = [];
+  let child: FixtureChildSession | undefined;
   try {
-    child = await factory.create({ cwd: paths.sandbox, storage: { kind: "dir", sessionDir: paths.sessionsDir }, ambientExtensions: false, extensionPaths: required.map((r) => r.path), requiredExtensions: required, hooks: [], noSkills: true, noContextFiles: true, runtime: { agent: "researcher", orchestratorSessionId: "parent", runId: "run" }, onExtensionError: (error: any) => errors.push(error) });
-    await expect.poll(() => captured!.getActiveToolNames(), { timeout: 15000 }).toContain("mcp__echo__echo");
-    for (const name of ["notebook", "modal_submit", "add_pdf_annotation"]) expect(captured!.getAllTools().map((t) => t.name)).toContain(name);
+    child = await factory.create({ cwd: paths.sandbox, storage: { kind: "dir", sessionDir: paths.sessionsDir }, ambientExtensions: false, extensionPaths: required.map((r) => r.path), requiredExtensions: required, hooks: [], noSkills: true, noContextFiles: true, runtime: { agent: "researcher", orchestratorSessionId: "parent", runId: "run" }, onExtensionError: (error: unknown) => errors.push(error) });
+    await expect.poll(() => requireValue(captured).getActiveToolNames(), { timeout: 15000 }).toContain("mcp__echo__echo");
+    for (const name of ["notebook", "modal_submit", "add_pdf_annotation"]) expect(requireValue(captured).getAllTools().map((t) => t.name)).toContain(name);
     expect(errors).toEqual([]);
-    const prompt = await captured!.extensionRunner!.emitBeforeAgentStart("Inspect the data", undefined, {
+    const prompt = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart("Inspect the data", undefined, {
       cwd: paths.sandbox, customPrompt: "Keep my custom persona.",
     });
     expect(prompt.systemPromptOptions.customPrompt).toBe("Keep my custom persona.");
     expect(prompt.systemPromptOptions.sections.kady_specialist).toContain("contact_supervisor");
     expect(prompt.systemPromptOptions.sections.kady_specialist).toContain("completed, partial, or blocked");
     expect(prompt.systemPromptOptions.sections.kady_delegation).toBeUndefined();
-    const stream = await captured!.agent.streamFunction({ provider: "openrouter", id: "test" } as any, { messages: [] }, {});
+    const stream = await requireValue(captured).agent.streamFunction({ provider: "openrouter", id: "test" } as Model<Api>, { messages: [] }, {});
     await stream.result();
     expect(provider).toHaveBeenCalledTimes(1);
     expect(sessionCostSummary("parent", "runtime").totalUsd).toBe(0.25);
@@ -99,7 +107,7 @@ it("loads child MCP and mandatory tools with ambient extensions disabled, and me
     fs.writeFileSync(jobFile, JSON.stringify({ id: "child-job", state: "running", owner: { subagentSessionFile: child.sessionFile } }));
     expect(snapshotBackgroundWork(child.sessionId).items).toContainEqual({ provider: `kady-modal-child:${child.sessionId}`, sessionId: child.sessionId, id: "modal:child-job" });
     // Required safety hooks loaded even without the ambient package discovery.
-    const guarded = await captured!.extensionRunner!.emitToolCall({ type: "tool_call", toolCallId: "guard", toolName: "write", input: { path: "user_data/raw.csv", content: "overwrite" } });
+    const guarded = await requireValue(requireValue(captured).extensionRunner).emitToolCall({ type: "tool_call", toolCallId: "guard", toolName: "write", input: { path: "user_data/raw.csv", content: "overwrite" } });
     expect(guarded).toMatchObject({ block: true });
     // Exercise the plugin's actual watchdog Agent, including a clean review
     // with no warning tool call (the old accounting missed these entirely).
@@ -123,28 +131,28 @@ it.each([true, false])("keeps child guidance after Pi prompt filtering (inheritP
   const { createChildHooks } = await internal("src/runs/shared/child-hooks.js");
   let captured: sdk.AgentSession | undefined;
   const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({ ...sdk,
-    createAgentSession: async (args: any) => {
+    createAgentSession: async (args: Parameters<typeof sdk.createAgentSession>[0]) => {
       const result = await sdk.createAgentSession(args); captured = result.session; return result;
     },
   }) });
   const runtime = { agent: "custom-reviewer", inheritProjectContext, inheritGlobalContext: true, inheritSkills: false, waitTool: { enabled: false } };
   const entry = path.resolve(import.meta.dirname, "../pi-packages/kady-child-runtime/index.ts");
-  const errors: any[] = [];
-  let child: any;
+  const errors: unknown[] = [];
+  let child: FixtureChildSession | undefined;
   try {
     child = await factory.create({ cwd: paths.sandbox, storage: { kind: "memory" },
       ambientExtensions: false, noSkills: true, noContextFiles: !inheritProjectContext,
       systemPrompt: "Custom replacement persona.", extensionPaths: [entry],
       requiredExtensions: [{ id: "kady-child-runtime", path: entry }],
-      hooks: createChildHooks(runtime), runtime, onExtensionError: (error: any) => errors.push(error),
+      hooks: createChildHooks(runtime), runtime, onExtensionError: (error: unknown) => errors.push(error),
     });
     // Start with the actual loader's prompt, respecting noContextFiles rather
     // than manually injecting project context into a context-disabled launch.
-    const base = { cwd: paths.sandbox, customPrompt: captured!.systemPrompt };
-    const first = await captured!.extensionRunner!.emitBeforeAgentStart("Check the analysis", undefined, base);
+    const base = { cwd: paths.sandbox, customPrompt: requireValue(captured).systemPrompt };
+    const first = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart("Check the analysis", undefined, base);
     // Exercise the real upstream rewrite, which overrides the full prompt;
     // setting a structured section alone would silently lose our guidance.
-    const rendered = first.systemPromptOptions.forceSystemPrompt!;
+    const rendered = requireValue(first.systemPromptOptions.forceSystemPrompt);
     expect(rendered).toBeTypeOf("string");
     expect(rendered).toContain("Custom replacement persona.");
     expect(rendered.includes("LAB_CONTEXT_SENTINEL")).toBe(inheritProjectContext);
@@ -152,8 +160,8 @@ it.each([true, false])("keeps child guidance after Pi prompt filtering (inheritP
     expect(rendered).toContain("contact_supervisor");
     expect(rendered).toContain("Status is not a scientific");
     expect(rendered).not.toContain("<kady_delegation>");
-    const next = await captured!.extensionRunner!.emitBeforeAgentStart("Follow up", undefined, first.systemPromptOptions);
-    expect(next.systemPromptOptions.forceSystemPrompt!.match(/<kady_specialist>/g)).toHaveLength(1);
+    const next = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart("Follow up", undefined, first.systemPromptOptions);
+    expect(requireValue(next.systemPromptOptions.forceSystemPrompt).match(/<kady_specialist>/g)).toHaveLength(1);
     // A new turn starts from the original options, which were not mutated.
     expect(base).not.toHaveProperty("forceSystemPrompt");
     expect(errors).toEqual([]);

@@ -29,6 +29,12 @@ describe("detectBibTool", () => {
 });
 
 describe("buildCompilePlan", () => {
+  // FORK: internal callers obey the same engine boundary as the HTTP route.
+  it.each([true, false])("rejects an unsupported executable (latexmk=%s)", (hasLatexmk) => {
+    expect(() => buildCompilePlan({
+      engine: "unsupported", targetAbs: "/sandbox/main.tex", hasLatexmk, bibTool: null,
+    })).toThrow("Unsupported LaTeX engine");
+  });
   it("uses a single latexmk invocation with synctex when available", () => {
     const plan = buildCompilePlan({
       engine: "pdflatex", targetAbs: "/s/main.tex", hasLatexmk: true, bibTool: "bibtex",

@@ -1,3 +1,10 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
+// FORK: describe the private worker seams intentionally exercised here.
+interface WorkerInternals {
+  schedule(projectId: string, jobId: string, recovering: boolean): void;
+  syncRemoteLogs(projectId: string, jobId: string, sandbox: FakeSandbox, runtime: Record<string, unknown>): Promise<void>;
+}
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,7 +104,7 @@ describe("Modal cleanup and reservations", () => {
     const manager = new DurableModalJobManager(fake.factory);
     const submitted = manager.submit("default", { command: "work" }, owner);
     const job = await manager.wait("default", submitted.id, 3000);
-    const sandbox = [...fake.sandboxes.values()][0]!;
+    const sandbox = requireValue([...fake.sandboxes.values()][0]);
     expect(job.state).toBe("succeeded");
     expect(sandbox.terminated).toBe(false);
     expect(job.sandboxTerminatedAt).toBeUndefined();
@@ -117,13 +124,13 @@ describe("Modal cleanup and reservations", () => {
   });
 
   it("prices GPU, CPU and RAM separately without multiplying host resources by GPU count", () => {
-    expect(hourlyEstimate(resolveInstance("cpu")!, 1)).toBeCloseTo(0.189936, 8);
-    expect(hourlyEstimate(resolveInstance("t4")!, 1)).toBeCloseTo(1.06632, 8);
-    expect(hourlyEstimate(resolveInstance("t4")!, 2)).toBeCloseTo(1.65672, 8);
-    const quote = publicInstanceCatalog().find((spec) => spec.id === "t4")!;
+    expect(hourlyEstimate(requireValue(resolveInstance("cpu")), 1)).toBeCloseTo(0.189936, 8);
+    expect(hourlyEstimate(requireValue(resolveInstance("t4")), 1)).toBeCloseTo(1.06632, 8);
+    expect(hourlyEstimate(requireValue(resolveInstance("t4")), 2)).toBeCloseTo(1.65672, 8);
+    const quote = requireValue(publicInstanceCatalog().find((spec) => spec.id === "t4"));
     expect(quote.pricePerHour).toBeCloseTo(1.06632, 8);
     expect(quote.pricing.cpuPerHour + quote.pricing.memoryPerHour + 2 * quote.pricing.gpuPerHour)
-      .toBeCloseTo(hourlyEstimate(resolveInstance("t4")!, 2), 8);
+      .toBeCloseTo(hourlyEstimate(requireValue(resolveInstance("t4")), 2), 8);
     expect(worstCaseReservationUsd({ command: "work", instance: "t4", gpuCount: 2, timeoutSec: 3600 }))
       .toBeCloseTo(1.65672 * 1.1, 8);
   });
@@ -131,7 +138,7 @@ describe("Modal cleanup and reservations", () => {
   it("refuses a queued job admitted using an obsolete lower price before creating resources", async () => {
     const fake = new FakeModal();
     const manager = new DurableModalJobManager(fake.factory);
-    const pause = vi.spyOn(manager as any, "schedule").mockImplementation(() => {});
+    const pause = vi.spyOn(manager as unknown as WorkerInternals, "schedule").mockImplementation(() => {});
     const submitted = manager.submit("default", { command: "work" }, owner);
     manager.store.update("default", submitted.id, (job) => { job.reservationUsd /= 2; });
     pause.mockRestore();
@@ -225,13 +232,13 @@ describe("Modal remote log offsets", () => {
     const sandbox = new FakeSandbox("sb-gap", { kind: "hang" });
     const first = new DurableModalJobManager(new FakeModal().factory, store);
     setLog(sandbox, "6789", 6);
-    await (first as any).syncRemoteLogs("default", job.id, sandbox, {});
+    await (first as unknown as WorkerInternals).syncRemoteLogs("default", job.id, sandbox, {});
     expect(store.require("default", job.id).stdoutRemoteCursor).toBe(10);
     expect(store.require("default", job.id).stdoutBytes).toBe(4);
     const restarted = new DurableModalJobManager(new FakeModal().factory, store);
     store.resyncLogCounters("default", job.id);
     setLog(sandbox, "89AB", 8);
-    await (restarted as any).syncRemoteLogs("default", job.id, sandbox, {});
+    await (restarted as unknown as WorkerInternals).syncRemoteLogs("default", job.id, sandbox, {});
     expect(store.readLog("default", job.id, "stdout").data).toBe("6789AB");
     expect(store.require("default", job.id).stdoutRemoteCursor).toBe(12);
     expect(store.events("default", job.id).filter((event) => event.type === "log_gap")).toHaveLength(1);
@@ -250,7 +257,7 @@ describe("Modal remote log offsets", () => {
     expect(store.require("default", job.id).stdoutRemoteCursor).toBe(10);
     const sandbox = new FakeSandbox("sb-gap", { kind: "hang" });
     setLog(sandbox, "89AB", 8);
-    await (new DurableModalJobManager(new FakeModal().factory, store) as any).syncRemoteLogs("default", job.id, sandbox, {});
+    await (new DurableModalJobManager(new FakeModal().factory, store) as unknown as WorkerInternals).syncRemoteLogs("default", job.id, sandbox, {});
     expect(store.readLog("default", job.id, "stdout").data).toBe("6789AB");
   });
 });

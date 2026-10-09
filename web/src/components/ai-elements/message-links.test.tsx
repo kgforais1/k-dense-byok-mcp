@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../../lib/required";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectScopeProvider } from "@/lib/projects";
@@ -10,13 +12,13 @@ describe("Markdown research artifacts", () => {
       {"[Report](./results/penguins%20report.md)\n\n![Figure](figures/mass.png)"}
     </MessageResponse></ProjectScopeProvider>);
     const link = screen.getByRole("link", { name: "Report" });
-    const url = new URL(link.getAttribute("href")!);
+    const url = new URL(requireValue(link.getAttribute("href")));
     expect(url.pathname).toBe("/sandbox/raw");
     expect(url.searchParams.get("path")).toBe("results/penguins report.md");
     expect(url.searchParams.get("project")).toBe("penguin-study");
     fireEvent.click(link);
     expect(open).toHaveBeenCalledWith("results/penguins report.md");
-    const imageUrl = new URL(screen.getByAltText("Figure").getAttribute("src")!);
+    const imageUrl = new URL(requireValue(screen.getByAltText("Figure").getAttribute("src")));
     expect(imageUrl.searchParams.get("project")).toBe("penguin-study");
     expect(imageUrl.searchParams.get("path")).toBe("figures/mass.png");
     expect(screen.queryByText(/\[blocked\]/)).not.toBeInTheDocument();

@@ -1,3 +1,4 @@
+// FORK: name the preview structure used by the fixture assertion.
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -48,7 +49,7 @@ describe("Office preview and binary editor saves", () => {
   it("retains styled preview content, worksheet formulas, literal values, and sheet windows", async () => {
     const doc = (await get("report.docx")).json();
     expect(doc.data).toBe(fs.readFileSync(file("report.docx")).toString("base64"));
-    expect(doc.groups[0].paragraphs.flatMap((p: any) => p.runs)).toContainEqual(expect.objectContaining({ text: "Baseline ", bold: true }));
+    expect(doc.groups[0].paragraphs.flatMap((p: { runs: unknown[] }) => p.runs)).toContainEqual(expect.objectContaining({ text: "Baseline ", bold: true }));
     const sheet = (await get("workbook.xlsx")).json();
     expect(sheet.cells).toContainEqual(expect.objectContaining({ ref: "C2", type: "formula", value: "=B2*2" }));
     expect(sheet.cells).toContainEqual(expect.objectContaining({ ref: "D2", type: "text", value: "=not a formula" }));

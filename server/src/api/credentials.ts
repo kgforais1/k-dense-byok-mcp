@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../required.ts";
 /**
  * Runtime credential management for the bring-your-own-key model.
  *
@@ -222,7 +224,7 @@ function buildManagedKeys(): ManagedKey[] {
     entry.onChange = previous
       ? async (key, runtime) => {
           await previous(key, runtime);
-          await push!(key, runtime);
+          await requireValue(push)(key, runtime);
         }
       : push;
   }
@@ -339,7 +341,11 @@ function status() {
  * quote characters.
  */
 export function invalidEnvValue(value: string): string | null {
-  if (/[\x00-\x1f\x7f]/.test(value)) {
+  // FORK: explicit code-point checks preserve rejection of ASCII controls.
+  if (Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 0x20 || code === 0x7f;
+  })) {
     return "That value contains a line break or control character; paste the key on its own.";
   }
   if (value.includes('"') && value.includes("'")) {

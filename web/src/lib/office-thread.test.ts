@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required";
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -30,7 +32,7 @@ async function loadAdapter(readOnly: boolean, kind = "docx") {
     queryDispatch(url: UnoUrl, target = "_self", flags = 0): Dispatch {
       const registered = interceptor?.getInterceptedURLs().some(pattern =>
         pattern.endsWith("*") ? url.Complete.startsWith(pattern.slice(0, -1)) : pattern === url.Complete);
-      return registered ? interceptor!.queryDispatch(url, target, flags) : nativeDispatch;
+      return registered ? requireValue(interceptor).queryDispatch(url, target, flags) : nativeDispatch;
     },
   };
   const controller = { getFrame: () => frame, addSelectionChangeListener: vi.fn() };
@@ -68,7 +70,7 @@ async function loadAdapter(readOnly: boolean, kind = "docx") {
   await runInNewContext(readFileSync(resolve(process.cwd(), "public/office/thread.js"), "utf8"), {
     Module: { zetajs: Promise.resolve(zeta) }, console,
   });
-  port.onmessage!({ data: { cmd: "load", filename: `document.${kind}`, readOnly, dark: false } });
+  requireValue(port.onmessage)({ data: { cmd: "load", filename: `document.${kind}`, readOnly, dark: false } });
   expect(port.postMessage).toHaveBeenCalledWith({ cmd: "opened" });
   port.postMessage.mockClear();
   return { port, frame, nativeDispatch };
@@ -81,7 +83,7 @@ describe("Office native file commands", () => {
       const statusChanged = vi.fn();
       frame.queryDispatch({ Complete: command }).addStatusListener({ statusChanged }, { Complete: command });
       expect(statusChanged).toHaveBeenCalledWith(expect.objectContaining({ IsEnabled: true }));
-      port.onmessage!({ data: { cmd: "command", command } });
+      requireValue(port.onmessage)({ data: { cmd: "command", command } });
     }
     expect(port.postMessage.mock.calls).toEqual([[{ cmd: "save-request" }], [{ cmd: "save-request" }]]);
     expect(nativeDispatch.dispatch).not.toHaveBeenCalled();
@@ -93,17 +95,17 @@ describe("Office native file commands", () => {
       const statusChanged = vi.fn();
       frame.queryDispatch({ Complete: command }).addStatusListener({ statusChanged }, { Complete: command });
       expect(statusChanged).toHaveBeenCalledWith(expect.objectContaining({ IsEnabled: false }));
-      port.onmessage!({ data: { cmd: "command", command } });
+      requireValue(port.onmessage)({ data: { cmd: "command", command } });
     }
     expect(port.postMessage).not.toHaveBeenCalled();
     expect(nativeDispatch.dispatch).not.toHaveBeenCalled();
-    port.onmessage!({ data: { cmd: "command", command: ".uno:SaveACopy" } });
+    requireValue(port.onmessage)({ data: { cmd: "command", command: ".uno:SaveACopy" } });
     expect(port.postMessage).toHaveBeenCalledWith({ cmd: "download-request" });
   });
 
   it("continues forwarding document-editing commands to LibreOffice", async () => {
     const { port, nativeDispatch } = await loadAdapter(false);
-    port.onmessage!({ data: { cmd: "command", command: ".uno:Bold" } });
+    requireValue(port.onmessage)({ data: { cmd: "command", command: ".uno:Bold" } });
     expect(nativeDispatch.dispatch).toHaveBeenCalledWith({ Complete: ".uno:Bold" });
     expect(port.postMessage).not.toHaveBeenCalled();
   });
@@ -113,7 +115,7 @@ describe("Office native file commands", () => {
     const statusChanged = vi.fn();
     frame.queryDispatch({ Complete: command }).addStatusListener({ statusChanged }, { Complete: command });
     expect(statusChanged).toHaveBeenCalledWith(expect.objectContaining({ IsEnabled: false }));
-    port.onmessage!({ data: { cmd: "command", command } });
+    requireValue(port.onmessage)({ data: { cmd: "command", command } });
     expect(nativeDispatch.dispatch).not.toHaveBeenCalled();
     expect(port.postMessage).not.toHaveBeenCalled();
   });

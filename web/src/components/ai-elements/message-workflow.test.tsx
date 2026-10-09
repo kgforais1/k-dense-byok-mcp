@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../../lib/required";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MessageResponse } from "./message";
@@ -33,7 +35,7 @@ describe("workflow script fences", () => {
   it("parses fences the way pi-subagents does", () => {
     const fence = parseWorkflowFence("```javascript workflow\nreturn 1\n```\n");
     expect(fence).toMatchObject({ marker: "```", body: "return 1", closed: true });
-    expect(asJavaScriptFence("```javascript workflow\nreturn 1\n```\n", fence!)).toBe("```js\nreturn 1\n```\n");
+    expect(asJavaScriptFence("```javascript workflow\nreturn 1\n```\n", requireValue(fence))).toBe("```js\nreturn 1\n```\n");
     expect(parseWorkflowFence("```js workflow\nreturn 1")).toMatchObject({ closed: false });
     // pi-subagents requires exactly "js workflow" / "javascript workflow".
     expect(parseWorkflowFence("```js\nreturn 1\n```")).toBeNull();

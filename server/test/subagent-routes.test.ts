@@ -1,3 +1,4 @@
+// FORK: preserve the shape of injected RPC payloads.
 import Fastify from "fastify";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { registerSubagentRoutes } from "../src/api/subagents.ts";
@@ -18,7 +19,7 @@ beforeEach(async () => {
   await registerSubagentRoutes(app);
 });
 afterEach(async () => { await app.close(); });
-const post = (action: string, payload: any, project = "p1") => app.inject({ method: "POST", url: `/sessions/parent/subagents/${action}`, payload, headers: { "x-project-id": project } });
+const post = (action: string, payload: Record<string, unknown>, project = "p1") => app.inject({ method: "POST", url: `/sessions/parent/subagents/${action}`, payload, headers: { "x-project-id": project } });
 it("targets stable child indices and translates child stop to the plugin identity", async () => {
   expect((await post("transcript", { runId: "run", index: 7 })).json()).toEqual({ text: "ok" });
   expect(mocks.rpc).toHaveBeenLastCalledWith("status", { id: "run", index: 7, view: "transcript", lines: 200 });

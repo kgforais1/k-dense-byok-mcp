@@ -1,4 +1,6 @@
+// FORK: check required values at runtime instead of asserting away nullability.
 "use client";
+import { required as requireValue } from "../../lib/required";
 
 /**
  * Settings → Models → Providers: every way to reach a model in one place.
@@ -124,7 +126,7 @@ function ProviderRowCard({
     .join(" · ");
   const keyDefs: KeyDef[] = row.openrouterKey
     ? [OPENROUTER_KEY]
-    : (row.direct?.fields ?? []).map((field) => fieldKeyDef(row.direct!, field));
+    : (row.direct?.fields ?? []).map((field) => fieldKeyDef(requireValue(row.direct), field));
 
   return (
     <div className="rounded-lg border" data-testid={`provider-row-${row.id}`}>
@@ -177,7 +179,7 @@ function ProviderRowCard({
                   variant="outline"
                   className="shrink-0"
                   disabled={disconnecting}
-                  onClick={() => onDisconnect(row.oauth!)}
+                  onClick={() => onDisconnect(requireValue(row.oauth))}
                   aria-label={`Disconnect ${row.oauth.accountLabel}`}
                 >
                   {disconnecting ? (
@@ -192,7 +194,7 @@ function ProviderRowCard({
                   type="button"
                   size="sm"
                   className="shrink-0"
-                  onClick={() => onSignIn(row.oauth!)}
+                  onClick={() => onSignIn(requireValue(row.oauth))}
                   aria-label={`${row.oauth.needsReauth ? "Reconnect" : "Connect"} ${row.oauth.accountLabel}`}
                 >
                   <LogInIcon className="size-3.5" aria-hidden />

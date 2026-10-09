@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../../lib/required";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +28,7 @@ function deferred<T>() {
 function setup(overrides: Partial<Parameters<typeof LatexEditor>[0]> = {}) {
   const props = { path: "main.tex", name: "main.tex", initialContent: source, onSave: vi.fn().mockResolvedValue(true), onCompile: vi.fn().mockResolvedValue(success), onDiscard: vi.fn(), ...overrides };
   const result = render(<LatexEditor {...props} />);
-  const view = EditorView.findFromDOM(result.container.querySelector(".cm-editor")!)!;
+  const view = requireValue(EditorView.findFromDOM(requireValue(result.container.querySelector<HTMLElement>(".cm-editor"))));
   const change = (text: string) => act(() => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } }));
   return { ...result, props, view, change };
 }

@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { ensureProjectExists } from "../src/projects.ts";
@@ -24,7 +26,7 @@ afterEach(async () => {
 it("replays real Pi message boundaries as observed, individually ledgered system runs", async () => {
   const paths = ensureProjectExists(projectId);
   const session = await createSession(projectId, paths);
-  const model = session.model!;
+  const model = requireValue(session.model);
   await getModelRuntime().setRuntimeApiKey(model.provider, "test-only");
   const provider = vi.fn(() => {
     const message: AssistantMessage = {
@@ -39,7 +41,7 @@ it("replays real Pi message boundaries as observed, individually ledgered system
   });
   session.agent.streamFunction = provider;
   const detach = attachSessionObserver({ projectId, paths, session });
-  const claim = claimRun(projectId, session.sessionId)!;
+  const claim = requireValue(claimRun(projectId, session.sessionId));
   const resume = deferSessionMessages(session, projectId);
   const seen: string[] = [];
   const unsubscribe = session.subscribe((event) => {
@@ -81,7 +83,7 @@ it("preserves submission errors without dropping later queued notices", async ()
   const session = await createSession(projectId, paths);
   const original = session.sendCustomMessage.bind(session);
   vi.spyOn(session, "sendCustomMessage").mockRejectedValueOnce(new Error("Delivery failed")).mockImplementation(original);
-  const claim = claimRun(projectId, session.sessionId)!;
+  const claim = requireValue(claimRun(projectId, session.sessionId));
   const resume = deferSessionMessages(session, projectId);
   const first = session.sendCustomMessage({ customType: "failed", content: "Failed notice", display: true });
   const second = session.sendCustomMessage({ customType: "saved", content: "Saved notice", display: true });
@@ -98,7 +100,7 @@ it("preserves submission errors without dropping later queued notices", async ()
 it("defers a settled-handler turn until the preceding run finishes provenance and accounting", async () => {
   const paths = ensureProjectExists(projectId);
   const session = await createSession(projectId, paths);
-  const model = session.model!;
+  const model = requireValue(session.model);
   await getModelRuntime().setRuntimeApiKey(model.provider, "test-only");
   const provider = vi.fn(() => {
     const message: AssistantMessage = {
@@ -157,7 +159,7 @@ it.each([false, true])("rejects deferred work when the observer is detached (man
   const paths = ensureProjectExists(projectId);
   const session = await createSession(projectId, paths);
   const detach = attachSessionObserver({ projectId, paths, session });
-  const claim = claimRun(projectId, session.sessionId)!;
+  const claim = requireValue(claimRun(projectId, session.sessionId));
   const resume = manualGate ? deferSessionMessages(session, projectId) : () => {};
   const pending = session.sendCustomMessage({ customType: "must-not-run", content: "Continue", display: true }, { triggerTurn: true });
   const rejected = expect(pending).rejects.toThrow("Session closed before the queued message was delivered");

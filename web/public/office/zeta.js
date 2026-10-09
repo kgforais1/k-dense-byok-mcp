@@ -1,5 +1,7 @@
 /* -*- Mode: JS; tab-width: 2; indent-tabs-mode: nil; js-indent-level: 2; fill-column: 100 -*- */
 // SPDX-License-Identifier: MIT
+// FORK: declare the host object supplied by the pinned Emscripten worker.
+/* global Module */
 
 'use strict';
 

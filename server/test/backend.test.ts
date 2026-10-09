@@ -1,3 +1,7 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
+// FORK: type captured SDK callbacks instead of erasing fixture data.
+import type { FixtureExtensionHandler } from "./helpers/extension-types.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -380,36 +384,36 @@ describe("subagent model inheritance", () => {
     const script = `return runs.run("main", { agent: "scout", model: "ollama/llama4", task: "a" })`;
     const sessionManager = { getBranch: () => replyBranch("call-1", fenced(script)) };
     const targets = workflowCallTargets({ workflow: true }, { toolCallId: "call-1", sessionManager });
-    expect([...targets!.agents]).toEqual(["scout"]);
-    expect([...targets!.models]).toEqual(["ollama/llama4"]);
-    expect(targets!.dynamic).toBe(false);
+    expect([...requireValue(targets).agents]).toEqual(["scout"]);
+    expect([...requireValue(targets).models]).toEqual(["ollama/llama4"]);
+    expect(requireValue(targets).dynamic).toBe(false);
 
     // pi-subagents refuses each of these, so none of them may look literal.
     const unknown = (branch: unknown[], toolCallId = "call-1") =>
-      workflowCallTargets({ workflow: true }, { toolCallId, sessionManager: { getBranch: () => branch } })!.dynamic;
+      requireValue(workflowCallTargets({ workflow: true }, { toolCallId, sessionManager: { getBranch: () => branch } })).dynamic;
     expect(unknown(replyBranch("call-1", fenced(script)), "another-call")).toBe(true);
     expect(unknown(replyBranch("call-1", fenced(script) + "\n" + fenced(script)))).toBe(true);
     expect(unknown(replyBranch("call-1", fenced(script), 2))).toBe(true);
     expect(unknown(replyBranch("call-1", "```js workflow\n" + script))).toBe(true);
     expect(unknown(replyBranch("call-1", "No block, just prose."))).toBe(true);
-    expect(workflowCallTargets({ workflow: true })!.dynamic).toBe(true);
+    expect(requireValue(workflowCallTargets({ workflow: true })).dynamic).toBe(true);
 
     // A workflow fence quoted inside another fence is documentation, not the script.
     const quoted = "````md\n```js workflow\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n````\n" + fenced(script);
-    expect([...workflowCallTargets({ workflow: true }, {
+    expect([...requireValue(workflowCallTargets({ workflow: true }, {
       toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", quoted) },
-    })!.agents]).toEqual(["scout"]);
+    })).agents]).toEqual(["scout"]);
   });
 
   it("reads a workflow script path relative to the request cwd", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-workflow-path-"));
     fs.mkdirSync(path.join(dir, "ci"));
     fs.writeFileSync(path.join(dir, "ci", "sweep.js"), `return runs.run("main", { agent: "worker", task: "sweep" })`);
-    expect([...workflowCallTargets({ workflow: "./ci/sweep.js" }, { cwd: dir })!.agents]).toEqual(["worker"]);
-    expect([...workflowCallTargets({ workflow: "./sweep.js", cwd: "ci" }, { cwd: dir })!.agents]).toEqual(["worker"]);
-    expect(workflowCallTargets({ workflow: "./missing.js" }, { cwd: dir })!.dynamic).toBe(true);
+    expect([...requireValue(workflowCallTargets({ workflow: "./ci/sweep.js" }, { cwd: dir })).agents]).toEqual(["worker"]);
+    expect([...requireValue(workflowCallTargets({ workflow: "./sweep.js", cwd: "ci" }, { cwd: dir })).agents]).toEqual(["worker"]);
+    expect(requireValue(workflowCallTargets({ workflow: "./missing.js" }, { cwd: dir })).dynamic).toBe(true);
     // A named workflow resource is extension code we cannot read.
-    expect(workflowCallTargets({ workflow: "review" }, { cwd: dir })!.dynamic).toBe(true);
+    expect(requireValue(workflowCallTargets({ workflow: "review" }, { cwd: dir })).dynamic).toBe(true);
     // Management calls and structured single-child launches run no script.
     expect(workflowCallTargets({ action: "list" })).toBeUndefined();
     expect(workflowCallTargets({ agent: "worker", task: "a" })).toBeUndefined();
@@ -499,7 +503,7 @@ describe("subagent model inheritance", () => {
 
   it("ledgers cross-provider attempts separately and gates resume work", async () => {
     createProject({ name: "Subagent billing", projectId: "sub-billing", spendLimitUsd: 0.5 });
-    const handlers = new Map<string, (event: any, ctx?: any) => any>();
+    const handlers = new Map<string, FixtureExtensionHandler>();
     const eventHandlers = new Map<string, (event: unknown) => void>();
     const extension = makeSubagentLedgerExtension(
       "sub-billing",
@@ -512,12 +516,12 @@ describe("subagent model inheritance", () => {
       (providerId) => providerId === "openai-codex",
     );
     extension({
-      on: (name: string, handler: (event: any, ctx?: any) => any) => handlers.set(name, handler),
+      on: (name: string, handler: FixtureExtensionHandler) => handlers.set(name, handler),
       events: {
         on: (name: string, handler: (event: unknown) => void) =>
           eventHandlers.set(name, handler),
       },
-    } as any);
+    } as Parameters<typeof extension>[0]);
 
     await handlers.get("tool_result")!({
       toolName: "subagent",
@@ -567,7 +571,7 @@ describe("subagent model inheritance", () => {
     // The same gate has to see a model named inside a workflow script, which
     // since pi-subagents 0.74 lives in the reply that issues `workflow: true`.
     const script = `return runs.run("main", { agent: "custom", model: "github-copilot/claude-sonnet-5", task: "test" })`;
-    const scripted = await handlers.get("tool_call")!(
+    const scripted = await requireValue(handlers.get("tool_call"))(
       { toolName: "subagent", toolCallId: "call-gate", input: { workflow: true } },
       { cwd: resolvePaths("sub-billing").sandbox, sessionManager: { getBranch: () => replyBranch("call-gate", fenced(script)) } },
     );
@@ -576,7 +580,7 @@ describe("subagent model inheritance", () => {
       reason: expect.stringMatching(/subscription login/i),
     });
     // The internal carrier is still read for host-originated calls.
-    const carried = await handlers.get("tool_call")!({ toolName: "subagent", input: { workflowScript: script } });
+    const carried = await requireValue(handlers.get("tool_call"))({ toolName: "subagent", input: { workflowScript: script } });
     expect(carried).toMatchObject({ block: true });
   });
 });

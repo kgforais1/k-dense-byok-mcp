@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -41,7 +43,7 @@ describe("snapshotChat", () => {
   it("writes a compact, sandbox-relative transcript without reasoning or full outputs", () => {
     const { paths } = writeSession("snapshot-basic", "sess-a", []);
     writeSession("snapshot-basic", "sess-a", rows(paths.sandbox, "sess-a"));
-    const snap = snapshotChat(paths, "sess-a", { title: "QC\nchat", now: Date.UTC(2026, 9, 3) })!;
+    const snap = requireValue(snapshotChat(paths, "sess-a", { title: "QC\nchat", now: Date.UTC(2026, 9, 3) }));
     expect(snap.path).toMatch(/^\.kady\/chat-snapshots\/sess-a-[a-f0-9]{16}\.md$/);
     expect(snap).toMatchObject({ prompts: 1, omittedTurns: 0 });
     const text = fs.readFileSync(path.join(paths.sandbox, snap.path), "utf-8");
@@ -64,12 +66,12 @@ describe("snapshotChat", () => {
     const { paths } = writeSession("snapshot-reuse", "sess-b", []);
     const base = rows(paths.sandbox, "sess-b");
     writeSession("snapshot-reuse", "sess-b", base);
-    const first = snapshotChat(paths, "sess-b")!;
-    const again = snapshotChat(paths, "sess-b")!;
+    const first = requireValue(snapshotChat(paths, "sess-b"));
+    const again = requireValue(snapshotChat(paths, "sess-b"));
     expect(again.path).toBe(first.path);
     expect(again.digest).toBe(first.digest);
     writeSession("snapshot-reuse", "sess-b", [...base, msg({ role: "user", content: [{ type: "text", text: "Next" }] })]);
-    const changed = snapshotChat(paths, "sess-b")!;
+    const changed = requireValue(snapshotChat(paths, "sess-b"));
     expect(changed.path).not.toBe(first.path);
     expect(changed.prompts).toBe(2);
     expect(fs.existsSync(path.join(paths.sandbox, first.path))).toBe(true);

@@ -1,4 +1,6 @@
+// FORK: check required values at runtime instead of asserting away nullability.
 "use client";
+import { required as requireValue } from "../lib/required";
 
 import { buildDatabaseContext } from "@/components/database-selector";
 import { buildSkillsContext } from "@/components/skills-selector";
@@ -280,10 +282,10 @@ export function MessageQueueDisplay({
                       {delegated > 0 && (
                         <span
                           className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                          title={context!.delegation.auto ? "Delegate: Kady picks" : `Delegate: ${context!.delegation.specialists.join(", ")}`}
+                          title={requireValue(context).delegation.auto ? "Delegate: Kady picks" : `Delegate: ${requireValue(context).delegation.specialists.join(", ")}`}
                         >
                           <UsersIcon className="size-2.5" />
-                          {context!.delegation.auto ? "auto" : delegated}
+                          {requireValue(context).delegation.auto ? "auto" : delegated}
                         </span>
                       )}
                       {context?.delegation.verify && (

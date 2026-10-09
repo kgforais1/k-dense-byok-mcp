@@ -65,10 +65,12 @@ export function makeSubagentControlExtension(projectId: string): ExtensionFactor
     const rpc = (method: string, params: Rec = {}): Promise<SubagentRpcResult> => new Promise((resolve, reject) => {
       const requestId = randomUUID();
       const event = `subagents:rpc:v1:reply:${requestId}`;
-      const cleanup = () => { clearTimeout(timer); off(); pending.delete(cancel); };
-      const cancel = () => { cleanup(); reject(new Error("Specialist session closed")); };
-      const timer = setTimeout(() => { cleanup(); reject(new Error("Specialist control request timed out")); }, 20_000);
-      const off = pi.events.on(event, (raw: unknown) => {
+      // FORK: establish cleanup handles before callbacks can refer to them.
+      const handles: { timer?: ReturnType<typeof setTimeout>; off?: () => void } = {};
+      function cleanup() { clearTimeout(handles.timer); handles.off?.(); pending.delete(cancel); }
+      function cancel() { cleanup(); reject(new Error("Specialist session closed")); }
+      handles.timer = setTimeout(() => { cleanup(); reject(new Error("Specialist control request timed out")); }, 20_000);
+      handles.off = pi.events.on(event, (raw: unknown) => {
         const reply = raw as { success: boolean; data: SubagentRpcResult; error?: { message?: string } };
         cleanup();
         if (reply.success) resolve(reply.data);

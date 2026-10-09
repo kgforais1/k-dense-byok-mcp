@@ -20,18 +20,19 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 - Dependency manifests merged; lockfiles regenerated from fork lockfile baselines.
 
 ## Verification
-- Backend: 1,885 tests pass, 8 intentionally skipped; all coverage floors pass.
+- Backend: 1,888 tests pass, 8 intentionally skipped; all coverage floors pass.
 - Frontend: 928 tests and coverage pass; typechecks and lint pass in both packages.
-- Production webpack build passes; Turbopack cannot bind its CSS worker port in this environment despite elevated retries.
+- Production webpack build passes locally; the default production build passed Linux and Windows frontend CI.
 - Full `npm run verify -- all` passes; secret-history scans pass; exact synthetic fixture literals are narrowly allowlisted, and fixture paths use explicit placeholders.
 
 ## Known failures / Rough edges
-- Default production builder requires CI validation due local Turbopack port restriction.
+- Initial Windows backend CI failed a fixed-delay Modal recovery assertion; follow-up waits for the observed failure.
+- Initial CodeQL and DeepSource summaries require follow-up review. Static CodeQL triage evidence is retained privately; no alerts or verification rules were suppressed.
 - npm audit retains 1 backend high and 9 frontend high / 7 low findings; exact framework/harness pins retained and critical findings cleared with compatible fixes. Details in maintenance log.
 - Draft PR review/CI and lifecycle closeout remain before merge.
 
 ## Blockers
-- None for preparing the draft PR.
+- Merge remains blocked until the scanner summaries and follow-up Windows verification are resolved.
 
 ## Next action
-Check CI and review on PR #51. After review approval, finalize the plan/handoff closeout in the same PR before merge.
+Check the CI follow-up and scanner review on PR #51. After review approval, finalize the plan/handoff closeout in the same PR before merge.

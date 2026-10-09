@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "./required";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -104,7 +106,7 @@ describe("workspace persistence schema", () => {
           chat: {
             thinkingLevel: "high",
             attachedFiles: ["notes.md"],
-            researchRefs: projectState.tabs[0].chat!.researchRefs,
+            researchRefs: requireValue(projectState.tabs[0].chat).researchRefs,
             delegation: { specialists: [], auto: true, verify: true, verifiers: ["reviewer"] },
             composer: { text: "unfinished question", attachments: [] },
           },

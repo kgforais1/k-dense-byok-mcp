@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, expect, it } from "vitest";
@@ -14,7 +16,7 @@ it("upgrades historic shipped text with CRLF, preserves edits and does not resur
   seedPromptTemplates(paths);
   seedWatchdogGuidance(paths);
   const cases = [
-    { file: path.join(paths.sandbox, ".pi/prompts/qc.md"), fixture: "qc-v1.md", current: SEEDED_TEMPLATES.find((p) => p.name === "qc")!.content, seed: () => seedPromptTemplates(paths) },
+    { file: path.join(paths.sandbox, ".pi/prompts/qc.md"), fixture: "qc-v1.md", current: requireValue(SEEDED_TEMPLATES.find((p) => p.name === "qc")).content, seed: () => seedPromptTemplates(paths) },
     { file: path.join(paths.sandbox, ".pi/WATCHDOG.md"), fixture: "watchdog-v1.md", current: WATCHDOG_MD, seed: () => seedWatchdogGuidance(paths) },
   ];
   for (const c of cases) {

@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../../lib/required";
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import DataTable, { numericCell, type TableSummary } from "./data-table";
@@ -23,7 +25,7 @@ describe("data table previews", () => {
     fireEvent.click(screen.getByRole("button", { name: "Plot" }));
     fireEvent.change(screen.getByLabelText("X axis"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Y axis"), { target: { value: "2" } });
-    expect(JSON.parse(screen.getByTestId("chart").getAttribute("data-points")!)).toEqual([{ x: 10, y: 9 }, { x: 2, y: 3 }]);
+    expect(JSON.parse(requireValue(screen.getByTestId("chart").getAttribute("data-points")))).toEqual([{ x: 10, y: 9 }, { x: 2, y: 3 }]);
     expect(screen.getByText(/2 numeric pairs from 4 preview rows/)).toBeInTheDocument();
   });
   it("does not mistake nulls, booleans, identifiers, or nonfinite values for measurements", () => {

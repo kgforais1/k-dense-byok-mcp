@@ -22,6 +22,8 @@
  * pdf.js). The query form is redacted from request logs.
  */
 import crypto from "node:crypto";
+// FORK: throttle failed token checks without charging authenticated polling.
+import rateLimit from "@fastify/rate-limit";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { isExposedBind } from "./cors.ts";
 
@@ -94,20 +96,24 @@ export function redactAuthFromUrl(url: string): string {
   return url.replace(new RegExp(`([?&]${AUTH_QUERY_PARAM}=)[^&#]*`, "g"), "$1[redacted]");
 }
 
-export function registerAuth(app: FastifyInstance): void {
-  app.addHook("onRequest", (req: FastifyRequest, reply: FastifyReply, done) => {
+export async function registerAuth(app: FastifyInstance): Promise<void> {
+  // FORK: a separate bucket for failed authentication; valid tokens, health
+  // probes and preflights never consume it, even after another client fills it.
+  await app.register(rateLimit, { global: false });
+  const limitFailedAuth = app.rateLimit({ max: 30, timeWindow: "1 minute" });
+  app.addHook("onRequest", async (req: FastifyRequest, reply: FastifyReply) => {
     const token = ensureAuthToken();
     // Preflights carry no custom headers by design; the actual request is
     // checked. The health probe reveals nothing and the launcher polls it.
     if (!token || req.method === "OPTIONS" || req.url === "/health") {
-      done();
       return;
     }
     const presented = presentedToken(req);
     if (presented && safeEqual(presented, token)) {
-      done();
       return;
     }
+    await limitFailedAuth.call(app, req, reply);
+    if (reply.sent) return;
     // Model-auth failures are 401s too; this header is what tells the UI
     // to ask for the access token rather than a provider key.
     reply.header("X-Kady-Auth", "required");

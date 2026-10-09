@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../required.ts";
 /**
  * Verifier model routing (Settings → Defaults → Verifier model).
  *
@@ -111,7 +113,7 @@ export function reconcileVerifierModels(
   const overrides: Rec = { ...((subagents.agentOverrides as Rec | undefined) ?? {}) };
   const owned = readOwned(paths);
   const nextOwned: Record<string, string> = {};
-  const available = Boolean(verifierModel) && isAvailable(verifierModel!);
+  const available = Boolean(verifierModel) && isAvailable(requireValue(verifierModel));
   const desired = available ? verifierModel : undefined;
   const agents = new Map(listAgents(paths).map((agent) => [agent.name, agent] as const));
   let changed = false;
@@ -126,7 +128,7 @@ export function reconcileVerifierModels(
     const isOwned = ownedValue !== undefined;
     // The user's own override (a model, or `false` to clear one) wins.
     if (!isOwned && current !== undefined) continue;
-    const want = desired && isVerifierAgent(name) && agents.has(name) && !agents.get(name)!.model ? desired : undefined;
+    const want = desired && isVerifierAgent(name) && agents.has(name) && !requireValue(agents.get(name)).model ? desired : undefined;
     if (want) {
       nextOwned[name] = want;
       if (current !== want) {

@@ -17,7 +17,7 @@ import { DurableModalJobManager } from "../src/modal/manager.ts";
 import type { ModalAdapterFactory } from "../src/modal/adapter.ts";
 import { ModalJobError } from "../src/modal/types.ts";
 import { modalJobFiles, ModalJobStore } from "../src/modal/store.ts";
-import { collectOutputs, planInputs } from "../src/modal/transfer.ts";
+import { collectOutputs, planInputs, validateOutputTarget } from "../src/modal/transfer.ts";
 import { FakeModal, FakeSandbox, persistedRunningJob } from "./helpers/fake-modal.ts";
 
 const root = () => resolvePaths("default").sandbox;
@@ -187,6 +187,25 @@ describe("Modal local file protections", () => {
     await expect(collectOutputs({ sandbox, sandboxRoot: root(), stagingDir: path.join(PROJECTS_ROOT, "staging"), patterns: ["result.txt"], checked }))
       .rejects.toMatchObject({ code: "PROTECTED_OUTPUT" });
     expect(fs.readFileSync(path.join(root(), "result.txt"), "utf8")).toBe("original");
+  });
+
+  // FORK: case variants and Win32 trailing-dot/space aliases cannot transfer app state.
+  it.each([".KADY", ".Pi", ".KADY-JOB", ".kady.", ".pi "])("blocks reserved spelling %s before any transfer", async (reserved) => {
+    const canonical = reserved.replace(/[ .]+$/, "").toLowerCase();
+    fs.mkdirSync(path.join(root(), canonical), { recursive: true });
+    fs.writeFileSync(path.join(root(), canonical, "marker.txt"), "application state");
+    expect(() => planInputs(root(), [`${reserved}/marker.txt`])).toThrow(/reserved/);
+    expect(() => validateOutputTarget(root(), `${reserved}/new/marker.txt`)).toThrow(/reserved/);
+    const sandbox = new FakeSandbox("sb-case", { kind: "success" });
+    sandbox.filesystem.files.set(`/workspace/${reserved}/marker.txt`, Buffer.from("overwrite"));
+    sandbox.filesystem.files.set("/workspace/result.txt", Buffer.from("ordinary output"));
+    const stagingDir = path.join(PROJECTS_ROOT, "case-staging");
+    await expect(collectOutputs({ sandbox, sandboxRoot: root(), stagingDir, patterns: [`${reserved}/marker.txt`], checked }))
+      .rejects.toMatchObject({ code: "RESERVED_PATH" });
+    const result = await collectOutputs({ sandbox, sandboxRoot: root(), stagingDir, patterns: ["**"], checked });
+    expect(result.files.map((file) => file.path)).toEqual(["result.txt"]);
+    expect(fs.readFileSync(path.join(root(), "result.txt"), "utf8")).toBe("ordinary output");
+    expect(fs.readFileSync(path.join(root(), canonical, "marker.txt"), "utf8")).toBe("application state");
   });
 
   it.each([".pi", ".kady", ".kady-job"])("blocks input and output aliases into %s", async (reserved) => {

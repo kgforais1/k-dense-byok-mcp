@@ -3,7 +3,7 @@ branch: "sync/upstream-2026-10-08"
 plan: "dev-docs/plans/2026-10-08-upstream-sync-50.md"
 owner: "Codex"
 status: "in-progress"
-updated: "2026-10-08"
+updated: "2026-10-09"
 ---
 
 # Active Handoff: sync/upstream-2026-10-08
@@ -26,6 +26,7 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 - Full `npm run verify -- all` passes; secret-history scans pass; exact synthetic fixture literals are narrowly allowlisted, and fixture paths use explicit placeholders.
 
 ## Known failures / Rough edges
+- Modal reserved-root case handling is corrected with regression coverage; the same Muse and Opus instances found no surviving issue in the patch. Their disagreement about the older findings/dispositions remains, so alerts #367–#399 have not been dismissed.
 - Initial Windows backend CI failed a fixed-delay Modal recovery assertion; follow-up waits for the observed failure.
 - DeepSource JavaScript passes after the type and host-global corrections. CodeQL's failed-auth alert is resolved; its remaining guarded path/command and test-response annotations require follow-up review. Static triage evidence is retained privately; no alerts or verification rules were suppressed.
 - npm audit retains 1 backend high and 9 frontend high / 7 low findings; exact framework/harness pins retained and critical findings cleared with compatible fixes. Details in maintenance log.

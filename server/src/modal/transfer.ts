@@ -13,6 +13,9 @@ export const MAX_OUTPUT_PATTERNS = 128;
 export const MAX_OUTPUT_DISCOVERY_ENTRIES = 20_000;
 const REMOTE_WORKDIR = "/workspace";
 const RESERVED_ROOTS = new Set([".kady", ".pi", ".kady-job"]);
+// FORK: protect application state on case-insensitive filesystems and Win32 aliases.
+const isReservedRoot = (rel: string): boolean =>
+  RESERVED_ROOTS.has(rel.split("/")[0].replace(/[ .]+$/, "").toLowerCase());
 const REMOTE_INPUT_STAGING = "/tmp/kady-inputs";
 
 export class ModalTransferError extends ModalJobError {
@@ -37,7 +40,7 @@ export function normalizeTransferPath(raw: string): string {
   ) {
     throw new ModalTransferError("PATH_ESCAPE", `Path escapes the project sandbox: ${raw}`, 403);
   }
-  if (RESERVED_ROOTS.has(normalized.split("/")[0])) {
+  if (isReservedRoot(normalized)) {
     throw new ModalTransferError(
       "RESERVED_PATH",
       `Transfer path is reserved for application state: ${raw}`,
@@ -62,7 +65,8 @@ function safeLocal(sandboxRoot: string, rel: string): { target: string; canonica
   if (!isWithin(sandboxRoot, target)) {
     throw new ModalTransferError("PATH_ESCAPE", `Path escapes the project sandbox: ${rel}`, 403);
   }
-  const realRoot = fs.realpathSync(sandboxRoot);
+  // FORK: native canonicalization resolves filesystem spelling and Windows aliases.
+  const realRoot = fs.realpathSync.native(sandboxRoot);
   let existing = target;
   while (true) {
     try { fs.lstatSync(existing); break; }
@@ -75,7 +79,7 @@ function safeLocal(sandboxRoot: string, rel: string): { target: string; canonica
   }
   // lstat above deliberately treats a dangling symlink as existing; realpath
   // then rejects it instead of silently checking only its parent directory.
-  const realTarget = path.resolve(fs.realpathSync(existing), apiRelative(existing, target));
+  const realTarget = path.resolve(fs.realpathSync.native(existing), apiRelative(existing, target));
   return { target, canonicalRel: assertTransferIdentity(realRoot, realTarget, rel) };
 }
 
@@ -120,11 +124,11 @@ export function planInputs(sandboxRoot: string, requested: string[]): LocalInput
   const localByPath = new Map<string, string>();
   const seenFiles = new Set<string>();
   const activeDirectories = new Set<string>();
-  const realRoot = fs.realpathSync(sandboxRoot);
+  const realRoot = fs.realpathSync.native(sandboxRoot);
   let totalBytes = 0;
 
   const addFile = (local: string, rel: string) => {
-    const real = fs.realpathSync(local);
+    const real = fs.realpathSync.native(local);
     assertTransferIdentity(realRoot, real, rel);
     const stat = fs.statSync(real);
     if (!stat.isFile()) {
@@ -147,7 +151,7 @@ export function planInputs(sandboxRoot: string, requested: string[]): LocalInput
 
   const walk = (local: string, rel: string) => {
     const lst = fs.lstatSync(local);
-    const real = fs.realpathSync(local);
+    const real = fs.realpathSync.native(local);
     assertTransferIdentity(realRoot, real, rel);
     const stat = lst.isSymbolicLink() ? fs.statSync(real) : lst;
     if (stat.isFile()) {
@@ -393,7 +397,7 @@ async function listRemoteFiles(
       }
       const rel = path.posix.relative(REMOTE_WORKDIR, child.path);
       if (!rel || rel.startsWith("../")) continue;
-      if (RESERVED_ROOTS.has(rel.split("/")[0])) continue;
+      if (isReservedRoot(rel)) continue;
       if (child.type === "symlink") {
         throw new ModalTransferError(
           "REMOTE_SYMLINK",
@@ -494,7 +498,7 @@ export async function collectOutputs(args: {
   }
   const files = [...selected.values()].sort((a, b) => a.path.localeCompare(b.path));
   for (const file of files) {
-    if (RESERVED_ROOTS.has(file.path.split("/")[0])) {
+    if (isReservedRoot(file.path)) {
       throw new ModalTransferError("RESERVED_PATH", `Output path is reserved for application state: ${file.path}`, 403);
     }
     validateOutputTarget(args.sandboxRoot, file.path);

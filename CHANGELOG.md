@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Modal transfers protect application-state directory aliases** ([#51](https://github.com/kgforais1/k-dense-byok-mcp/pull/51)): case variants and trailing-dot/space spellings of reserved roots are rejected for inputs and outputs, including remote glob discovery. Native filesystem canonicalization checks existing aliases before transfer.
 - **Failed access-token checks are rate limited** ([#51](https://github.com/kgforais1/k-dense-byok-mcp/pull/51)): invalid credentials have a separate per-client budget; authenticated polling, health probes and preflights remain available. LaTeX compilation also resolves engine names to fixed executable literals at the compiler boundary.
 - **`adm-zip` 0.5.18 → 0.6.1**: clears [GHSA-7q85-xj36-vmfc](https://github.com/advisories/GHSA-7q85-xj36-vmfc) (high; uncontrolled allocation from a forged uncompressed-size header), and moves past the range of the still-unpatched [GHSA-vwc7-r8mq-g2x9](https://github.com/advisories/GHSA-vwc7-r8mq-g2x9). Not exploitable here either way — the one call site builds archives and never parses foreign bytes — but that argument had now needed revising twice, so upgrading beat dismissing a third alert. `@types/adm-zip` is dropped because 0.6 ships its own definitions.
 

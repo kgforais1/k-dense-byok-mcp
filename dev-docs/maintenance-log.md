@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-10-09 — Modal reserved-directory transfer correction (PR #51)
+
+- **Category:** Security / cross-platform transfer
+- **Summary:** Independent reviews identified an application-state protection bypass on case-insensitive filesystems. A shared reserved-root predicate now rejects mixed case and Win32 trailing-dot/space spellings across path validation, remote discovery and output selection. Native realpath canonicalization checks existing aliases in both input enumeration and output validation.
+- **Regression coverage:** Explicit input/output aliases and glob discoveries cannot transfer reserved state; ordinary outputs still install and existing application-state bytes remain unchanged. Existing symlink alias and raw-data guard tests remain enabled.
+- **Review:** The same Muse Spark 1.3 Free and Claude Opus 5.5 instances found no surviving bypass or regression in the candidate. Opus reproduced rejection on APFS, checked symlink aliases and confirmed the regression fails against the original implementation. Muse retains earlier caller-validation concerns; Opus traced the current callers and found those concerns do not establish a current exploit. No CodeQL alerts have been dismissed; scanner dispositions and overall PR lifecycle closeout remain separate from this correction.
+
 ### 2026-10-08 — Upstream 0.15.0 integration (PR #51, issue #50)
 
 - **Category:** Upstream sync / runtime / security / dependencies

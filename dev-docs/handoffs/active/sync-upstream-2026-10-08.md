@@ -26,7 +26,7 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 - Full `npm run verify -- all` passes; secret-history scans pass; exact synthetic fixture literals are narrowly allowlisted, and fixture paths use explicit placeholders.
 
 ## Known failures / Rough edges
-- Modal reserved-root case handling is corrected with regression coverage; the same Muse and Opus instances found no surviving issue in the patch. Their disagreement about the older findings/dispositions remains, so alerts #367–#399 have not been dismissed.
+- Modal reserved-root case handling is corrected with regression coverage; Muse reconciled its earlier concerns with Opus, and both agree the current CodeQL root-escape findings are false positives. Authorized dispositions are recorded; CodeQL is green. SonarCloud remains blocked on its reliability/security ratings (46 findings); its newly introduced trailing-trim regex is corrected with a linear scan.
 - Initial Windows backend CI failed a fixed-delay Modal recovery assertion; follow-up waits for the observed failure.
 - DeepSource JavaScript passes after the type and host-global corrections. CodeQL's failed-auth alert is resolved; its remaining guarded path/command and test-response annotations require follow-up review. Static triage evidence is retained privately; no alerts or verification rules were suppressed.
 - npm audit retains 1 backend high and 9 frontend high / 7 low findings; exact framework/harness pins retained and critical findings cleared with compatible fixes. Details in maintenance log.

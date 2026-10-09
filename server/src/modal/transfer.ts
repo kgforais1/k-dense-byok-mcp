@@ -14,8 +14,12 @@ export const MAX_OUTPUT_DISCOVERY_ENTRIES = 20_000;
 const REMOTE_WORKDIR = "/workspace";
 const RESERVED_ROOTS = new Set([".kady", ".pi", ".kady-job"]);
 // FORK: protect application state on case-insensitive filesystems and Win32 aliases.
-const isReservedRoot = (rel: string): boolean =>
-  RESERVED_ROOTS.has(rel.split("/")[0].replace(/[ .]+$/, "").toLowerCase());
+function isReservedRoot(rel: string): boolean {
+  const first = rel.split("/")[0];
+  let end = first.length;
+  while (end > 0 && (first[end - 1] === " " || first[end - 1] === ".")) end--;
+  return RESERVED_ROOTS.has(first.slice(0, end).toLowerCase());
+}
 const REMOTE_INPUT_STAGING = "/tmp/kady-inputs";
 
 export class ModalTransferError extends ModalJobError {

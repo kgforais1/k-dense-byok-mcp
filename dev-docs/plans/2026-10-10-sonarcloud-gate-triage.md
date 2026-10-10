@@ -144,24 +144,60 @@ separately and compare canonical paths component-aware (`os.path.commonpath`),
 covering Windows behaviour. If that proves awkward, resolve as FP on the caller
 boundary instead — an underspecified containment check is worse than no check.
 
-**`Web:S7039` (unsafe-inline, key `AaEjq_whuTTJwnnNnp3z`) has only a *partial* code
-remedy, and the obvious fix would break the Office editor.** Externalising the
-inline `<style>` block in `web/public/office/runtime.html:3` into a linked
-`web/public/office/runtime.css` and setting `style-src 'self'` is genuinely
-possible — nothing in `AGENTS.md` or `web/AGENTS.md` requires those rules to be
-inline, and they are static layout for the canvas. **But `'unsafe-inline'` cannot
-simply be deleted.** The runtime reveals the document by setting a style attribute
-from JavaScript — `canvas.style.visibility = 'visible'` at
-`web/public/office/runtime.js:61`, against a `visibility:hidden` default in that
-same stylesheet — and a script-set style attribute is governed by `style-src`.
-Dropping `unsafe-inline` therefore leaves the canvas permanently hidden and breaks
-Office editing entirely. The behaviour-preserving form is
-`style-src 'self'; style-src-attr 'unsafe-inline'`, plus the externalised
-stylesheet. Whether that silences `Web:S7039` or merely relocates it to
-`style-src-attr` is **unverified**. Treat this as Group 2 *only* behind a mandatory
-Writer/Calc/Impress open-edit-save browser smoke test; if the test fails or the
-finding persists, revert this row to a Group 3 `Won't fix` and record the exact
-violation as the justification.
+**`Web:S7039` (unsafe-inline, key `AaEjq_whuTTJwnnNnp3z`) has a full code remedy.**
+Externalise the inline `<style>` block in `web/public/office/runtime.html:3` verbatim
+into a new `web/public/office/runtime.css`, link it, and change
+`style-src 'self' 'unsafe-inline'` to `style-src 'self'`. Do **not** add
+`style-src-attr 'unsafe-inline'` — that would re-enable arbitrary parsed inline
+style attributes, which is exactly what the finding objects to, and would likely
+leave the finding in place.
+
+`runtime.html` contains exactly one `<style>` element and zero inline `style=`
+attributes, so this block is the only thing `'unsafe-inline'` was protecting.
+
+**The one thing that looked like a blocker, and was disproved by experiment.**
+`web/public/office/runtime.js:61` reveals the document with
+`canvas.style.visibility = 'visible'` against the stylesheet's `visibility:hidden`
+default, and a first reading assumed a script-set style attribute is governed by
+`style-src`, so dropping `'unsafe-inline'` would hide the canvas permanently.
+That assumption is false. Measured in a real browser against a fixture
+reproducing this page's exact structure — external stylesheet setting
+`visibility:hidden`, CSP `style-src 'self'; object-src 'none'; base-uri 'none'`,
+and the same scripted reveal:
+
+```
+computedVisibility: "visible"     inlineAttr: "visibility: visible;"   revealed: true
+externalCssApplied: true          stylesheets: [.../runtime-csp.css]
+```
+
+while the enforcement control, in the same document under the same policy, was
+blocked:
+
+```
+controlInlineColor: "rgb(0, 0, 0)"     // an element with style="color:rgb(255,0,0)"
+```
+
+so the policy is genuinely active and the asymmetry is real. The reason is
+documented: CSP `style-src`/`style-src-attr` blocks *parsed* inline styles —
+`setAttribute("style", …)` and `element.style.cssText = …` — but does **not**
+block direct property assignment such as `element.style.visibility = …`, because
+that cannot be statically analysed (MDN, `style-src-attr`). The reveal therefore
+survives.
+
+This was the subject of the recorded disagreement below; it was settled by the
+experiment, and the third review reproduced the fixture independently and found
+no flaw.
+
+**Residual risk, still untested locally.** The pinned ZetaOffice snapshot is not
+present on this machine (`~/.kady/office-assets/zeta-2025-05-13/` does not exist),
+so the full engine could not be run. The Emscripten engine is loaded through
+`Module.mainScriptUrlOrBlob` (a blob `importScripts` of `soffice.js`), i.e. a Web
+Worker, and `runtime.js` contains no `<style>` injection, `cssText` or
+`insertRule` — so no other host-page style mechanism should depend on
+`unsafe-inline`. Confirm by running Writer, Calc and Impress open/edit/save
+against the real page before closing this out; the mandated smoke test below
+covers it, and a fallback to `Won't fix` with the recorded violation is the
+consequence if it fails.
 
 `S8541` is one line, but `--no-build` changes dependency installation behaviour.
 Land it only if CI still installs the scientific test dependencies; otherwise
@@ -201,13 +237,21 @@ reader needs to know which claims are still contested.
 
 1. **This session**, reading the API data and the flagged source directly.
 2. **`agy/gemini-3.8-flash-high`**, read-only, briefed with the same API data.
-3. **`kiro/gpt-5.6-sol`**, read-only, reviewing an earlier draft of this plan.
-   It found the plan's issue keys and aggregate arithmetic sound (all 28 table
-   rows matched, 11/9/8 counts and 378 min confirmed) and overturned several
-   dispositions — including two of this session's own errors, one of which was a
-   **fabricated element inside an example presented as empirical evidence**
-   (a four-item output for a three-item input) and one **invented API field**
-   (`inNewCodePeriod`, which the API does not return). Both are corrected here.
+3. **`kiro/gpt-5.6-sol`**, read-only, reviewing an earlier draft of this plan, then
+   re-reviewing the revised plan on an explicit challenge. It found the plan's issue
+   keys and aggregate arithmetic sound (all 28 table rows matched, 11/9/8 counts and
+   378 min confirmed) and overturned several dispositions — including two of this
+   session's own errors, one of which was a **fabricated element inside an example
+   presented as empirical evidence** (a four-item output for a three-item input) and
+   one **invented API field** (`inNewCodePeriod`, which the API does not return).
+   Both are corrected here.
+4. **The CSP question was settled by experiment, not by argument.** After I
+   overrode the third review's `Web:S7039` remedy on the strength of a
+   script-set-style-attribute objection, I built a browser fixture reproducing the
+   runtime page's structure, measured the result, and handed the fixture to the
+   reviewer to reproduce independently. It reproduced the same numbers, found no
+   flaw, and confirmed the mechanism from MDN. My objection was wrong; its original
+   remedy stands.
 
 ### Where the three investigations diverged
 
@@ -235,10 +279,11 @@ consumption, which supersedes both.
 own definitions (a false premise calls for FP). Corrected to **FP**.
 
 **`Web:S7039` unsafe-inline.** The original plan said "no code remedy". The third
-review identified a real partial remedy, and this session then found the limit of
-it: `runtime.js:61` sets `canvas.style.visibility` from script, so `unsafe-inline`
-is load-bearing for that mutation even after the stylesheet is externalised. See
-Group 2.
+review identified a real remedy; I then rejected it on the grounds that the scripted
+canvas reveal needed `unsafe-inline`, and the browser experiment disproved my
+objection (see Group 2). The disagreement was settled by evidence: the third review
+reproduced the fixture independently, found no flaw, and confirmed the mechanism
+from MDN's `style-src-attr` documentation. Its original remedy now stands.
 
 ## Implementation sequence
 
@@ -326,6 +371,9 @@ Group 3, 4 and 5 rows are proposals pending explicit user approval, and the
   the 2026-10-09 fixes). Update it in the same PR that lands the Group 1 code
   changes. Note that `AGENTS.md` itself does *not* describe these as evidence gaps
   — that wording lives in the handoff — so update the right file.
-- **The `style-src-attr` remedy is untested against Sonar.** If externalising the
-  stylesheet relocates rather than clears `Web:S7039`, record that outcome here so
-  the next attempt starts from a measured result rather than a guess.
+- **The externalised-stylesheet remedy is untested against the real engine.**
+  The pinned ZetaOffice snapshot is absent from this machine, so the CSP change
+  could only be validated against a synthetic fixture reproducing the page's
+  structure. Confirm against Writer, Calc and Impress open/edit/save before
+  closing this out, and record the measured outcome here so the next attempt
+  starts from a result rather than a guess.

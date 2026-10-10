@@ -6,10 +6,13 @@ import { diagnosticMatchesFile, parseFileLineDiagnostic } from "@/lib/latex/diag
 
 export type LogFilter = "all" | "problems";
 
-// FORK: explicit alternation grouping (typescript:S5850); the anchored markers and the
-// unanchored keywords are intentionally separate top-level branches — do not merge under ^.
-// Both branches are non-capturing groups so precedence is unambiguous; only .test() uses this.
-const PROBLEM_RE = /^(?:!|.*:\d+:|LaTeX Warning|Overfull|Underfull|Package \S+ Warning)|(?:not found|failed|timed out|cancelled|error)/i;
+// FORK: two explicitly grouped regexes (typescript:S5850). The predicate is the union
+// of start-anchored structural markers and unanchored failure keywords; keeping them
+// as separate expressions removes mixed anchor scope from any single pattern, which
+// no single-regex grouping can do without changing semantics. Do not merge.
+const PREFIX_PROBLEM_RE = /^(?:!|.*:\d+:|LaTeX Warning|Overfull|Underfull|Package \S+ Warning)/i;
+const ANYWHERE_PROBLEM_RE = /(?:not found|failed|timed out|cancelled|error)/i;
+const isProblemLine = (line: string) => PREFIX_PROBLEM_RE.test(line) || ANYWHERE_PROBLEM_RE.test(line);
 
 export const LogPanel = memo(function LogPanel({
   log,
@@ -39,7 +42,7 @@ export const LogPanel = memo(function LogPanel({
 }) {
   if (!open) return null;
   const lines = log.split("\n");
-  const shown = filter === "problems" ? lines.filter((l) => PROBLEM_RE.test(l)) : lines;
+  const shown = filter === "problems" ? lines.filter(isProblemLine) : lines;
   return (
     <div className="shrink-0 max-h-48 overflow-auto border-t bg-muted/10">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-muted/40 px-3 py-1">

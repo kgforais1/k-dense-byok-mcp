@@ -11,6 +11,8 @@ import { NotebookRobustnessService } from "../src/agent/notebook-robustness.ts";
 import { registerNotebookRobustnessRoutes } from "../src/api/notebook-robustness.ts";
 import { DurableModalJobManager } from "../src/modal/manager.ts";
 import { RobustnessFakeModal } from "./helpers/robustness-modal.ts";
+// FORK: wait for observable result readiness on slower Windows runners.
+import { WAIT_BUDGET_MS, waitFor } from "./helpers/timing.ts";
 let app: FastifyInstance;
 let manager: DurableModalJobManager;
 let service: NotebookRobustnessService;
@@ -50,9 +52,15 @@ describe("robustness API", () => {
     expect(fake.created).toBe(0);
     const approved = await inject(`${base}/${p.id}/approve`, { digest: p.digest, reviewedScript: true, approveRemote: true, acknowledgeEstimates: true, maxEstimatedUsd: p.totalReservationUsd });
     expect(approved.statusCode).toBe(200); expect(approved.json().attempts).toHaveLength(2);
-    await Promise.all(p.jobs.map((j: { jobId: string }) => manager.wait(project, j.jobId, 4000)));
-    const list = await inject(base); expect(list.json().workflows).toHaveLength(1);
-    expect(list.json().workflows[0].attempts.every((a: any) => a.resultStatus === "available")).toBe(true);
+    await Promise.all(p.jobs.map((j: { jobId: string }) => manager.wait(project, j.jobId, WAIT_BUDGET_MS)));
+    // FORK: a wait deadline is not a promise that both retained results are ready.
+    await waitFor(async () => {
+      const list = await inject(base);
+      expect(list.statusCode).toBe(200);
+      expect(list.json().workflows).toHaveLength(1);
+      expect(list.json().workflows[0].attempts).toHaveLength(2);
+      expect(list.json().workflows[0].attempts.every((a: { resultStatus: string }) => a.resultStatus === "available")).toBe(true);
+    });
     const full = await inject(`${base}/${p.id}`); expect(full.json().preview.draft.specifications).toHaveLength(2);
   });
   it("does not fall back to another project or accept a workflow through a different source", async () => {

@@ -380,6 +380,22 @@ describe("MCP routes", () => {
 });
 
 describe("Radius connector", () => {
+  // FORK: neither the preferred name nor occupied fallback names may be overwritten.
+  it("chooses a free name when both Radius names and a numbered fallback are occupied", () => {
+    const paths = ensureProjectExists("rad-collision");
+    const unrelated = {
+      radius: { url: "https://first.example/mcp" },
+      "radius-mcp": { command: "node", args: ["unrelated.mjs"] },
+      "radius-mcp-2": { url: "https://second.example/mcp" },
+    };
+    writeMcpServers("global", paths, unrelated);
+    expect(addRadiusConnector(paths)).toEqual({ name: "radius-mcp-3", replaced: false });
+    expect(readMcpServers("global", paths)).toEqual({
+      ...unrelated, "radius-mcp-3": { url: RADIUS_MCP_URL, auth: { provider: "radius" } },
+    });
+    expect(addRadiusConnector(paths)).toEqual({ name: "radius-mcp-3", replaced: true });
+  });
+
   it("adds the global connector once and reuses an entry at the Radius URL, as Pi's /login offer does", () => {
     const paths = ensureProjectExists("rad");
     expect(radiusConnectorState(paths, true)).toMatchObject({ signedIn: true, configured: false, name: null });

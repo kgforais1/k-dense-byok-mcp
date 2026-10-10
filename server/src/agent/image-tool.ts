@@ -292,13 +292,24 @@ export function makeImageTool(
           isError: true,
         };
       }
-      for (const [index, image] of images.entries()) {
-        const target = outputPath(sandbox, requested, index, images.length, image.mimeType);
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, Buffer.from(image.data, "base64"));
-        details.files.push(apiRelative(sandbox, target));
+      // FORK: post-generation failures must still return paid usage to the ledger.
+      try {
+        for (const [index, image] of images.entries()) {
+          const target = outputPath(sandbox, requested, index, images.length, image.mimeType);
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, Buffer.from(image.data, "base64"));
+          details.files.push(apiRelative(sandbox, target));
+        }
+        touchProject(projectId);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: `Image generation completed but saving failed: ${reason}. Saved files: ${details.files.join(", ") || "none"}.` }, ...notes],
+          details,
+          ...(usage ? { usage } : {}),
+          isError: true,
+        };
       }
-      touchProject(projectId);
       const cost = usage ? `, $${usage.cost.total.toFixed(4)}` : "";
       return {
         content: [

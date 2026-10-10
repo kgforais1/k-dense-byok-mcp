@@ -1,5 +1,14 @@
 # Maintenance Log
 
+### 2026-10-10 — Bot review corrections and dispositions (PR #51)
+
+- **Corrections:** Preserve image-provider usage and partial successful outputs when saving fails. Radius setup chooses a free numbered fallback instead of overwriting an unrelated global connector. Reject tombstoned warm/pending opens and dispose a cold session constructed while deletion was awaiting it.
+- **Lifecycle evidence:** A deterministic construction barrier reproduced the pending-open gap before the correction. Regression tests cover that interleaving, disposal failure after real cleanup, and failed transcript removal. Failed deletion clears the tombstone and permits reopening the retained transcript; `not_deleted` describes persistence, not a guarantee that a warm cache entry survives. Pi's shutdown emitter is async and catches handler errors, while release additionally handles a rejected emission. Keeping a tombstone permanently after failed deletion would unnecessarily strand the chat.
+- **Verification:** The four focused suites pass (79 tests), backend typecheck and lint pass, and `npm run verify -- all` passes outside the sandbox. The identical sandbox run stalled in a backend worker and was stopped only after the complete elevated ladder passed. No checks were disabled.
+- **Windows CI correction:** The failed backend job at `5ce59f3` asserted retained robustness results after a four-second job wait. The API regression now uses the shared wait budget and polls the two expected results; the focused two-test suite passes. This retains the result-readiness assertion instead of accepting partial or missing output.
+- **Dispositions:** The remaining CodeQL threads refer to dismissed alerts #376/#377; existing alert dispositions and scanner rules are unchanged. The owner explicitly approved a one-time 100-file-limit exception for this already assembled upstream sync, recorded in `AGENTS.md`.
+- **Follow-ups:** [#52](https://github.com/kgforais1/k-dense-byok-mcp/issues/52) retains immutable Office assets without weakening hash checks. [#53](https://github.com/kgforais1/k-dense-byok-mcp/issues/53) tracks the separate confirmed gap where paid tool usage in subscription chats is invisible to admission until final ledgering; the image-save fix does not resolve that gap. [#54](https://github.com/kgforais1/k-dense-byok-mcp/issues/54) records legacy Modal reservation recovery and JCAMP profile compatibility for further validation, without adopting the bot's suggested policy changes.
+
 ### 2026-10-09 — Targeted SonarCloud quality corrections (PR #51)
 
 - **Scope:** The 18 fix-worthy static findings: two ignored scheduler promises, twelve regex sites (including mirrored classifier copies and repeated URL expressions), three connector label associations and Office runtime language.

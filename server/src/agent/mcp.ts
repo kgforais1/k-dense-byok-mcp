@@ -280,6 +280,8 @@ export function addRadiusConnector(
   const existing = Object.entries(servers).find(([, config]) => sameUrl(config.url, RADIUS_MCP_URL));
   let name = existing?.[0] ?? "radius";
   if (!existing && name in servers) name = "radius-mcp";
+  // FORK: preserve unrelated connectors even when Pi's fallback is occupied.
+  for (let suffix = 2; !existing && name in servers; suffix++) name = `radius-mcp-${suffix}`;
   const { oauth: _oauth, ...base } = existing?.[1] ?? {};
   const config: McpServerConfig = existing
     ? { ...base, auth: { provider: RADIUS_PROVIDER_ID } }

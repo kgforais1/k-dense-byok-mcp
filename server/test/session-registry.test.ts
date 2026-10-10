@@ -2,9 +2,11 @@
 import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+// FORK: exercise construction barriers and failed-deletion recovery with real Pi sessions.
+import { DefaultResourceLoader, SessionManager } from "@earendil-works/pi-coding-agent";
 import { ensureProjectExists } from "../src/projects.ts";
-import { SHUTDOWN_GRACE_MS, disposeSession, disposeProjectSessions, getSession } from "../src/agent/session-registry.ts";
+// FORK: deletion admission and recovery share the live registry's lifecycle.
+import { SHUTDOWN_GRACE_MS, deleteSession, isDeletedSession, disposeSession, disposeProjectSessions, getSession } from "../src/agent/session-registry.ts";
 import { markHeadlessSession } from "../src/agent/headless-sessions.ts";
 import { subagentHost } from "../src/agent/subagent-control.ts";
 
@@ -80,6 +82,64 @@ describe("cold session opens", () => {
 });
 
 describe("session release", () => {
+  // FORK: deletion must fence opens that passed the first tombstone check.
+  it("does not publish a cold open that finishes during deletion", async () => {
+    const { paths, sessionId } = savedSession();
+    let resume!: () => void;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    const realReload = DefaultResourceLoader.prototype.reload;
+    vi.spyOn(DefaultResourceLoader.prototype, "reload").mockImplementationOnce(async function () {
+      started();
+      await gate;
+      return realReload.call(this);
+    });
+    const opening = getSession(projectId, paths, sessionId);
+    await ready;
+    const deleting = deleteSession(projectId, paths, sessionId);
+    expect(isDeletedSession(projectId, sessionId)).toBe(true);
+    // Allow construction to finish after deletion has fenced new callers.
+    resume();
+    expect(await getSession(projectId, paths, sessionId)).toBeNull();
+    expect(await opening).toBeNull();
+    expect(await deleting).toBe("deleted");
+    expect(await getSession(projectId, paths, sessionId)).toBeNull();
+  });
+
+  // FORK: not_deleted describes the transcript; cache eviction is recoverable.
+  it("allows a fresh open when disposal fails after releasing the original session", async () => {
+    const { paths, sessionId } = savedSession();
+    const session = requireValue(await getSession(projectId, paths, sessionId));
+    const realDispose = session.dispose.bind(session);
+    vi.spyOn(session, "dispose").mockImplementationOnce(() => {
+      realDispose();
+      throw new Error("Cleanup failed");
+    });
+    expect(await deleteSession(projectId, paths, sessionId)).toBe("not_deleted");
+    expect(isDeletedSession(projectId, sessionId)).toBe(false);
+    const reopened = requireValue(await getSession(projectId, paths, sessionId));
+    expect(reopened).not.toBe(session);
+    expect(reopened.messages.some(message => message.role === "user")).toBe(true);
+  });
+
+  it("allows reopening when transcript removal fails", async () => {
+    const { paths, sessionId } = savedSession();
+    await getSession(projectId, paths, sessionId);
+    const realRemove = fs.rmSync;
+    const remove = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (String(target).endsWith(".jsonl")) throw new Error("Transcript is locked");
+      return realRemove(target, options);
+    });
+    try {
+      expect(await deleteSession(projectId, paths, sessionId)).toBe("not_deleted");
+      expect(isDeletedSession(projectId, sessionId)).toBe(false);
+      expect((await getSession(projectId, paths, sessionId))?.sessionId).toBe(sessionId);
+    } finally {
+      remove.mockRestore();
+    }
+  });
+
   it("disposes after the grace period when a shutdown handler never settles", async () => {
     const { paths, sessionId } = savedSession();
     const session = requireValue((await getSession(projectId, paths, sessionId)));

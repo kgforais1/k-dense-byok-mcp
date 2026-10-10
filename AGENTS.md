@@ -44,6 +44,12 @@ fix the doc in the same PR or call it out explicitly.
 
 This repo is a fork: `kgforais1/k-dense-byok-mcp`. Never open PRs against, or push to, the upstream repo. Always pass `--repo kgforais1/k-dense-byok-mcp` to `gh pr create` (the `gh` default repo is set to the fork, but pass it explicitly anyway). A pre-push hook (`.githooks/pre-push`) blocks pushes to any remote that is not the fork, and then checks the `max-lines` ratchets — backend and frontend, one `.ratchets.json` each — are in sync and that no file exceeds its cap (`.githooks/pre-commit` keeps them synced); only the fork guard is fail-closed — the ratchet checks are skipped when `node` is absent rather than blocking the push; `start.mjs` activates it automatically via `git config core.hooksPath .githooks` on every launch (run that command manually if you haven't launched the app). Never use `git push --no-verify` (or any other hook-bypass flag) without explicitly asking the user first and getting confirmation. Fork work follows the **overlay rule** (additive over in-place; see `CONTRIBUTING.md#keeping-up-with-upstream`): new files and narrow seams, and a `// FORK:` marker on an **in-place edit to an upstream-owned file** where that is unavoidable. The rule exists so `git merge upstream/main` stays mechanical, so it applies only to files upstream also has — a fork-created file (`scripts/repo.mjs`, `server/eslint.config.mjs`, the `.githooks/`, anything under `dev-docs/`) cannot conflict and needs no marker. Check with `git cat-file -e upstream/main:<path>` rather than guessing. Keep PRs reviewable: if a branch would touch more than 100 files, split it into multiple (possibly stacked) PRs instead — each independently verifiable with its own checklist and closeout.
 
+<!-- FORK: owner-approved exception for the already assembled upstream sync. -->
+**One-time exception:** The repository owner explicitly exempted PR #51
+(`sync/upstream-2026-10-08`, upstream 0.15.0 integration) from the 100-file
+limit on 2026-10-10. Its upstream sync and narrow review corrections may land
+together. The limit continues to apply to other work.
+
 ## Work lifecycle (close it in the same PR)
 
 Canonical rules: [`docs/development/workflow.md#archive-lifecycle`](docs/development/workflow.md#archive-lifecycle). The short version, because this is the policy most often missed:

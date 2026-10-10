@@ -52,6 +52,37 @@ beforeEach(() => {
 });
 
 describe("generate_image", () => {
+  // FORK: paid usage survives filesystem failures, including partial saves.
+  it.each(["mkdir", "write", "partial"])("preserves billed usage after a %s failure", async (failure) => {
+    const sandbox = resolvePaths(projectId).sandbox;
+    const realWrite = fs.writeFileSync;
+    const realMkdir = fs.mkdirSync;
+    let imageWrites = 0;
+    const image = { type: "image", data: PNG.toString("base64"), mimeType: "image/png" };
+    const mkdir = vi.spyOn(fs, "mkdirSync").mockImplementation((target, options) => {
+      if (failure === "mkdir" && String(target).includes("generated")) throw new Error("Directory is unwritable");
+      return realMkdir(target, options);
+    });
+    const write = vi.spyOn(fs, "writeFileSync").mockImplementation((target, data, options) => {
+      if (String(target).endsWith(".png")) {
+        imageWrites++;
+        if (failure === "write" || (failure === "partial" && imageWrites === 2)) throw new Error("Disk is full");
+      }
+      return realWrite(target, data, options);
+    });
+    try {
+      const result = await run(projectId, { prompt: "x" }, registry(failure === "partial" ? [image, image] : [image]));
+      expect(result.isError).toBe(true);
+      expect(result.usage).toEqual(usage);
+      expect(result.details.model).toBe("openrouter/google/gemini-2.5-flash-image");
+      expect(result.details.files).toHaveLength(failure === "partial" ? 1 : 0);
+      for (const file of result.details.files) expect(fs.readFileSync(path.join(sandbox, file))).toEqual(PNG);
+    } finally {
+      write.mockRestore();
+      mkdir.mockRestore();
+    }
+  });
+
   it("prefers GPT Image 2.5 Sunburst when its credentials work", async () => {
     const sunburst = imageModel("openai/gpt-image-2.5-sunburst", { input: 8, output: 8 });
     const reg = { ...registry(), getAvailableOfType: vi.fn(async () => [...CATALOG, sunburst]) };

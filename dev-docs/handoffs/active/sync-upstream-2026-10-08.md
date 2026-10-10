@@ -3,7 +3,7 @@ branch: "sync/upstream-2026-10-08"
 plan: "dev-docs/plans/2026-10-08-upstream-sync-50.md"
 owner: "Codex"
 status: "in-progress"
-updated: "2026-10-09"
+updated: "2026-10-10"
 ---
 
 # Active Handoff: sync/upstream-2026-10-08
@@ -15,12 +15,18 @@ Draft review: [PR #51](https://github.com/kgforais1/k-dense-byok-mcp/pull/51).
 ## Decisions
 Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session identity, run admission/results, security gates and fork dependency fixes. Session deletion now awaits extension cleanup and marks deletion before yielding.
 
+The owner approved a one-time exception to the 100-file PR limit for PR #51.
+Bot review corrections preserve usage after image-save failure, avoid Radius
+connector-name collisions, and prevent pending cold opens from escaping deletion.
+Office asset availability, live tool-spend accounting and compatibility review
+are tracked in issues #52, #53 and #54 respectively.
+
 ## Changed files
 - Upstream product code and docs, plus fork integration seams in session registry, routes, scheduling and transfer.
 - Dependency manifests merged; lockfiles regenerated from fork lockfile baselines.
 
 ## Verification
-- Backend: 1,888 tests pass, 8 intentionally skipped; all coverage floors pass.
+- Backend: 1,910 tests pass, 8 intentionally skipped; typecheck and lint pass. Latest-revision coverage remains part of CI.
 - Frontend: 928 tests and coverage pass; typechecks and lint pass in both packages.
 - Production webpack build passes locally; the default production build passed Linux and Windows frontend CI.
 - Full `npm run verify -- all` passes; secret-history scans pass; exact synthetic fixture literals are narrowly allowlisted, and fixture paths use explicit placeholders.
@@ -34,7 +40,7 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 - Draft PR review/CI and lifecycle closeout remain before merge.
 
 ## Blockers
-- Merge remains blocked until the scanner summaries and follow-up Windows verification are resolved.
+- Current status supersedes the older scanner notes above: CodeQL, SonarCloud and DeepSource pass at `5ce59f3`. The Windows backend failure is a robustness result-readiness assertion; the review correction uses the shared wait budget and polls for both retained results. Latest-revision CI and Hyrax re-review remain pending before merge.
 
 ## Next action
 Check the CI follow-up and scanner review on PR #51. After review approval, finalize the plan/handoff closeout in the same PR before merge.

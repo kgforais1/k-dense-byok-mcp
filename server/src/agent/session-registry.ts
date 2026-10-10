@@ -805,6 +805,8 @@ export async function getSession(
   options: OpenSessionOptions = {},
 ): Promise<AgentSession | null> {
   const k = keyFor(projectId, sessionId);
+  // FORK: deletion fences warm and pending opens as well as disk lookup.
+  if (isDeletedSession(projectId, sessionId)) return null;
   const existing = live.get(k);
   if (existing) {
     live.delete(k); // re-insert to mark most-recently-used
@@ -824,6 +826,11 @@ export async function getSession(
       // FORK: preserve the durable headless choice on cold open.
       includeInterview: options.includeInterview ?? !isHeadlessSession(projectId, sessionId),
     });
+    // FORK: deletion may have started while asynchronous construction yielded.
+    if (isDeletedSession(projectId, sessionId)) {
+      await release(projectId, k, session);
+      return null;
+    }
     live.set(k, session);
     evictOverCap(projectId);
     return session;

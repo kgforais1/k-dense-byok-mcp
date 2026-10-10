@@ -82,22 +82,33 @@ matters for honesty, not for the gate.
 
 **Why the compare function, and why not `localeCompare`.** Bare `Array.sort()`
 orders by UTF-16 code units, which is locale-independent but puts every uppercase
-letter ahead of every lowercase one. Verified:
+letter ahead of every lowercase one. Verified empirically — the explicit code-unit
+comparator below is byte-identical to bare `.sort()` across every shape tested
+(lowercase names, mixed case, non-ASCII, surrogate pairs, and `Object.entries`
+pair arrays), while `localeCompare` is not:
 
 ```
-["alpha","Beta","gamma","Delta"]  code-unit: [Beta,Delta,alpha,gamma]
-                                  locale:    [alpha,Beta,Delta,gamma]   ← differ
-["a-b","aB","A-b"]                code-unit: [A-b,a-b,aB]
-                                  locale:    [a-b,A-b,aB]              ← differ
+["Session-10","Session-2","a1b2c3"]  code-unit: Session-10, Session-2, a1b2c3
+                                    locale:    a1b2c3, Session-10, Session-2   ← differ
+["Beta","alpha","Delta"]             code-unit: Beta, Delta, alpha
+                                    locale:    alpha, Beta, Delta             ← differ
+["zebra","Ähnlich","apple"]          code-unit: apple, zebra, zur(…), Ähnlich
+                                    locale:    Ähnlich, apple, …              ← differ
 ```
 
 `String.localeCompare` — the fix Sonar's message names — is the *wrong* remedy: it
-is locale- and ICU-dependent, so it makes the ordering *less* deterministic, and it
-would silently change the persisted order of `.kady` seed markers
-(`seededNamesPath`, `seededNamesFile`), the compaction summary file lists, and the
-verifier-model sidecar. Use an explicit comparator that preserves today's code-unit
-order exactly, e.g. `(a, b) => (a < b ? -1 : a > b ? 1 : 0)`. Behaviour is unchanged,
-determinism is unchanged, and the rule is satisfied.
+is locale- and ICU-dependent, so it makes ordering *less* deterministic and would
+diverge on any mixed-case, non-ASCII or session-id input. Use an explicit
+comparator that preserves today's code-unit order exactly, e.g.
+`(a, b) => (a < b ? -1 : a > b ? 1 : 0)`. Ordering is unchanged, determinism is
+unchanged, and the rule is satisfied.
+
+The divergence is **latent, not currently active**: every seeded roster, template
+and verifier name shipped today is lowercase (`LEGACY_SEEDED_TEMPLATES`,
+`LEGACY_SEEDED_ROSTER`), and `lab-notebook-view.tsx:144` only builds a `useMemo`
+dependency key, where order affects cache invalidation and not correctness. So the
+cost of getting this wrong is a future regression, not a present bug — which is
+why it still belongs in Group 1 rather than being dismissed.
 
 ### Group 2 — fix in code, hardens a real surface (2 issues)
 
@@ -192,9 +203,12 @@ Resolutions to be filed per this plan, not per the agent's table.
 3. **Verify the reliability rating empirically.** After Group 1 merges, confirm
    `new_reliability_rating` reaches A on a fresh analysis. This is the first
    empirical test of the assumption that resolving all bugs in new code yields A.
-4. **File Group 3 and Group 4 resolutions in the dashboard** with a `SONAR_TOKEN`
-   (not present in this environment; must be supplied). File FP and WONT per the
-   table, with the evidence column as the comment.
+4. **File Group 3 and Group 4 resolutions in the dashboard**. This step is
+   **not yet approved and must not be executed** — the user's standing
+   instruction is that nothing is marked in the SonarCloud dashboard yet.
+   A `SONAR_CLOUD_TOKEN` is now available in the repository's `.env` (gitignored;
+   never log or commit its value). Until it is supplied to a shell, every
+   resolution below is a proposal only.
 5. **Re-verify the security rating.** Expect the trajectory D → C → B → A as each
    severity band clears; if it does not clear after all seven are resolved, the
    new-code window mismatch noted below needs investigation rather than more
@@ -219,7 +233,9 @@ Do not switch any `.sort()` to `localeCompare`, and do not collapse the
 code-unit comparator into a shorter form that changes ordering.
 
 No dashboard action is taken as part of a code PR — dispositions are a separate,
-user-approved step.
+user-approved step. **Nothing in this plan authorizes a dashboard change**: all
+Group 3 and Group 4 rows are proposals pending explicit user approval, and the
+`SONAR_CLOUD_TOKEN` in `.env` is gitignored and must never be logged or committed.
 
 ## Verification gates
 

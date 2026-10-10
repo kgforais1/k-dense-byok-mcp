@@ -329,12 +329,12 @@ from MDN's `style-src-attr` documentation. Its original remedy now stands.
 3. **Verify the reliability rating empirically.** After Group 1 merges, confirm
    `new_reliability_rating` reaches A on a fresh analysis. This is the first
    empirical test of the assumption that resolving all bugs in new code yields A.
-4. **File Group 3, 4 and 5 resolutions in the dashboard**. This step is
-   **not yet approved and must not be executed** — the user's standing
-   instruction is that nothing is marked in the SonarCloud dashboard yet.
-   A `SONAR_CLOUD_TOKEN` is now available in the repository's `.env` (gitignored;
-   never log or commit its value). Until it is supplied to a shell, every
-   resolution below is a proposal only.
+4. **File Group 3, 4 and 5 resolutions in the dashboard**. **Done 2026-10-10.**
+   The user approved and all nine were resolved with the evidence column as the
+   comment: six as False positive, three as Won't fix (all statuses verified
+   `RESOLVED` via the API). `new_security_rating` moved D→C on the next gate
+   evaluation, confirming the resolutions count. `new_reliability_rating` remains
+   D until the Group 1 code below is pushed and re-analyzed.
 5. **Re-verify the security rating.** Expect the trajectory D → C → B → A as each
    severity band clears; if it does not clear after all nine vulnerabilities are
    resolved, investigate why rather than adding more dispositions.

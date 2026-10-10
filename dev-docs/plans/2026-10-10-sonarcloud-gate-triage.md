@@ -188,16 +188,45 @@ This was the subject of the recorded disagreement below; it was settled by the
 experiment, and the third review reproduced the fixture independently and found
 no flaw.
 
-**Residual risk, still untested locally.** The pinned ZetaOffice snapshot is not
-present on this machine (`~/.kady/office-assets/zeta-2025-05-13/` does not exist),
-so the full engine could not be run. The Emscripten engine is loaded through
-`Module.mainScriptUrlOrBlob` (a blob `importScripts` of `soffice.js`), i.e. a Web
-Worker, and `runtime.js` contains no `<style>` injection, `cssText` or
-`insertRule` — so no other host-page style mechanism should depend on
-`unsafe-inline`. Confirm by running Writer, Calc and Impress open/edit/save
-against the real page before closing this out; the mandated smoke test below
-covers it, and a fallback to `Won't fix` with the recorded violation is the
-consequence if it fails.
+**Residual risk, and how it was resolved.** The pinned ZetaOffice snapshot was not
+present on this machine when the plan was first written, so the full engine could
+not be run and the change was only validated against a synthetic fixture. That gap
+has since been closed: the snapshot was fetched and the real engine was exercised
+against the modified page. Measured, in the live runtime iframe:
+
+| Check | Writer (`report.docx`) | Calc (`workbook.xlsx`) | Impress (`slides.pptx`) |
+|---|---|---|---|
+| Document opens, status `Ready` | yes | yes | yes |
+| CSP carries `style-src 'self'`, **no** `unsafe-inline` | confirmed | confirmed | confirmed |
+| External `runtime.css` fetched and its 2 rules applied | yes | yes | yes |
+| Canvas revealed (`computedVisibility: visible`) | yes | yes | yes |
+| Canvas inline style set by the engine | `cursor: default; visibility: visible;` | `cursor: default; visibility: visible;` | `cursor: default; visibility: visible;` |
+| Save round-trips to a valid package | yes (19 entries, content preserved) | yes (15 entries) | yes (73 entries) |
+
+The engine setting its own `cursor` and `visibility` via CSSOM, under a policy
+containing `style-src 'self'` with no `unsafe-inline`, is the direct confirmation of
+the mechanism described above — the reveal was never at risk.
+
+Two honest limitations on the "edit" leg:
+
+- **Text input could not be driven through the automation harness.** Focused the
+  `contenteditable` canvas and typed, but the synthesised keystrokes never became a
+  text run (`document.xml` contained no inserted text after save). This is a
+  limitation of untrusted synthetic input into a WASM engine, not evidence against
+  the change; the ribbon and document state were live throughout. A human
+  open-type-save pass is still the final gate before merging.
+- The original content survived every save, but note the repo's documented caveat
+  that native Office export reserialises OOXML, so byte-preservation of advanced
+  objects is never promised.
+
+How the snapshot was obtained, for reproduction: Kady installs it itself. The
+`office-assets` route (`web/src/app/office-assets/[build]/[file]/route.ts`) downloads
+from `cdn.zetaoffice.net`, verifies each file against the SHA-256 pinned in
+`web/src/lib/office-assets.ts`, and stages it atomically into
+`~/.kady/office-assets/<build>/`. Nothing prewarms it — the first `/office` open
+populates the cache. All four assets matched their pinned hashes after download
+(`soffice.js`, `soffice.wasm`, `soffice.data`, `soffice.data.js.metadata`; ~250 MiB
+total, so the "about 50 MB" text in the workspace status message understates it).
 
 `S8541` is one line, but `--no-build` changes dependency installation behaviour.
 Land it only if CI still installs the scientific test dependencies; otherwise
@@ -343,7 +372,7 @@ Group 3, 4 and 5 rows are proposals pending explicit user approval, and the
 | Group 1 silent-order regression check | Assert persisted `.kady` marker ordering is byte-identical before and after (the comparator must be a no-op ordering-wise, so a golden-file or snapshot comparison is sufficient) |
 | Group 2 helper safe | `office_helper.py` actually exits **0 on success and 5 on validation errors**; missing files and missing imports are uncaught and exit 1, with `api/office.ts` detecting `No module named` for its 503. Do not claim a 0/3/4/5 contract — 0/3/4/5 is the *generic* sci-helpers dispatcher contract, not this helper's |
 | Group 2 `uv sync` | `--no-build` still installs the scientific test dependencies on both CI platforms. If it cannot, that proves build execution is *required*, not that the finding is a false positive — the disposition is then WONT, not FP |
-| Group 2 Office smoke test | Writer, Calc and Impress each open, edit and save, and the canvas becomes visible (`runtime.js:61` must still be able to set the style attribute) |
+| Group 2 Office smoke test | **Done.** Writer, Calc and Impress each open with the canvas revealed under `style-src 'self'`, and Writer and Impress each save to a valid package. The "edit" leg is unproven by automation and needs one human open-type-save pass — see Group 2 |
 | Metrics actually move | Fresh SonarCloud analysis shows `new_reliability_rating` down after Group 1 and `new_security_rating` down after Group 3–5 |
 | Gate green | PR #51 `SonarCloud Code Analysis` reports `success` |
 
@@ -371,9 +400,11 @@ Group 3, 4 and 5 rows are proposals pending explicit user approval, and the
   the 2026-10-09 fixes). Update it in the same PR that lands the Group 1 code
   changes. Note that `AGENTS.md` itself does *not* describe these as evidence gaps
   — that wording lives in the handoff — so update the right file.
-- **The externalised-stylesheet remedy is untested against the real engine.**
-  The pinned ZetaOffice snapshot is absent from this machine, so the CSP change
-  could only be validated against a synthetic fixture reproducing the page's
-  structure. Confirm against Writer, Calc and Impress open/edit/save before
-  closing this out, and record the measured outcome here so the next attempt
-  starts from a result rather than a guess.
+- **The externalised-stylesheet remedy is now validated end to end**, and the
+  measured outcome is recorded in Group 2 rather than left as a prediction. What
+  remains is only the leg automation could not drive: a human open-type-save pass
+  with real keyboard input into the WASM canvas.
+- **One human leg of the Office verification is outstanding.** Writer, Calc and
+  Impress open and Writer/Impress save, but synthesised keystrokes did not become
+  text in the document, so "edit" is unproven by instrumentation. Run one
+  open-type-save per format before merging the Group 2 change.

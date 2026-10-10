@@ -35,7 +35,8 @@ export async function renderOffice(model: OfficeText): Promise<{ html?: string; 
     ignoreLastRenderedPageBreak: false, breakPages: true,
   });
   const widths = [...body.querySelectorAll<HTMLElement>("section.docx")].map(p => {
-    const value = parseFloat(p.style.width);
+    // FORK: Number.parseFloat (typescript:S7773); global parseFloat is shadowable.
+    const value = Number.parseFloat(p.style.width);
     return value * (p.style.width.endsWith("pt") ? 4 / 3 : 1);
   }).filter(Number.isFinite);
   return { html: officeHtmlDocument(styles.innerHTML + body.innerHTML), pageWidth: Math.max(816, ...widths) };

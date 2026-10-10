@@ -628,7 +628,8 @@ export function ConnectorsPanel() {
 
   const providerName = (id: string) => authProviders?.find((p) => p.id === id)?.name ?? id;
 
-  const allNames = useMemo(() => Object.keys(servers).sort(), [servers]);
+  // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+  const allNames = useMemo(() => Object.keys(servers).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), [servers]);
   const names = allNames.filter((name) => matchesQuery(query, name, summarizeConfig(servers[name])));
   const statusFor = (name: string) => status?.find((s) => s.name === name && s.scope === scope);
 
@@ -967,12 +968,13 @@ export function ConnectorsPanel() {
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium">Authentication</label>
+                    {/* FORK: htmlFor associates the label with its control (typescript:S6853). */}
+                    <label htmlFor={`${formId}-auth`} className="text-xs font-medium">Authentication</label>
                     <Select
                       value={form.authMode}
                       onValueChange={(v) => setForm({ ...form, authMode: v as McpAuthMode })}
                     >
-                      <SelectTrigger size="sm" className="h-8 w-full text-xs" aria-label="Authentication">
+                      <SelectTrigger id={`${formId}-auth`} size="sm" className="h-8 w-full text-xs" aria-label="Authentication">
                         <SelectValue>{AUTH_MODE_LABELS[form.authMode]}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>

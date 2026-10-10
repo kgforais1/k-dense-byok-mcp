@@ -255,7 +255,8 @@ function readSeededNames(paths: ProjectPaths): Set<string> {
 }
 
 function writeSeededNames(paths: ProjectPaths, names: Iterable<string>): void {
-  fs.writeFileSync(seededNamesPath(paths), JSON.stringify([...new Set(names)].sort()) + "\n", "utf-8");
+  // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+  fs.writeFileSync(seededNamesPath(paths), JSON.stringify([...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) + "\n", "utf-8");
 }
 
 // --- frontmatter (YAML subset) --------------------------------------------

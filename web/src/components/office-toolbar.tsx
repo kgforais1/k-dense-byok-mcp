@@ -46,9 +46,10 @@ export function OfficeToolbar({ kind, enabled, state, onCommand }: {
           <option value="">Size</option>{[...new Set([Number(state[".uno:FontHeight"]?.value || 0), 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72])].filter(Boolean).sort((a, b) => a - b).map(size => <option key={size}>{size}</option>)}
         </select>{divider}
         {tool("Bold", ".uno:Bold", BoldIcon)}{tool("Italic", ".uno:Italic", ItalicIcon)}{tool("Underline", ".uno:Underline", UnderlineIcon)}
+        {/* FORK: Number.parseInt below (typescript:S7773); global parseInt is shadowable. */}
         <label title="Text color" className={cn("relative flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-accent", !enabled && "opacity-40")}>
           <TypeIcon className="size-4 text-muted-foreground" /><input type="color" aria-label="Text color" disabled={!enabled} className="absolute inset-0 cursor-pointer opacity-0"
-            onChange={e => onCommand(".uno:Color", { Color: parseInt(e.target.value.slice(1), 16) })} />
+            onChange={e => onCommand(".uno:Color", { Color: Number.parseInt(e.target.value.slice(1), 16) })} />
         </label>{divider}
         {tool("Align left", sheet ? ".uno:AlignLeft" : ".uno:LeftPara", AlignLeftIcon)}{tool("Align center", sheet ? ".uno:AlignHorizontalCenter" : ".uno:CenterPara", AlignCenterIcon)}{tool("Align right", sheet ? ".uno:AlignRight" : ".uno:RightPara", AlignRightIcon)}
         {!sheet && tool("Justify", ".uno:JustifyPara", AlignJustifyIcon)}{divider}

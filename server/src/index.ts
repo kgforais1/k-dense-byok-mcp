@@ -265,7 +265,8 @@ if (isMain) {
   // both services): project data and keys stay private on shared hosts.
   if (process.platform !== "win32" && !process.env.KADY_LAUNCHER) {
     const configured = process.env.KADY_UMASK?.trim();
-    process.umask(configured && /^[0-7]{3,4}$/.test(configured) ? parseInt(configured, 8) : 0o077);
+    // FORK: Number.parseInt (typescript:S7773); global parseInt is shadowable.
+    process.umask(configured && /^[0-7]{3,4}$/.test(configured) ? Number.parseInt(configured, 8) : 0o077);
   }
   // Before anything makes an outbound request: Node's fetch ignores
   // HTTP_PROXY/HTTPS_PROXY on its own, so a proxied network would otherwise

@@ -141,7 +141,8 @@ export function LabNotebookView({
   const labelledSessionsKey = useMemo(() => {
     const ids = new Set(projectData.entries.map((e) => e.sessionId).filter((id): id is string => Boolean(id)));
     if (sessionId) ids.add(sessionId);
-    return [...ids].sort().join("\n");
+    // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+    return [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join("\n");
   }, [projectData.entries, sessionId]);
 
   // Labels are cosmetic; a failed label lookup must not hide notebook data.

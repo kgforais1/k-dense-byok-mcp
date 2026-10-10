@@ -143,7 +143,8 @@ export function reconcileVerifierModels(
     }
   }
 
-  const ownedChanged = JSON.stringify(Object.entries(owned).sort()) !== JSON.stringify(Object.entries(nextOwned).sort());
+  // FORK: explicit tuple-string comparator (typescript:S2871); a < b on tuples does not typecheck, and localeCompare would be locale-dependent.
+  const ownedChanged = JSON.stringify(Object.entries(owned).sort((a, b) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0))) !== JSON.stringify(Object.entries(nextOwned).sort((a, b) => (String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0)));
   if (changed) {
     if (Object.keys(overrides).length > 0) subagents.agentOverrides = overrides;
     else delete subagents.agentOverrides;
@@ -158,7 +159,8 @@ export function reconcileVerifierModels(
   }
   return {
     changed,
-    routed: Object.keys(nextOwned).sort(),
+    // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+    routed: Object.keys(nextOwned).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
     ...(verifierModel && !available ? { skipped: "unavailable" as const } : {}),
   };
 }
@@ -166,7 +168,8 @@ export function reconcileVerifierModels(
 /** The verifiers Kady currently routes in this project, and their model. */
 export function routedVerifiers(paths: ProjectPaths): { model: string; agents: string[] } | null {
   const owned = readOwned(paths);
-  const agents = Object.keys(owned).sort();
+  // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+  const agents = Object.keys(owned).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const models = new Set(Object.values(owned));
   return agents.length > 0 && models.size === 1 ? { model: [...models][0], agents } : null;
 }

@@ -6,7 +6,9 @@ import { diagnosticMatchesFile, parseFileLineDiagnostic } from "@/lib/latex/diag
 
 export type LogFilter = "all" | "problems";
 
-const PROBLEM_RE = /^(!|.*:\d+:|LaTeX Warning|Overfull|Underfull|Package \S+ Warning)|not found|failed|timed out|cancelled|error/i;
+// FORK: explicit alternation grouping (typescript:S5850); the anchored markers and the
+// unanchored keywords are intentionally separate top-level branches — do not merge under ^.
+const PROBLEM_RE = /^(!|.*:\d+:|LaTeX Warning|Overfull|Underfull|Package \S+ Warning)|(?:not found|failed|timed out|cancelled|error)/i;
 
 export const LogPanel = memo(function LogPanel({
   log,

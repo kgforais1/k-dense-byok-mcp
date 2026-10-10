@@ -195,8 +195,9 @@ export function compactionFileLists(
   ]);
   const read = new Set([...(fileOps?.read ?? []), ...taggedFiles(previousSummary, "read-files")]);
   return {
-    readFiles: [...read].filter((file) => !modified.has(file)).sort(),
-    modifiedFiles: [...modified].sort(),
+    // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+    readFiles: [...read].filter((file) => !modified.has(file)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    modifiedFiles: [...modified].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
   };
 }
 

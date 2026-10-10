@@ -340,7 +340,8 @@ function readSeededNames(paths: ProjectPaths): Set<string> {
 
 function writeSeededNames(paths: ProjectPaths, names: Iterable<string>): void {
   fs.mkdirSync(paths.kadyDir, { recursive: true });
-  fs.writeFileSync(seededNamesFile(paths), JSON.stringify([...new Set(names)].sort()) + "\n", "utf-8");
+  // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+  fs.writeFileSync(seededNamesFile(paths), JSON.stringify([...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) + "\n", "utf-8");
 }
 
 // Canonical SHA-256 of the previously shipped bodies, including frontmatter.

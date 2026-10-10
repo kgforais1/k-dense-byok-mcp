@@ -43,7 +43,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // services inherit this umask. KADY_UMASK (octal, e.g. 027) overrides it.
 if (!isWin) {
   const configured = process.env.KADY_UMASK?.trim();
-  process.umask(configured && /^[0-7]{3,4}$/.test(configured) ? parseInt(configured, 8) : 0o077);
+  // FORK: Number.parseInt (javascript:S7773); global parseInt is shadowable.
+  process.umask(configured && /^[0-7]{3,4}$/.test(configured) ? Number.parseInt(configured, 8) : 0o077);
 }
 
 /** Run a command to completion, streaming output. Returns the exit code. */

@@ -290,7 +290,8 @@ function ExposureSelect({
 }) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v as McpExposure)} disabled={disabled}>
-      <SelectTrigger id={id} size="sm" className={cn("h-7 text-[11px]", className)} aria-label={label}>
+      {/* FORK: let the associated visible label name form controls; retain names for inline controls. */}
+      <SelectTrigger id={id} size="sm" className={cn("h-7 text-[11px]", className)} aria-label={id ? undefined : label}>
         {/* Explicit children: the items carry a description the trigger must not mirror. */}
         <SelectValue>{MCP_EXPOSURE_OPTIONS.find((opt) => opt.value === value)?.label}</SelectValue>
       </SelectTrigger>

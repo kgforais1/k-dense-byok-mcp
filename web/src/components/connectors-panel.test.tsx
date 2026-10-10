@@ -302,7 +302,7 @@ describe("ConnectorsPanel provider sign-ins", () => {
     await userEvent.click(await screen.findByRole("button", { name: /add connector/i }));
     // FORK: the visible connector labels name their corresponding controls.
     expect(screen.getByLabelText("Server URL")).toBe(screen.getByPlaceholderText("https://mcp.example.com/mcp"));
-    expect(screen.getByLabelText("How the agent reaches the tools")).toHaveAttribute("role", "combobox");
+    expect(screen.getByRole("combobox", { name: "How the agent reaches the tools" })).toBe(screen.getByLabelText("How the agent reaches the tools"));
     await userEvent.type(screen.getByPlaceholderText("e.g. linear"), "my-server");
     await userEvent.type(screen.getByPlaceholderText("https://mcp.example.com/mcp"), "https://b.example/mcp");
     await userEvent.click(screen.getByRole("button", { name: "Add connector" }));

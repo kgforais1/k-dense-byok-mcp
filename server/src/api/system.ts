@@ -5,9 +5,9 @@
  */
 import type { FastifyInstance } from "fastify";
 import {
-  OLLAMA_BASE_URL,
-  OPENAI_COMPATIBLE_BASE_URL,
-  OPENAI_COMPATIBLE_CONFIGURED,
+  ollamaBaseUrl,
+  openaiCompatibleBaseUrl,
+  openaiCompatibleConfigured,
 } from "../config.ts";
 import {
   cacheKey,
@@ -71,7 +71,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 2000);
-      const resp = await fetch(`${OLLAMA_BASE_URL.replace(/\/+$/, "")}/api/tags`, {
+      const resp = await fetch(`${ollamaBaseUrl().replace(/\/+$/, "")}/api/tags`, {
         signal: ctrl.signal,
       });
       clearTimeout(t);
@@ -136,7 +136,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
         // over from a different model of the same name.
         const digest = typeof m.digest === "string" ? m.digest : "";
         recordArchitectural(
-          cacheKey("ollama", OLLAMA_BASE_URL, name),
+          cacheKey("ollama", ollamaBaseUrl(), name),
           architectural,
           digest,
         );
@@ -152,7 +152,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
             provider: "Ollama",
             tier: "budget",
             context_length:
-              getContextWindow("ollama", OLLAMA_BASE_URL, name) ?? 0,
+              getContextWindow("ollama", ollamaBaseUrl(), name) ?? 0,
             pricing: { prompt: 0, completion: 0 },
             modality: "text->text",
             description: `Local Ollama model: ${name}`,
@@ -162,14 +162,14 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // Loaded figures, unawaited with the probe's own timeout inside. It
       // never rejects, so no .catch() — and awaiting it would stall the
       // picker on a hung daemon behind a list it already has.
-      void probeLoaded("ollama", OLLAMA_BASE_URL);
+      void probeLoaded("ollama", ollamaBaseUrl());
       // FORK: `details.context_length` is undocumented, so a row without it is
       // an Ollama-side change rather than a bug. Rows still missing a figure
       // get the documented `/api/show` read, unawaited for the same reason.
       // It makes no call at all on a daemon that still emits the field, which
       // is why the picker budget of two calls per open is unaffected in the
       // normal case.
-      void probeArchitecturalOllama(OLLAMA_BASE_URL, listed);
+      void probeArchitecturalOllama(ollamaBaseUrl(), listed);
       return { available: true, models };
     } catch {
       return { available: false, models: [] };
@@ -185,12 +185,12 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
   // provider, so it can stay hidden for everyone else instead of showing a
   // permanently dead section.
   app.get("/openai-compatible/models", async () => {
-    const configured = OPENAI_COMPATIBLE_CONFIGURED;
+    const configured = openaiCompatibleConfigured();
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 2000);
       const resp = await fetch(
-        `${OPENAI_COMPATIBLE_BASE_URL.replace(/\/+$/, "")}/v1/models`,
+        `${openaiCompatibleBaseUrl().replace(/\/+$/, "")}/v1/models`,
         { signal: ctrl.signal },
       );
       clearTimeout(t);
@@ -231,7 +231,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
           // which the picker renders as no badge, exactly as before. Never
           // awaited into correctness here: see below.
           context_length:
-            getContextWindow("openai-compatible", OPENAI_COMPATIBLE_BASE_URL, id) ??
+            getContextWindow("openai-compatible", openaiCompatibleBaseUrl(), id) ??
             0,
           pricing: { prompt: 0, completion: 0 },
           modality: "text->text",
@@ -245,7 +245,7 @@ export async function registerSystemRoutes(app: FastifyInstance): Promise<void> 
       // abort the /v1/models call that had already succeeded. A 404 here
       // (vLLM and others have no such endpoint) means "no context metadata",
       // never "no models" — the rows above are already built.
-      void probeLoaded("openai-compatible", OPENAI_COMPATIBLE_BASE_URL);
+      void probeLoaded("openai-compatible", openaiCompatibleBaseUrl());
       return { available: true, configured, models };
     } catch {
       return { available: false, configured, models: [] };

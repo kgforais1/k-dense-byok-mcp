@@ -1,0 +1,6 @@
+<!doctype html>
+<!-- FORK: identify the runtime document language for assistive technology. -->
+<!-- FORK: style-src drops 'unsafe-inline' (S7039); the layout <style> moved to
+     runtime.css, and runtime.js:61 reveals the canvas by direct property
+     assignment, which CSP does not restrict. -->
+<html lang="en"><head><meta charset="utf-8"><title>Kady Office</title><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; base-uri 'none'"><link rel="stylesheet" href="/office/runtime.css"></head><body><canvas id="qtcanvas" contenteditable="true" aria-label="Office document canvas"></canvas><script src="/office/runtime.js"></script></body></html>

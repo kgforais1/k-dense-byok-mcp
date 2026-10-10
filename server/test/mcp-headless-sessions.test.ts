@@ -11,7 +11,6 @@ import { isHeadlessSession, markHeadlessSession } from "../src/agent/headless-se
 import {
   deleteSession,
   HEADLESS_PROMPT_NOTE,
-  sessionToolNames,
 } from "../src/agent/session-registry.ts";
 import { RunBroker, runBroker, type RunMetadata } from "../src/agent/run-broker.ts";
 import { persistRunResult, readRunResult } from "../src/agent/run-results.ts";
@@ -54,7 +53,7 @@ describe("deleteSession", () => {
     return file;
   }
 
-  it("removes both the transcript and the headless marker", () => {
+  it("removes both the transcript and the headless marker", async () => {
     const projectId = "delete-session-cleanup";
     createProject({ projectId, name: "Delete session cleanup" });
     const paths = resolvePaths(projectId);
@@ -64,14 +63,14 @@ describe("deleteSession", () => {
 
     markHeadlessSession(projectId, sessionId);
 
-    const result = deleteSession(projectId, paths, sessionId);
+    const result = await deleteSession(projectId, paths, sessionId);
     expect(result).toBe("deleted");
 
     expect(fs.existsSync(path.join(paths.sessionsDir, `${sessionId}.jsonl`))).toBe(false);
     expect(isHeadlessSession(projectId, sessionId)).toBe(false);
   });
 
-  it("does not delete a different session whose filename merely ends with the id", () => {
+  it("does not delete a different session whose filename merely ends with the id", async () => {
     // `findSessionFile` matches on a filename suffix, so the id `23` also
     // matches `subagent-123.jsonl`. Harmless for a read, destructive here.
     const projectId = "delete-session-collide";
@@ -82,11 +81,11 @@ describe("deleteSession", () => {
     const other = path.join(paths.sessionsDir, "subagent-123.jsonl");
     fs.writeFileSync(other, `${JSON.stringify({ type: "session", id: "subagent-123" })}\n`);
 
-    expect(deleteSession(projectId, paths, "23")).toBe("not_found");
+    expect(await deleteSession(projectId, paths, "23")).toBe("not_found");
     expect(fs.existsSync(other)).toBe(true);
   });
 
-  it("removes the notebook, annotations and provenance that belong to the chat", () => {
+  it("removes the notebook, annotations and provenance that belong to the chat", async () => {
     // These are part of the chat, not separate records. Left behind, the lab
     // notebook still lists entries for a chat that no longer exists.
     const projectId = "delete-session-artifacts";
@@ -104,13 +103,13 @@ describe("deleteSession", () => {
     fs.mkdirSync(provenance, { recursive: true });
     fs.writeFileSync(path.join(provenance, "steps.jsonl"), "{}");
 
-    expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
+    expect(await deleteSession(projectId, paths, sessionId)).toBe("deleted");
     expect(fs.existsSync(notebook)).toBe(false);
     expect(fs.existsSync(annotations)).toBe(false);
     expect(fs.existsSync(provenance)).toBe(false);
   });
 
-  it("stops poll_run serving a deleted session's runs", () => {
+  it("stops poll_run serving a deleted session's runs", async () => {
     // Durable records are keyed by runId, so without a sweep `poll_run` keeps
     // answering for a session `get_session_history` now 404s on.
     const projectId = "delete-session-runs";
@@ -126,11 +125,11 @@ describe("deleteSession", () => {
     persistRunResult(projectId, handle);
     expect(readRunResult(projectId, "run-kept")).not.toBeNull();
 
-    expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
+    expect(await deleteSession(projectId, paths, sessionId)).toBe("deleted");
     expect(readRunResult(projectId, "run-kept")).toBeNull();
   });
 
-  it("still finishes the delete when the headless marker cannot be removed", () => {
+  it("still finishes the delete when the headless marker cannot be removed", async () => {
     // `force: true` only suppresses ENOENT. An EPERM, or a Windows handle held
     // on the marker, used to escape `deleteSession` entirely and strand it
     // half-done: transcript gone, but the tombstone unset and `poll_run` still
@@ -157,7 +156,7 @@ describe("deleteSession", () => {
     });
 
     try {
-      expect(deleteSession(projectId, paths, sessionId)).toBe("deleted");
+      expect(await deleteSession(projectId, paths, sessionId)).toBe("deleted");
     } finally {
       rmSync.mockRestore();
     }
@@ -165,7 +164,7 @@ describe("deleteSession", () => {
     expect(readRunResult(projectId, "run-marker")).toBeNull();
   });
 
-  it("deletes the exact session even when a suffix-colliding file exists", () => {
+  it("deletes the exact session even when a suffix-colliding file exists", async () => {
     // `findSessionFile` returns whichever candidate readdir yields first, so a
     // session with a colliding neighbour could report not_found and become
     // undeletable.
@@ -178,12 +177,12 @@ describe("deleteSession", () => {
       name: "subagent-123.jsonl",
     });
 
-    expect(deleteSession(projectId, paths, "23")).toBe("deleted");
+    expect(await deleteSession(projectId, paths, "23")).toBe("deleted");
     expect(fs.existsSync(wanted)).toBe(false);
     expect(fs.existsSync(neighbour)).toBe(true);
   });
 
-  it("refuses a file named for the session whose header names another", () => {
+  it("refuses a file named for the session whose header names another", async () => {
     // The name is not proof. A transcript literally called `23.jsonl` whose
     // header says it belongs to `other` is not session `23`, and deleting it
     // destroys a transcript the caller never asked about.
@@ -193,11 +192,11 @@ describe("deleteSession", () => {
 
     const impostor = writeSessionFile(paths.sessionsDir, "other", { name: "23.jsonl" });
 
-    expect(deleteSession(projectId, paths, "23")).toBe("not_found");
+    expect(await deleteSession(projectId, paths, "23")).toBe("not_found");
     expect(fs.existsSync(impostor)).toBe(true);
   });
 
-  it("is not shadowed by a stray file that carries no header", () => {
+  it("is not shadowed by a stray file that carries no header", async () => {
     // Pi writes the header when it creates the file, so an empty transcript is
     // not a session. A stray `23.jsonl` beside the real
     // `<timestamp>_23.jsonl` must neither be deleted in its place nor make the
@@ -227,7 +226,7 @@ describe("deleteSession", () => {
       }) as never);
 
     try {
-      expect(deleteSession(projectId, paths, "23")).toBe("deleted");
+      expect(await deleteSession(projectId, paths, "23")).toBe("deleted");
     } finally {
       readdirSync.mockRestore();
     }
@@ -236,7 +235,7 @@ describe("deleteSession", () => {
     expect(readRunResult(projectId, "run-real")).toBeNull();
   });
 
-  it("refuses a session id that would escape the sessions directory", () => {
+  it("refuses a session id that would escape the sessions directory", async () => {
     // The id reaches `path.join` before `findSessionFile` validates it, so a
     // traversing id would address — and unlink — a transcript in another
     // project.
@@ -249,21 +248,21 @@ describe("deleteSession", () => {
     fs.writeFileSync(victim, `${JSON.stringify({ type: "session", id: "outside" })}\n`);
 
     for (const id of ["../outside", "..\\outside", "/etc/passwd", ".hidden"]) {
-      expect(() => deleteSession(projectId, paths, id)).toThrow(/Invalid session id/);
+      await expect(deleteSession(projectId, paths, id)).rejects.toThrow(/Invalid session id/);
     }
     expect(fs.existsSync(victim)).toBe(true);
   });
 
-  it("returns not_found when the transcript is missing", () => {
+  it("returns not_found when the transcript is missing", async () => {
     const projectId = "delete-session-missing";
     createProject({ projectId, name: "Delete session missing" });
     const paths = resolvePaths(projectId);
 
-    const result = deleteSession(projectId, paths, "nonexistent-session");
+    const result = await deleteSession(projectId, paths, "nonexistent-session");
     expect(result).toBe("not_found");
   });
 
-  it("returns run_active and leaves the transcript when the broker holds an incomplete run", () => {
+  it("returns run_active and leaves the transcript when the broker holds an incomplete run", async () => {
     const projectId = "delete-session-active";
     createProject({ projectId, name: "Delete session active" });
     const paths = resolvePaths(projectId);
@@ -273,7 +272,7 @@ describe("deleteSession", () => {
 
     runBroker.start(projectId, sessionId, metadata("incomplete-run"));
 
-    const result = deleteSession(projectId, paths, sessionId);
+    const result = await deleteSession(projectId, paths, sessionId);
     expect(result).toBe("run_active");
     expect(fs.existsSync(sessionFile)).toBe(true);
   });
@@ -384,7 +383,7 @@ describe("session routes", () => {
 });
 
 describe("headless session marker", () => {
-  it("survives the eviction that would otherwise restore interview", () => {
+  it("survives the eviction that would otherwise restore interview", async () => {
     createProject({ projectId: "headless-marker", name: "Headless marker" });
 
     // Before creation the session is interactive by default; this is what makes
@@ -398,14 +397,14 @@ describe("headless session marker", () => {
     expect(isHeadlessSession("headless-marker", "session-1")).toBe(true);
   });
 
-  it("does not treat one session's marker as another's", () => {
+  it("does not treat one session's marker as another's", async () => {
     createProject({ projectId: "headless-scope", name: "Headless scope" });
     markHeadlessSession("headless-scope", "session-a");
 
     expect(isHeadlessSession("headless-scope", "session-b")).toBe(false);
   });
 
-  it("is project scoped", () => {
+  it("is project scoped", async () => {
     createProject({ projectId: "headless-one", name: "Headless one" });
     createProject({ projectId: "headless-two", name: "Headless two" });
     markHeadlessSession("headless-one", "shared-id");
@@ -413,7 +412,7 @@ describe("headless session marker", () => {
     expect(isHeadlessSession("headless-two", "shared-id")).toBe(false);
   });
 
-  it("fails closed on a session id that would escape the marker directory", () => {
+  it("fails closed on a session id that would escape the marker directory", async () => {
     createProject({ projectId: "headless-traversal", name: "Headless traversal" });
 
     expect(() => markHeadlessSession("headless-traversal", "../escape")).not.toThrow();
@@ -422,12 +421,7 @@ describe("headless session marker", () => {
 });
 
 describe("headless replacement guidance", () => {
-  it("omits interview from the tool allowlist", () => {
-    expect(sessionToolNames(false, [])).not.toContain("interview");
-    expect(sessionToolNames(false, [])).toContain("notebook");
-  });
-
-  it("tells the model the interview tool is gone, so it stops being told to call it", () => {
+  it("tells the model the interview tool is gone, so it stops being told to call it", async () => {
     // The sandbox AGENTS.md seeded for every project still has an "ask, don't
     // assume" section naming `interview`. That file is shared with the browser
     // UI, so this note is what resolves the contradiction for MCP sessions.
@@ -435,7 +429,7 @@ describe("headless replacement guidance", () => {
     expect(HEADLESS_PROMPT_NOTE).toMatch(/AGENTS\.md/);
   });
 
-  it("replaces interviewing with a non-blocking instruction rather than leaving a gap", () => {
+  it("replaces interviewing with a non-blocking instruction rather than leaving a gap", async () => {
     // Phase 1's recorded risk was that removing the tool leaves the model
     // wanting to ask and unable to, so it guesses silently. The note has to
     // supply the alternative, not just the prohibition.

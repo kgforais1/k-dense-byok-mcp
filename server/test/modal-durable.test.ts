@@ -1,3 +1,5 @@
+// FORK: check required values at runtime instead of asserting away nullability.
+import { required as requireValue } from "../src/required.ts";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -330,7 +332,7 @@ describe("Durable Modal manager accounting", () => {
 
   it("falls back to the next validated instance and persists the effective choice", async () => {
     const fake = new FakeModal();
-    fake.createErrors.push(new Error("H100 capacity unavailable"));
+    fake.createErrors.push(new ModalJobError("CAPACITY_UNAVAILABLE", "H100 capacity unavailable", 503, true));
     fake.behaviors.push({ kind: "success" });
     const manager = new DurableModalJobManager(fake.factory);
     const job = manager.submit(
@@ -368,7 +370,7 @@ describe("Durable Modal manager accounting", () => {
     // Sandbox lifetime carries the headroom; the wrapped command does not.
     expect(fake.createParams.at(-1)?.timeoutMs).toBe(1100 * 1000);
     const sandbox = fake.sandboxes.get(terminal.sandboxId!)!;
-    const wrapper = sandbox.execParams.find((call) => call.command[0] === "python3" && String(call.command[1]).endsWith("wrapper.py"));
+    const wrapper = sandbox.execParams.find((call) => call.command[0] === "python3" && String(call.command.at(-1)).endsWith("wrapper.py"));
     expect(wrapper?.params?.timeoutMs).toBe(1000 * 1000);
     // Settled spend can never exceed the lifetime-based hold.
     expect(terminal.accounting.estimatedCostUsd!).toBeLessThanOrEqual(job.reservationUsd + 1e-12);
@@ -544,7 +546,7 @@ describe("Durable Modal manager accounting", () => {
 });
 
 describe("Durable Modal manager recovery cleanup", () => {
-  it("terminates a sandbox created just before a crash instead of leaving it to bill until timeout", async () => {
+  it.each([undefined, true])("terminates a sandbox after a crash without relaunching (pending=%s)", async (pending) => {
     // Crash landed between Modal creating the sandbox and us persisting its id:
     // the record is `preparing` with no sandbox id, but a live sandbox tagged
     // with the job id exists remotely.
@@ -554,11 +556,13 @@ describe("Durable Modal manager recovery cleanup", () => {
     record.state = "preparing";
     record.runningAt = undefined;
     record.sandboxId = undefined;
+    record.sandboxCreatePending = pending;
     record.sandboxCreatedAt = undefined;
     record.effectiveInstance = undefined;
     record.pricePerHour = undefined;
+    record.reservationUsd = worstCaseReservationUsd(record.request);
     store.create(record);
-    reserveComputeBudget({ projectId: "default", reservationId: record.id, sessionId: "s-orphan", amountUsd: 0.01 });
+    reserveComputeBudget({ projectId: "default", reservationId: record.id, sessionId: "s-orphan", amountUsd: record.reservationUsd });
     const orphan = new FakeSandbox("sb-orphaned", { kind: "hang" });
     orphan.tags = { kady: "true", project: "default", job: record.id };
     fake.sandboxes.set(orphan.id, orphan);
@@ -566,11 +570,32 @@ describe("Durable Modal manager recovery cleanup", () => {
     const manager = new DurableModalJobManager(fake.factory, store);
     await manager.recoverProject("default");
     const terminal = await manager.wait("default", record.id, WAIT_BUDGET_MS);
-    expect(terminal.state).toBe("succeeded");
+    expect(terminal.state).toBe("lost");
+    expect(terminal.error?.code).toBe("LAUNCH_UNCERTAIN");
     expect(orphan.terminated).toBe(true);
-    expect(terminal.sandboxId).not.toBe(orphan.id);
-    expect(fake.sandboxes.size).toBe(2);
+    expect(terminal.sandboxId).toBe(orphan.id);
+    expect(terminal.accounting).toMatchObject({ conservative: true, estimatedCostUsd: record.reservationUsd });
+    expect(fake.sandboxes.size).toBe(1);
     expect(store.events("default", record.id).some((event) => event.type === "orphan_terminated")).toBe(true);
+    expect(listComputeReservations("default")).toEqual([]);
+  });
+
+  it("can resume preparation when no create request was sent before the crash", async () => {
+    const fake = new FakeModal();
+    const store = new ModalJobStore();
+    const record = persistedRunningJob({ id: "mj_before_create", sandboxId: "unused", sessionId: "s-before-create" });
+    record.state = "preparing";
+    record.sandboxId = undefined;
+    record.sandboxCreatedAt = undefined;
+    record.sandboxCreatePending = false;
+    record.reservationUsd = worstCaseReservationUsd(record.request);
+    store.create(record);
+    reserveComputeBudget({ projectId: "default", reservationId: record.id, sessionId: record.owner.sessionId, amountUsd: record.reservationUsd });
+    const manager = new DurableModalJobManager(fake.factory, store);
+    await manager.recoverProject("default");
+    const terminal = await manager.wait("default", record.id, 3000);
+    expect(terminal.state).toBe("succeeded");
+    expect(fake.createParams).toHaveLength(1);
     expect(listComputeReservations("default")).toEqual([]);
   });
 
@@ -731,6 +756,9 @@ describe("Durable Modal transfer hardening", () => {
 
   it("verifies uploaded inputs remotely for ordinary jobs, not only approved ones", async () => {
     const fake = new FakeModal();
+    // Arm the fault before submission; polling for the sandbox can race a
+    // complete upload on fast filesystems.
+    fake.tamperUploads = true;
     fake.behaviors.push({ kind: "success" });
     // FORK (upstream merge): set the tamper flag synchronously at sandbox
     // creation. Polling for the sandbox on a timer races worker staging —
@@ -752,38 +780,23 @@ describe("Durable Modal transfer hardening", () => {
     expect(terminal.inputFiles[0]?.sha256).toHaveLength(64);
   });
 
-  it("degrades to size checks with a visible event when the image has no python3", async () => {
+  it("rejects an image without Python before uploading inputs or running the command", async () => {
     const fake = new FakeModal();
-    fake.behaviors.push({ kind: "success" });
-    // FORK (upstream merge): same timer race as above — arm pythonMissing
-    // synchronously at creation so the preparing-phase skip is deterministic.
-    const adapter = fake.factory();
-    const innerCreate = adapter.createSandbox.bind(adapter);
-    adapter.createSandbox = (async (...args: Parameters<typeof innerCreate>) => {
-      const sandbox = await innerCreate(...args);
-      sandbox.pythonMissing = true;
-      // The wrapper itself is python; let it through so the job can finish.
-      const originalExec = sandbox.exec.bind(sandbox);
-      sandbox.exec = (async (command: string[], params?: Record<string, unknown>) => {
-        if (command[0] === "python3" && String(command[1]).endsWith("wrapper.py")) {
-          sandbox.pythonMissing = false;
-          try {
-            return await originalExec(command, params);
-          } finally {
-            sandbox.pythonMissing = true;
-          }
-        }
-        return originalExec(command, params);
-      }) as typeof originalExec;
-      return sandbox;
-    }) as typeof innerCreate;
-    const manager = new DurableModalJobManager(() => adapter);
-    const job = manager.submit("default", { command: "work", filesIn: ["input.txt"], filesOut: ["result.txt"] }, { sessionId: "s-nopython", submittedBy: "api" });
+    fake.pythonMissing = true;
+    const manager = new DurableModalJobManager(fake.factory);
+    const job = manager.submit("default", {
+      command: "echo hello", image: { base: "ubuntu:24.04" },
+      filesIn: ["input.txt"], filesOut: ["result.txt"],
+    }, { sessionId: "s-nopython", submittedBy: "api" });
     const terminal = await manager.wait("default", job.id, WAIT_BUDGET_MS);
-    expect(terminal.state).toBe("succeeded");
-    const skipped = manager.store.events("default", job.id).filter((event) => event.type === "verify_skipped");
-    expect(skipped.map((event) => event.state)).toEqual(["preparing", "collecting"]);
-    expect(fs.existsSync(path.join(root(), "result.txt"))).toBe(true);
+    expect(terminal.state).toBe("failed");
+    expect(terminal.error).toMatchObject({ code: "RUNTIME_UNAVAILABLE", retryable: false });
+    const sandbox = requireValue([...fake.sandboxes.values()][0]);
+    expect(sandbox.filesystem.files.size).toBe(0);
+    expect(sandbox.terminated).toBe(true);
+    expect(sandbox.execParams).toHaveLength(1);
+    expect(manager.store.events("default", job.id).some((event) => event.type === "verify_skipped")).toBe(false);
+    expect(listComputeReservations("default")).toEqual([]);
   });
 
   it("installs nothing when an output's target is an existing directory, and leaves no temp files", async () => {
@@ -1006,7 +1019,12 @@ describe("Durable Modal manager safety nets", () => {
     const job = manager.submit("default", { command: "work" }, { sessionId: "s-broken", submittedBy: "api" });
     // Both finalization attempts fail; the worker chain must swallow that
     // (logged), leave the job non-terminal, and not reject unhandled.
-    const stuck = await manager.wait("default", job.id, 1500);
+    // FORK: wait for the observed finalization failure, not a fixed wall-clock
+    // budget that can expire before a loaded Windows worker reaches it.
+    await waitFor(() => expect(errors.mock.calls.some((call) =>
+      String(call[0]).includes("[modal] failed to finalize job"),
+    )).toBe(true));
+    const stuck = await manager.wait("default", job.id, 0);
     expect(["preparing", "running"]).toContain(stuck.state);
     expect(errors.mock.calls.some((call) => String(call[0]).includes("[modal] failed to finalize job"))).toBe(true);
     expect(errors.mock.calls.some((call) => String(call[0]).includes("[modal] worker crashed"))).toBe(false);
@@ -1035,7 +1053,7 @@ describe("Durable Modal manager safety nets", () => {
     expect(cancelled.accounting.reconciled).toBe(true);
     expect(sandbox.terminated).toBe(true);
     expect(listComputeReservations("default")).toEqual([]);
-  });
+  }, 20_000); // cancel allows up to 10s for the recovery worker to settle.
 
   it("cancelling while Modal is unconfigured still reconciles the hold", async () => {
     const store = new ModalJobStore();

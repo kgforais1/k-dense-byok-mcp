@@ -15,14 +15,26 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { normalizeMarkdown } from "@/lib/markdown-text";
-import { API_BASE } from "@/lib/projects";
+import { API_BASE, useProjectScopeId } from "@/lib/projects";
+import { withApiToken } from "@/lib/api-auth";
+import { sandboxMarkdownUrls } from "@/lib/sandbox-markdown";
 import { cn } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
 import "katex/dist/katex.min.css";
 import { mermaid } from "@streamdown/mermaid";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, WorkflowIcon } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  asJavaScriptFence,
+  parseWorkflowFence,
+  workflowScriptAgents,
+} from "@/lib/workflow-script";
 import {
   type ReactNode,
   createContext,
@@ -34,7 +46,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
+import { Block, Streamdown, defaultRehypePlugins, type BlockProps } from "streamdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -325,7 +337,32 @@ export const MessageBranchPage = ({
   );
 };
 
-export type MessageResponseProps = ComponentProps<typeof Streamdown>;
+export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
+  onOpenFile?: (path: string) => void;
+};
+
+const OpenMarkdownFileContext = createContext<((path: string) => void) | undefined>(undefined);
+
+function SandboxLink({ href, children, node: _node, ...rest }: Record<string, unknown> & { children?: ReactNode; href?: string; node?: unknown }) {
+  const onOpenFile = useContext(OpenMarkdownFileContext);
+  const path = rest["data-kady-file"];
+  return (
+    <a
+      {...(rest as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
+      href={href}
+      className="font-medium text-primary underline underline-offset-4"
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={typeof path === "string" && onOpenFile ? (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        onOpenFile(path);
+      } : undefined}
+    >
+      {children}
+    </a>
+  );
+}
 
 const math = createMathPlugin({ singleDollarTextMath: true });
 const streamdownPlugins = { cjk, code, math, mermaid };
@@ -375,7 +412,7 @@ function resolveImageSrc(src: unknown): string | undefined {
   if (typeof src !== "string" || !src) return undefined;
   if (/^(https?:|data:|blob:|\/\/)/i.test(src) || src.startsWith("/")) return src;
   const clean = src.replace(/^\.\//, "");
-  return `${API_BASE}/sandbox/raw?path=${encodeURIComponent(clean)}`;
+  return withApiToken(`${API_BASE}/sandbox/raw?path=${encodeURIComponent(clean)}`);
 }
 
 const SandboxImage = memo(
@@ -395,27 +432,75 @@ const SandboxImage = memo(
 );
 SandboxImage.displayName = "SandboxImage";
 
+/**
+ * Streamdown block renderer that folds a pi-subagents workflow script — the
+ * ```js workflow fence the agent writes before `subagent({ workflow: true })`
+ * — into a collapsed "Workflow script" disclosure. Expanded, it is the normal
+ * highlighted JavaScript block; every other block renders unchanged.
+ */
+const WorkflowAwareBlock = memo((props: BlockProps) => {
+  const [open, setOpen] = useState(false);
+  const fence = parseWorkflowFence(props.content);
+  if (!fence) return <Block {...props} />;
+  const agents = workflowScriptAgents(fence.body);
+  const lines = fence.body.split("\n").filter((line) => line.trim()).length;
+  const detail = agents.length > 0
+    ? agents.join(" · ")
+    : `${lines} line${lines === 1 ? "" : "s"}`;
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} data-streamdown="workflow-script">
+      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-muted/60">
+        <ChevronRightIcon
+          className={cn("size-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
+        />
+        <WorkflowIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="font-medium text-foreground">Workflow script</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+          {fence.closed && !props.isIncomplete ? detail : "writing…"}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <Block {...props} content={asJavaScriptFence(props.content, fence)} />
+      </CollapsibleContent>
+    </Collapsible>
+  );
+});
+WorkflowAwareBlock.displayName = "WorkflowAwareBlock";
+
 const streamdownComponents = {
   p: SafeParagraph,
   img: SandboxImage,
+  a: SandboxLink,
 } as unknown as ComponentProps<typeof Streamdown>["components"];
 
 export const MessageResponse = memo(
-  ({ className, children, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className
-      )}
-      components={streamdownComponents}
-      linkSafety={linkSafetyOff}
-      plugins={streamdownPlugins}
-      {...props}
-    >
-      {typeof children === "string" ? normalizeMarkdown(children) : children}
-    </Streamdown>
-  ),
-  (prevProps, nextProps) => prevProps.children === nextProps.children
+  ({ className, children, onOpenFile, ...props }: MessageResponseProps) => {
+    const projectId = useProjectScopeId();
+    const rehypePlugins = useMemo(() => [
+      defaultRehypePlugins.raw,
+      defaultRehypePlugins.sanitize,
+      sandboxMarkdownUrls(projectId),
+      defaultRehypePlugins.harden,
+    ], [projectId]);
+    return (
+      <OpenMarkdownFileContext.Provider value={onOpenFile}>
+        <Streamdown
+          className={cn(
+            "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+            className
+          )}
+          components={streamdownComponents}
+          BlockComponent={WorkflowAwareBlock}
+          rehypePlugins={rehypePlugins}
+          linkSafety={linkSafetyOff}
+          plugins={streamdownPlugins}
+          {...props}
+        >
+          {typeof children === "string" ? normalizeMarkdown(children) : children}
+        </Streamdown>
+      </OpenMarkdownFileContext.Provider>
+    );
+  },
 );
 
 MessageResponse.displayName = "MessageResponse";

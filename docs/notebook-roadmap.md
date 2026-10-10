@@ -2,6 +2,9 @@
 
 > **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
 
+Upstream retired this page in 0.15.0. The fork retains this historical feature
+map for older links; the linked product guides describe current behavior.
+
 The [Living Lab Notebook](./lab-notebook.md) grew from a running log into a
 structured research record through six features. All six are implemented; this
 page is the one-place map of what each does, where it is documented, and the
@@ -10,7 +13,7 @@ rather than introducing a separate Conclusions view.
 
 | # | Feature | What it gives you | Doc |
 |---|---|---|---|
-| 1 | **Evidence and freshness** | Typed `supports` / `challenges` / `inconclusive` / `context` links from observations to hypotheses, with all active evidence summarised rather than latest-entry-wins; superseded observations drop out; bounded server-measured citation-time hashes flag artifacts that changed after they were cited | [lab-notebook.md](./lab-notebook.md#threading-hypotheses-evidence-amendments) |
+| 1 | **Evidence and freshness** | Typed `supports` / `challenges` / `inconclusive` / `context` links from observations to hypotheses, with all active evidence summarised rather than latest-entry-wins; superseded observations drop out; bounded server-measured citation-time hashes flag artifacts that changed after they were cited | [lab-notebook.md](./lab-notebook.md#entries-and-evidence) |
 | 2 | **Frozen analysis plans and structured results** | User-reviewed, immutable plan revisions with dataset identities and append-only deviations; `results` links to persisted `scientific_result` cards instead of re-typed measurements | [lab-notebook.md](./lab-notebook.md#frozen-analysis-plans-and-deviations) |
 | 3 | **Robustness workflows** | *Stress-test finding*: 2–16 reviewed sensitivity specifications run as one approved, fully reserved Modal batch; every attempt is retained, and the summary is a descriptive range, not a significance vote | [notebook-robustness.md](./notebook-robustness.md) |
 | 4 | **Research memory** | Local lexical recall over notebook entries, user notes and plan events across a project's chats, with source ids and digests; the read-only `notebook_search` tool gives the same recall to Kady and its specialists | [notebook-memory.md](./notebook-memory.md) |

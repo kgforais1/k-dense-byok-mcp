@@ -9,19 +9,19 @@
  *   - the settings API's list/save/delete/restore operations,
  *   - read-only access to the agents bundled inside the pi-subagents package.
  *
- * The frontmatter parser is a deliberate subset of YAML (flat `key: value`
- * lines, optional quotes, true/false booleans) matching how the package's own
- * agent files are authored. Unknown keys round-trip untouched via `extra` so
- * editing an agent in the UI never drops fields we don't model (defaultReads,
- * maxTokens, ...).
+ * Full YAML parsing preserves nested objects, arrays, booleans and numbers in
+ * unknown fields via `extra`. The UI edits modeled fields without flattening
+ * external runners, permission rules, or future plugin settings.
  */
 import fs from "node:fs";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { ProjectPaths } from "../projects.ts";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
+import { seedSubagentResources } from "./subagent-resources.ts";
 import { SUBAGENT_TYPES } from "./subagents.ts";
-import { readPiSettings, writePiSettings, type ToggleResult } from "./capability-state.ts";
+import { piSettingsPath, readPiSettings, writePiSettings, type ToggleResult } from "./capability-state.ts";
 
 const require_ = createRequire(import.meta.url);
 
@@ -42,6 +42,9 @@ export function subagentsPackageDir(): string {
 }
 
 export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Names taken by static `/agents/<name>` routes (`GET/PUT /agents/defaults`). */
+export const RESERVED_AGENT_NAMES: ReadonlySet<string> = new Set(["defaults"]);
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 export interface AgentFile {
@@ -65,7 +68,7 @@ export interface AgentFile {
    */
   memory?: AgentMemory;
   /** Frontmatter keys we don't model, preserved verbatim on round-trip. */
-  extra?: Record<string, string>;
+  extra?: Record<string, unknown>;
   systemPrompt: string;
 }
 
@@ -80,16 +83,15 @@ export type AgentFilePatch = Omit<AgentFile, "name" | "source">;
 
 export const MEMORY_PATH_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-/**
- * pi-subagents accepts `memory` as a block or inline; our flat parser sees the
- * inline form (`memory: { scope: project, path: x }`) as one value, which is
- * therefore the only form Kady writes.
- */
-export function parseAgentMemory(value: string | undefined): AgentMemory | undefined {
+/** Accept either YAML form without flattening nested frontmatter. */
+export function parseAgentMemory(value: unknown): AgentMemory | undefined {
   if (!value) return undefined;
-  const scope = /scope\s*:\s*["']?(project|user)["']?/.exec(value)?.[1];
-  const memoryPath = /path\s*:\s*["']?([^,}"'\s]+)["']?/.exec(value)?.[1];
-  if ((scope !== "project" && scope !== "user") || !memoryPath || !MEMORY_PATH_RE.test(memoryPath)) return undefined;
+  if (typeof value === "string") {
+    try { value = parseYaml(value, { maxAliasCount: 50 }); } catch { return undefined; }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const { scope, path: memoryPath } = value as Record<string, unknown>;
+  if ((scope !== "project" && scope !== "user") || typeof memoryPath !== "string" || !MEMORY_PATH_RE.test(memoryPath)) return undefined;
   return { scope, path: memoryPath };
 }
 
@@ -147,8 +149,9 @@ export function builtinDisabledNames(paths: ProjectPaths): Set<string> {
 /**
  * Models pinned in `.pi/settings.json` under `subagents`, which frontmatter
  * alone does not reveal. pi-subagents resolves a child model strongest-first:
- * per-run override → agent frontmatter → `agentOverrides.<name>.model` →
- * `subagents.defaultModel` → the parent session model. Anything we send as a
+ * per-run override → `agentOverrides.<name>.model` (applied over the
+ * definition) → agent frontmatter → `subagents.defaultModel` → the parent
+ * session model. Anything we send as a
  * per-run override therefore outranks all of these, so the caller needs to see
  * them before deciding to pin one.
  */
@@ -169,6 +172,36 @@ export function settingsPinnedModels(paths: ProjectPaths): {
   }
   const fallback = typeof sub.defaultModel === "string" ? sub.defaultModel.trim() : "";
   return { ...(fallback ? { defaultModel: fallback } : {}), byAgent };
+}
+
+/**
+ * Set or clear `subagents.defaultModel` — the model every specialist without
+ * its own frontmatter or `agentOverrides` model runs on — preserving all other
+ * settings keys. `null` or an empty value deletes the key, since pi-subagents
+ * rejects an empty string. Returns false, leaving the file untouched, when
+ * settings.json is malformed: rewriting it from `{}` would destroy it.
+ * Callers validate the ref (`invalidModelRef`).
+ */
+export function setSubagentDefaultModel(paths: ProjectPaths, model: string | null): boolean {
+  let settings: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(piSettingsPath(paths), "utf-8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    settings = parsed as Record<string, unknown>;
+  } catch (exc) {
+    if ((exc as NodeJS.ErrnoException).code !== "ENOENT") return false;
+    settings = {};
+  }
+  const sub =
+    settings.subagents && typeof settings.subagents === "object" && !Array.isArray(settings.subagents)
+      ? { ...(settings.subagents as Record<string, unknown>) }
+      : {};
+  const next = model?.trim() ?? "";
+  if (next) sub.defaultModel = next;
+  else if ("defaultModel" in sub) delete sub.defaultModel;
+  else return true; // nothing to clear; don't create the file just to say so
+  writePiSettings(paths, { ...settings, subagents: sub });
+  return true;
 }
 
 /** Set/clear a builtin's disabled override, preserving all other settings keys. */
@@ -193,6 +226,39 @@ function seedMarkerPath(paths: ProjectPaths): string {
   return path.join(agentsDir(paths), ".seeded");
 }
 
+/** Roster names already offered to this project, so later additions seed once. */
+function seededNamesPath(paths: ProjectPaths): string {
+  return path.join(agentsDir(paths), ".seeded-names.json");
+}
+
+/**
+ * The roster a `.seeded` marker without a names file stands for: everything
+ * shipped before per-name tracking. Never extend this list; new specialists
+ * are seeded into existing projects because they are missing from it.
+ */
+const LEGACY_SEEDED_ROSTER: readonly string[] = [
+  "code-reviewer", "statistical-reviewer", "math-checker", "ml-auditor", "data-validator",
+  "reproducibility-auditor", "pipeline-engineer", "data-visualizer", "simulation-reviewer",
+  "literature-researcher", "citation-checker", "fact-checker", "methodology-reviewer",
+  "peer-reviewer", "hypothesis-generator", "experiment-designer", "protocol-writer",
+  "results-interpreter", "manuscript-editor", "abstract-writer", "ethics-reviewer",
+];
+
+function readSeededNames(paths: ProjectPaths): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(seededNamesPath(paths), "utf-8"));
+    if (Array.isArray(parsed)) return new Set(parsed.filter((name): name is string => typeof name === "string"));
+  } catch {
+    /* missing or malformed: the legacy roster */
+  }
+  return new Set(LEGACY_SEEDED_ROSTER);
+}
+
+function writeSeededNames(paths: ProjectPaths, names: Iterable<string>): void {
+  // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+  fs.writeFileSync(seededNamesPath(paths), JSON.stringify([...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) + "\n", "utf-8");
+}
+
 // --- frontmatter (YAML subset) --------------------------------------------
 
 const KNOWN_KEYS = new Set([
@@ -207,53 +273,27 @@ const KNOWN_KEYS = new Set([
   "memory",
 ]);
 
-function unquote(value: string): string {
-  const v = value.trim();
-  if (
-    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
-    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
-  ) {
-    try {
-      if (v.startsWith('"')) return JSON.parse(v) as string;
-    } catch {
-      /* fall through to manual strip */
-    }
-    return v.slice(1, -1);
-  }
-  return v;
-}
-
 export function parseAgentMarkdown(
   text: string,
   fallbackName: string,
   source: AgentFile["source"],
 ): AgentFile {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
-  const fm: Record<string, string> = {};
-  let body = text;
-  if (m) {
-    body = m[2];
-    for (const line of m[1].split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const idx = trimmed.indexOf(":");
-      if (idx <= 0) continue;
-      fm[trimmed.slice(0, idx).trim()] = unquote(trimmed.slice(idx + 1));
-    }
-  }
-  const bool = (v: string | undefined) => (v === undefined ? undefined : v === "true");
-  const extra: Record<string, string> = {};
-  for (const [k, v] of Object.entries(fm)) {
-    if (!KNOWN_KEYS.has(k)) extra[k] = v;
-  }
+  const parsed: unknown = m ? parseYaml(m[1], { maxAliasCount: 50 }) : {};
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Agent frontmatter must be a mapping");
+  const fm = parsed as Record<string, unknown>;
+  const body = m ? m[2] : text;
+  const scalar = (v: unknown): string | undefined => typeof v === "string" ? v : undefined;
+  const bool = (v: unknown) => typeof v === "boolean" ? v : undefined;
+  const extra = Object.fromEntries(Object.entries(fm).filter(([k]) => !KNOWN_KEYS.has(k)));
   const mode = fm.systemPromptMode;
   return {
-    name: fm.name || fallbackName,
-    description: fm.description ?? "",
+    name: scalar(fm.name) || fallbackName,
+    description: scalar(fm.description) ?? "",
     source,
-    model: fm.model || undefined,
-    thinking: fm.thinking || undefined,
-    tools: fm.tools || undefined,
+    model: scalar(fm.model),
+    thinking: scalar(fm.thinking),
+    tools: Array.isArray(fm.tools) ? fm.tools.join(", ") : scalar(fm.tools),
     systemPromptMode: mode === "append" || mode === "replace" ? mode : undefined,
     inheritProjectContext: bool(fm.inheritProjectContext),
     inheritSkills: bool(fm.inheritSkills),
@@ -263,25 +303,16 @@ export function parseAgentMarkdown(
   };
 }
 
-/** YAML-safe single-line scalar (descriptions often contain colons). */
-function yamlQuote(s: string): string {
-  return JSON.stringify(s.replace(/\s+/g, " ").trim());
-}
-
 export function serializeAgentMarkdown(agent: Omit<AgentFile, "source">): string {
-  const lines = ["---", `name: ${agent.name}`, `description: ${yamlQuote(agent.description)}`];
-  if (agent.model) lines.push(`model: ${agent.model}`);
-  if (agent.thinking) lines.push(`thinking: ${agent.thinking}`);
-  if (agent.tools) lines.push(`tools: ${agent.tools}`);
-  if (agent.systemPromptMode) lines.push(`systemPromptMode: ${agent.systemPromptMode}`);
-  if (agent.inheritProjectContext !== undefined) {
-    lines.push(`inheritProjectContext: ${agent.inheritProjectContext}`);
+  const fm: Record<string, unknown> = { ...agent.extra, name: agent.name, description: agent.description };
+  for (const key of KNOWN_KEYS) {
+    if (key === "name" || key === "description") continue;
+    const value = agent[key as keyof typeof agent];
+    if (value !== undefined && value !== "") fm[key] = value;
+    else delete fm[key];
   }
-  if (agent.inheritSkills !== undefined) lines.push(`inheritSkills: ${agent.inheritSkills}`);
-  if (agent.memory) lines.push(`memory: ${serializeAgentMemory(agent.memory)}`);
-  for (const [k, v] of Object.entries(agent.extra ?? {})) lines.push(`${k}: ${v}`);
-  lines.push("---", "", agent.systemPrompt.trim(), "");
-  return lines.join("\n");
+  return `---\n${stringifyYaml(fm, { lineWidth: 0 })}---\n\n${agent.systemPrompt.trim()}\n`;
+
 }
 
 // --- listing ---------------------------------------------------------------
@@ -316,7 +347,8 @@ export function listProjectAgents(paths: ProjectPaths): AgentFile[] {
  * subset flattens that block, so both keys land in `extra`.
  */
 export function isExternalCliAgent(agent: Pick<AgentFile, "extra">): boolean {
-  return agent.extra?.runner !== undefined && agent.extra?.type === "external-cli";
+  const runner = agent.extra?.runner;
+  return Boolean(runner && typeof runner === "object" && (runner as Record<string, unknown>).type === "external-cli");
 }
 
 /** Agents bundled inside the pi-subagents package (read-only). */
@@ -363,6 +395,9 @@ export function writeProjectAgent(
 ): AgentFile {
   if (!AGENT_NAME_RE.test(name)) {
     throw new Error(`Invalid agent name "${name}" (lowercase letters, digits, - and _)`);
+  }
+  if (RESERVED_AGENT_NAMES.has(name)) {
+    throw new Error(`"${name}" is reserved; choose another agent name`);
   }
   if (!patch.systemPrompt?.trim()) throw new Error("System prompt must not be empty");
   if (patch.thinking && !THINKING_LEVELS.includes(patch.thinking as never)) {
@@ -453,22 +488,28 @@ function rosterMarkdown(type: (typeof SUBAGENT_TYPES)[number]): string {
 }
 
 /**
- * One-time seeding of the scientific roster into a project. Gated by a marker
- * file so agents the user deleted in the UI stay deleted. Returns the number
- * of files written.
+ * Seed the scientific roster into a project: everything on first use, and a
+ * specialist added to the roster later exactly once (tracked by name). Agents
+ * the user deleted in the UI stay deleted, and an existing or disabled file of
+ * the same name is never overwritten. Returns the number of files written.
  */
 export function seedAgentFiles(paths: ProjectPaths): number {
+  seedSubagentResources(paths);
   const dir = agentsDir(paths);
-  if (fs.existsSync(seedMarkerPath(paths))) return 0;
+  const initial = !fs.existsSync(seedMarkerPath(paths));
+  const offered = initial ? new Set<string>() : readSeededNames(paths);
+  const pending = SUBAGENT_TYPES.filter((type) => !offered.has(type.name));
+  if (!initial && pending.length === 0) return 0;
   fs.mkdirSync(dir, { recursive: true });
   let written = 0;
-  for (const type of SUBAGENT_TYPES) {
+  for (const type of pending) {
     const file = path.join(dir, `${type.name}.md`);
-    if (fs.existsSync(file)) continue;
+    if (fs.existsSync(file) || (!initial && fs.existsSync(path.join(agentsDisabledDir(paths), `${type.name}.md`)))) continue;
     fs.writeFileSync(file, rosterMarkdown(type), "utf-8");
     written++;
   }
-  fs.writeFileSync(seedMarkerPath(paths), new Date().toISOString() + "\n", "utf-8");
+  if (initial) fs.writeFileSync(seedMarkerPath(paths), new Date().toISOString() + "\n", "utf-8");
+  writeSeededNames(paths, [...offered, ...SUBAGENT_TYPES.map((type) => type.name)]);
   return written;
 }
 
@@ -495,5 +536,6 @@ export function restoreDefaultAgents(paths: ProjectPaths): string[] {
     fs.writeFileSync(enabledCopy, markdown, "utf-8");
   }
   fs.writeFileSync(seedMarkerPath(paths), new Date().toISOString() + "\n", "utf-8");
+  writeSeededNames(paths, [...readSeededNames(paths), ...SUBAGENT_TYPES.map((t) => t.name)]);
   return SUBAGENT_TYPES.map((t) => t.name);
 }

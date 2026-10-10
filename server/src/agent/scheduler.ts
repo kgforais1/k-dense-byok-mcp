@@ -31,7 +31,8 @@ import { isBudgetExceeded, scheduleSpend } from "../cost/ledger.ts";
 import { listProjects, resolvePaths, type ProjectPaths } from "../projects.ts";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import { createSession, getSession, markSystemSession } from "./session-registry.ts";
-import { readSchedulerState, writeSchedulerState } from "./scheduler-state.ts";
+import { readScheduleOutcomes, readSchedulerState, writeSchedulerState } from "./scheduler-state.ts";
+import { subagentHost } from "./subagent-control.ts";
 
 export interface ScheduleView {
   id: string;
@@ -41,6 +42,10 @@ export interface ScheduleView {
     | { kind: "interval"; every: string; everyMs: number; anchorAt: string; nextRunAt: string };
   workflowScript: string;
   baseRef?: string;
+  /** Pinned model for every fire; absent means children inherit the resident session's. */
+  model?: string;
+  /** Successful timer fires complete without waking the host session. */
+  quiet: boolean;
   paused: boolean;
   heldByBudget: boolean;
   catchUp: "none" | "latest";
@@ -62,6 +67,8 @@ export interface ScheduleRunView {
   completedAt?: string;
   asyncId?: string;
   error?: string;
+  /** Result text Kady kept from the completion event (bounded). */
+  summary?: string;
 }
 
 export interface MissionView {
@@ -106,6 +113,7 @@ export function listSchedules(projectId: string): ScheduleView[] {
   if (!fs.existsSync(dir)) return [];
   const held = new Set(readSchedulerState(paths).heldByBudget);
   const spend = scheduleSpend(projectId);
+  const outcomes = new Map(readScheduleOutcomes(paths).map((o) => [o.asyncId, o.summary]));
   const out: ScheduleView[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -126,6 +134,7 @@ export function listSchedules(projectId: string): ScheduleView[] {
           ...(typeof r.completedAt === "string" ? { completedAt: r.completedAt } : {}),
           ...(typeof r.asyncId === "string" ? { asyncId: r.asyncId } : {}),
           ...(typeof r.error === "string" ? { error: r.error } : {}),
+          ...(typeof r.asyncId === "string" && outcomes.has(r.asyncId) ? { summary: outcomes.get(r.asyncId) } : {}),
         }),
       );
     const target = asRecord(record.target);
@@ -135,6 +144,8 @@ export function listSchedules(projectId: string): ScheduleView[] {
       trigger: asRecord(record.trigger) as ScheduleView["trigger"],
       workflowScript: typeof target.workflowScript === "string" ? target.workflowScript : "",
       ...(typeof target.baseRef === "string" ? { baseRef: target.baseRef } : {}),
+      ...(typeof target.model === "string" ? { model: target.model } : {}),
+      quiet: record.quiet === true,
       paused: record.paused === true,
       heldByBudget: held.has(record.id),
       catchUp: record.catchUp === "none" ? "none" : "latest",
@@ -200,18 +211,21 @@ export interface SchedulerDeps {
   /** Injectable for tests: open/create the resident session. */
   openSession?: (projectId: string, paths: ProjectPaths, sessionId: string | null) => Promise<AgentSession | null>;
   invoke?: (projectId: string, params: Record<string, unknown>) => Promise<{ text: string; details: unknown }>;
+  refresh?: (projectId: string, sessionId: string) => void;
   log?: { info(obj: unknown, msg?: string): void; warn(obj: unknown, msg?: string): void; error(obj: unknown, msg?: string): void };
 }
 
-const deps: Required<Pick<SchedulerDeps, "openSession" | "invoke">> & { log: NonNullable<SchedulerDeps["log"]> } = {
+const deps: Required<Pick<SchedulerDeps, "openSession" | "invoke" | "refresh">> & { log: NonNullable<SchedulerDeps["log"]> } = {
   openSession: defaultOpenSession,
   invoke: defaultInvoke,
+  refresh: (projectId, sessionId) => subagentHost(projectId, sessionId).refreshSchedules(),
   log: console,
 };
 
 export function configureScheduler(overrides: SchedulerDeps): void {
   if (overrides.openSession) deps.openSession = overrides.openSession;
   if (overrides.invoke) deps.invoke = overrides.invoke;
+  if (overrides.refresh) deps.refresh = overrides.refresh;
   if (overrides.log) deps.log = overrides.log;
 }
 
@@ -246,6 +260,7 @@ export function ensureSchedulerSession(projectId: string): Promise<AgentSession 
       const current = readSchedulerState(paths);
       writeSchedulerState(paths, { ...current, sessionId: session.sessionId });
     }
+    deps.refresh(projectId, session.sessionId);
     return session;
   })().finally(() => ensuring.delete(projectId));
   ensuring.set(projectId, promise);
@@ -376,6 +391,10 @@ export function stopSchedulerTick(): void {
 }
 
 /** Hook for the subagent bridge: creating/resuming/running a schedule needs a host. */
-export function onScheduleActivity(projectId: string): void {
-  void ensureSchedulerSession(projectId).catch((err) => deps.log.warn({ err, projectId }, "could not open the scheduler session"));
+export async function onScheduleActivity(projectId: string): Promise<void> {
+  const session = await ensureSchedulerSession(projectId);
+  if (!session) throw new Error("The scheduler session could not be opened");
+  // A shared ensure may have started before this mutation. Refresh after it
+  // settles so the successful mutation is always included.
+  deps.refresh(projectId, session.sessionId);
 }

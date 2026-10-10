@@ -5,6 +5,7 @@ import {
   type SubagentChildIdentity,
 } from "../../src/agent/subagent-child-identity.ts";
 import { modalProjectId } from "./project-id.ts";
+import { modalFailureHint } from "../../src/modal/tool-hints.ts";
 
 const INSTANCE_IDS = [
   "cpu", "cpu-2", "cpu-4", "cpu-8", "cpu-16", "t4", "l4", "a10g",
@@ -172,10 +173,22 @@ function projectId(): string {
 }
 
 function apiBase(): string {
-  return (
+  const raw = (
     process.env.KADY_INTERNAL_URL ||
     `http://127.0.0.1:${process.env.KADY_PORT || process.env.PORT || "8000"}`
   ).replace(/\/+$/, "");
+  // Requests carry the project id and, when required, the access token:
+  // only ever send them to the local Kady API (same rule as research memory).
+  const url = new URL(raw);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
+    url.username ||
+    url.password
+  ) {
+    throw new ApiError("Modal tools only connect to a loopback Kady API", { code: "BAD_INTERNAL_URL" });
+  }
+  return raw;
 }
 
 async function api<T>(
@@ -188,6 +201,8 @@ async function api<T>(
   // FST_ERR_CTP_EMPTY_JSON_BODY, which is what used to break every cancel.
   const headers: Record<string, string> = {
     "X-Project-Id": projectId(),
+    // Inherited from the backend when it requires an access token (auth.ts).
+    ...(process.env.KADY_AUTH_TOKEN ? { "X-Kady-Token": process.env.KADY_AUTH_TOKEN } : {}),
     ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...((init.headers as Record<string, string> | undefined) ?? {}),
   };
@@ -411,11 +426,16 @@ function failed(error: unknown, extra?: Record<string, unknown>) {
       ? error.code
       : "MODAL_FAILURE";
   const retryable = error instanceof ApiError ? (error.retryable ?? false) : false;
-  return result(`Modal compute request failed: ${message}`, {
-    ...extra,
-    error: code,
-    retryable,
-  });
+  const hint = modalFailureHint(code);
+  // An error result, so the model and the UI both see a failure, not a success.
+  return {
+    ...result(`Modal compute request failed: ${message}${hint ? `\n${hint}` : ""}`, {
+      ...extra,
+      error: code,
+      retryable,
+    }),
+    isError: true,
+  };
 }
 
 /**
@@ -581,6 +601,9 @@ export const modalChildTools: ToolDefinition<any>[] = makeModalChildTools();
 
 export default function (pi: ExtensionAPI): void {
   if (!process.env.PI_SUBAGENT_CHILD) return;
+  registerChildModal(pi);
+}
+export function registerChildModal(pi: ExtensionAPI): void {
   const identity = trackSubagentChildIdentity(pi);
   for (const tool of makeModalChildTools(identity)) pi.registerTool(tool);
 }

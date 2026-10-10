@@ -10,14 +10,15 @@
  * `argument-hint` (`<required> [optional]`). The body is the template; Kady's
  * `prompt-expansion.ts` performs the `$1`/`$ARGUMENTS` substitution.
  *
- * A handful of scientific templates are seeded into each project once (marker
- * file, so deletions stick); `restoreDefaultPromptTemplates` puts them back.
+ * Scientific templates are seeded per project and unchanged historic defaults
+ * upgrade by digest (marker-gated so deletions stick); `restoreDefaultPromptTemplates` puts them back.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
 import { stripFrontmatterBlock } from "./prompt-expansion.ts";
+import { upgradeSeededText } from "./seeded-text.ts";
 
 export type PromptScope = "project" | "global";
 export const PROMPT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
@@ -198,13 +199,13 @@ argument-hint: <file>
 
 Run a quality-control pass on \`$1\` before any modelling. Do not modify the file.
 
-1. Load it with the right reader for its format; report shape, column types and memory footprint.
+1. Inspect format, schema and file size before loading. Use metadata, streaming/chunks or a reproducible bounded sample when a full scan would exceed available memory/time. Report shape, column types, estimated memory footprint and exactly which checks covered the full dataset versus a sample; do not extrapolate sample counts as exact totals.
 2. Missing values per column (count and %), duplicated rows, constant columns, and obvious type problems (numbers stored as text, mixed date formats).
-3. Numeric columns: range, mean/median, and outliers beyond 3 MAD; flag impossible values (negative counts, percentages over 100, dates in the future).
+3. Numeric columns: range, mean/median and distribution-appropriate unusual-value checks. Use 3 MAD only when meaningful (handle zero MAD explicitly); a flagged value is not automatically erroneous. Establish units and domain constraints before calling negative values, percentages over 100 or future dates impossible. Do not remove or impute anything during QC.
 4. Categorical columns: cardinality and the top levels; flag near-duplicate spellings.
-5. If the data has a design (samples × conditions, replicates, batches), check the design is balanced and every expected sample is present.
+5. Identify the independent sampling unit, repeated measurements, replicates, conditions and batches. Compare observed samples with a supplied manifest/design, report balance without assuming imbalance is an error, and distinguish unknown expected samples from confirmed missing ones.
 
-Write the report to \`derived/qc_$1.md\` (create \`derived/\` if needed), log the key findings in the lab notebook as an observation, and end with a short list of issues that must be resolved before analysis.
+Create a report under \`derived/\` using \`qc_<safe-basename>_<unique-run-id>.md\`: derive the basename from the final filename component, keep only letters, digits, underscores and hyphens, and check for collisions. Never interpolate the input path or URI directly into an output path. Record the source location without credentials or signed query strings, inspection scope and limitations. Log the key findings in the lab notebook and separate blockers from non-blocking observations.
 `,
   },
   {
@@ -216,9 +217,9 @@ argument-hint: <file-or-result>
 
 Audit the statistical reasoning in \`$1\` as a sceptical methods reviewer.
 
-Check: the test or model matches the design and data type; independence and replication (technical vs biological replicates); multiple-testing correction where several comparisons are made; effect sizes and confidence intervals reported alongside p-values; sample sizes; assumptions (normality, variance, missingness mechanism) and whether they were checked; and whether any step depends on having looked at the outcome first.
+Establish the question/estimand, independent unit and study design first. Check only assumptions relevant to the actual model and inference: clustering/repeated measurements, technical vs biological replicates, missingness, multiplicity across the intended family, appropriate effect estimates and uncertainty, and outcome-informed choices. Do not require raw-data normality for every test or choose a method solely from an assumption-test p-value.
 
-Re-run the key computation yourself where possible and compare. Write findings to the lab notebook as a decision or observation with severity (blocker / concern / note), and propose the minimal fix for each blocker.
+Re-run the key computation where inputs and safe output destinations are available; otherwise label it unverified and explain what is missing. Cite the exact evidence for each finding, distinguish confirmed errors from concerns, and record severity (blocker = invalidates the requested conclusion; concern = material limitation; note = non-blocking context). Propose the minimal fix for each blocker.
 `,
   },
   {
@@ -230,8 +231,8 @@ argument-hint: <figure>
 
 Audit the figure \`$1\`.
 
-1. Find the script and data that produced it (use the provenance panel or search the sandbox); state them explicitly.
-2. Re-derive the plotted numbers from the data and confirm they match the figure (axis ranges, group counts, error-bar definitions).
+1. Use available read/grep/find tools to locate the producing script and data. Inspect relevant \`.kady/provenance/<sessionId>/steps.jsonl\` records and notebook citations when available; match exact paths and recorded versions. A filename match or an inferred/harvest-time edge does not prove that the current file produced this figure. State identified inputs and any uncertain or stale links.
+2. When the producing data and transformations are available, re-derive the plotted numbers in a fresh output directory and compare axis ranges, group counts and error-bar definitions. Otherwise provide a visual-only audit and mark numerical correspondence unverified; do not invent values read from an image.
 3. Check labels, units, legends and colour choices for accessibility; flag truncated axes or dual axes that exaggerate effects.
 4. Note anything the caption claims that the data does not show.
 
@@ -244,9 +245,9 @@ Report as a lab-notebook observation citing the figure and its inputs, and regen
 description: Review the methods used so far for reproducibility
 ---
 
-Review everything done in this project so far as if writing the Methods section for a paper.
+Review the methods relevant to this chat's requested result/deliverable. Use notebook_search and relevant provenance records to identify that scope; for an explicit project-wide request, cover the project and state any bounds or omitted records. Do not rerun every historical analysis merely to review it.
 
-List each analysis step with its inputs, parameters, software versions (from the environment snapshot) and outputs. Flag steps that are not reproducible from the sandbox alone: manual edits, undocumented parameters, results with no producing script, and files whose provenance is unknown or stale. Propose the specific changes (scripts, seeds, logging) that would make each flagged step reproducible.
+List planned, attempted, completed and unverified steps separately, with evidence references. Read relevant \`.kady/provenance/<sessionId>/steps.jsonl\` records and their \`.kady/environments/<environmentId>.json\` snapshots using available file tools; preserve snapshot timing and never substitute today's environment for an unrecorded historical one. Report inputs, parameters, versions and full output paths only where supported. Flag undocumented manual edits, missing scripts and unknown/stale lineage, distinguishing inaccessible evidence from a confirmed omission. Propose specific remedies.
 
 Write the review to the lab notebook as a decision entry and offer to generate a Methods draft.
 `,
@@ -258,11 +259,56 @@ description: Re-run a script from scratch and compare its outputs with the exist
 argument-hint: <script>
 ---
 
-Replicate \`$1\` independently.
+Check computational reproducibility of \`$1\`. A rerun of the same data is not an independent scientific replication.
 
-Copy any raw inputs it needs from \`user_data/\` into \`derived/replicate/\` (never modify the originals), run the script there with the same parameters, and compare every output file against the current version byte-for-byte and, for tables and figures, value-by-value with a tolerance you state. Report exact matches, numerical drift, and outright differences with the most likely cause (random seed, environment, data version).
+Identify the script's actual inputs from its configuration and recorded provenance. Verify access on the BYOK host: inputs may be browser uploads in \`user_data/\`, other project files, host/mounted paths, or data locations accessible through configured tools/connectors. Do not require a new upload or assume every input lives in \`user_data/\`. If a source is inaccessible, report it and ask only blocking questions before running.
+
+Before running, inspect the script, imported helpers and configuration for output paths and side effects, including absolute paths and remote writes. Changing the working directory alone does not isolate a script. Create a fresh \`derived/replicate/<unique-run-id>/\` directory and redirect every write there using supported configuration or a documented copy of the script. If writes cannot be safely redirected, report the blocker before execution. Do not overwrite originals or previously generated results.
+
+Capture a read-only comparison baseline before execution: copy the expected original outputs when feasible and record hashes, source paths, parameters, seeds and available environment versions. Stage only necessary inputs. Run with the same scientific parameters; disclose any unavoidable differences. Compare output inventories, byte hashes where meaningful, and semantic table values/plot source data with justified absolute/relative tolerances chosen before inspecting differences. Separate metadata/formatting differences from numerical differences. Missing/extra outputs are findings. Diagnose causes only with evidence; label untested explanations as hypotheses. Save the baseline manifest, run logs and comparison table in the new run directory.
 
 Log the outcome in the lab notebook and link the comparison table.
+`,
+  },
+  {
+    name: "prove-verify",
+    content: `---
+description: Rounds of parallel investigation and adversarial verification until a result passes review or the budget runs out
+argument-hint: <question or claim> [rounds N] [investigators N] [budget $N]
+---
+
+Run prove–verify rounds on this question or claim:
+
+$ARGUMENTS
+
+You are the orchestrator. Decide what gets worked on, brief specialists, keep the records and stop the loop. Do not do the derivations or analyses yourself, and do not form an opinion on the answer: never accept a result, call a direction promising or dead, or overrule a verifier on your own judgment. Results are accepted only by verification; a direction is dropped only for a recorded objection or a verified counterexample.
+
+Limits: use any round, investigator or dollar limit given above. Otherwise run at most 3 rounds with at most 3 investigators per round. For a dollar limit, record \`date +%s\` before round 1 and, before each later round, total the project spend since then with \`node -e "const fs=require('fs'),t=+process.argv[1];let s=0;for(const d of fs.readdirSync('.kady/runs')){const f='.kady/runs/'+d+'/costs.jsonl';if(fs.existsSync(f))for(const l of fs.readFileSync(f,'utf8').split('\\\\n'))if(l.trim()){const r=JSON.parse(l);if(r.ts>=t)s+=r.costUsd||0}}console.log(s.toFixed(2))" <start>\`; it counts every chat in the project, so it errs high. Check it again before any retry or repair workflow, and stop before work that would likely exceed the limit. The project spend limit remains the hard stop.
+
+Setup:
+1. State the target precisely: the claim, its assumptions and scope, and what would count as established or refuted. If the question is too ambiguous to state, ask the user before spending anything.
+2. Create \`derived/prove-verify/<short-slug>-<YYYYMMDD-HHMM>/\` and a \`ledger.md\` in it with three sections: Verified (results that passed verification, reusable without re-proof), Excluded (directions or claims ruled out, each with its counterexample or objection) and Attempts (per direction: round, approach, verdict, the objection it failed on).
+3. When the answer depends on prior work, have literature-researcher collect the relevant definitions, known results and methods into \`literature.md\` first.
+
+Each round is one workflow (a \`\`\`js workflow block plus \`subagent({ workflow: true })\`), awaited before the next round starts:
+1. Directions: give each investigator a different direction: a specific claim, bound or estimate, a counterexample search, or (later) repairing a draft that verifiers marked "repair". Assign what to attempt, never how. Spread effort across genuinely different approaches; do not send two investigators down the same path.
+2. Briefs: each investigator's brief names its direction, its draft path (\`round-<n>/draft-<k>.md\`), the ledger and literature paths, and the earlier attempts on its direction with the objections that defeated them. Pass long material by path. Write each brief separately so the investigators see different readings of the history. Have every specialist save its own draft or verdict at the path you name; do not forbid file writes to a specialist whose result must land in a file.
+3. Launch the investigators in parallel (agent "investigator"; write each child's \`agent\` as a literal string).
+4. Verify each draft separately with the reviewer that fits its claim (math-checker for derivations, statistical-reviewer for inference, code-reviewer or ml-auditor for computation, citation-checker or fact-checker for sourced claims, simulation-reviewer for simulations). Open each verifier's brief with "Verification gate:" and give it only the draft path and the claim, not the investigator's reasoning about why it should pass.
+5. Run one comparative-reviewer over all of the round's drafts and their verdicts together, also as a verification gate.
+
+After each round:
+- A draft is accepted only when its own verifier and the comparative review both accept it.
+- Update the ledger: append every attempt with its verdict and objection. Move a result to Verified only when a gate accepted it. When a verifier confirmed specific steps inside a draft it otherwise rejected, record them as candidate fragments and have one re-verified on its own, as a self-contained statement, before promoting it. Record refuted claims and verified counterexamples under Excluded.
+- Look across all verdicts so far for recurring mistakes, gaps or verifier disagreements, and add a short warning about each to the next round's briefs.
+- When attempts keep failing at the same step, send literature-researcher to search for that specific obstacle before the next round.
+- Tell the user in two or three lines what the round tried, what passed and what the next round will do.
+
+Stop when a result passes both gates and no remaining direction could plausibly improve it, when every direction is excluded or exhausted, or at the limits. Then:
+1. If more than one result passed, pick the one whose consequential steps the verifiers checked most thoroughly, and say why.
+2. Write \`report.md\` in the run folder: the precise statement, the full argument or analysis with every lemma, input and command it depends on, the verification record, and the remaining limitations, readable by someone who never saw this conversation.
+3. Have a fresh verifier check \`report.md\` against the accepted draft as a verification gate, so the write-up introduces no new errors, and fix what it finds.
+4. Log the outcome in the lab notebook: the verified result, the excluded directions with their counterexamples, and what remains open. If nothing passed, report the furthest verified progress and the strongest objection still standing; that is a valid outcome, not a failure to hide.
 `,
   },
 ];
@@ -271,20 +317,69 @@ function seedMarker(paths: ProjectPaths): string {
   return path.join(paths.kadyDir, "prompts-seeded");
 }
 
-/** One-time seeding into a project (marker-gated so deletions stick). */
+/** Template names already offered to this project, so later additions seed once. */
+function seededNamesFile(paths: ProjectPaths): string {
+  return path.join(paths.kadyDir, "prompts-seeded-names.json");
+}
+
+/**
+ * What a `prompts-seeded` marker without a names file stands for: the
+ * templates shipped before per-name tracking. Never extend this list.
+ */
+const LEGACY_SEEDED_TEMPLATES: readonly string[] = ["qc", "stats-check", "figure-audit", "methods-review", "replicate"];
+
+function readSeededNames(paths: ProjectPaths): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(seededNamesFile(paths), "utf-8"));
+    if (Array.isArray(parsed)) return new Set(parsed.filter((name): name is string => typeof name === "string"));
+  } catch {
+    /* missing or malformed: the legacy set */
+  }
+  return new Set(LEGACY_SEEDED_TEMPLATES);
+}
+
+function writeSeededNames(paths: ProjectPaths, names: Iterable<string>): void {
+  fs.mkdirSync(paths.kadyDir, { recursive: true });
+  // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
+  fs.writeFileSync(seededNamesFile(paths), JSON.stringify([...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) + "\n", "utf-8");
+}
+
+// Canonical SHA-256 of the previously shipped bodies, including frontmatter.
+// Keep historic digests when changing defaults; never infer an edit from a name.
+const PREVIOUS_TEMPLATE_DIGESTS: Record<string, string[]> = {
+  qc: ["8e858d6ae8c8806e3a016f5158debaa73140cade0cac5af590f88a4a97dc633d"],
+  "stats-check": ["fe0e0f0e3400f96c97ab76208757b78748aae816a8d623dd72d20ed0546de03c"],
+  "figure-audit": ["043ec013badbbc1f5eac315b4b613b166a6a85fd7e1b1558cf3f20e6d1dbb112"],
+  "methods-review": ["1b54e12a144a4a5b9a7628d911bd581058bc15ee8309e9862cb2e5f362932b63"],
+  replicate: ["7ae7cf27e62c7841fd606522fe8c1333af1df3ee0dd4ef7c07a8079d1a945291"],
+};
+
+/**
+ * Seed once (a template added to the shipped set later is offered once, by
+ * name), then upgrade only unchanged shipped versions; deletions stick.
+ */
 export function seedPromptTemplates(paths: ProjectPaths): number {
-  if (fs.existsSync(seedMarker(paths))) return 0;
+  const seeded = fs.existsSync(seedMarker(paths));
+  const offered = seeded ? readSeededNames(paths) : new Set<string>();
   const dir = promptsDir(paths, "project");
   fs.mkdirSync(dir, { recursive: true });
   let written = 0;
   for (const template of SEEDED_TEMPLATES) {
     const file = path.join(dir, `${template.name}.md`);
-    if (fs.existsSync(file)) continue;
+    if (fs.existsSync(file)) {
+      if (upgradeSeededText(file, template.content, PREVIOUS_TEMPLATE_DIGESTS[template.name] ?? [])) written++;
+      continue;
+    }
+    if (offered.has(template.name)) continue;
     fs.writeFileSync(file, template.content, "utf-8");
     written++;
   }
-  fs.mkdirSync(paths.kadyDir, { recursive: true });
-  fs.writeFileSync(seedMarker(paths), new Date().toISOString() + "\n", "utf-8");
+  const names = SEEDED_TEMPLATES.map((template) => template.name);
+  if (!seeded) {
+    fs.mkdirSync(paths.kadyDir, { recursive: true });
+    fs.writeFileSync(seedMarker(paths), new Date().toISOString() + "\n", "utf-8");
+  }
+  if (!seeded || names.some((name) => !offered.has(name))) writeSeededNames(paths, [...offered, ...names]);
   return written;
 }
 
@@ -297,5 +392,6 @@ export function restoreDefaultPromptTemplates(paths: ProjectPaths): number {
   }
   fs.mkdirSync(paths.kadyDir, { recursive: true });
   fs.writeFileSync(seedMarker(paths), new Date().toISOString() + "\n", "utf-8");
+  writeSeededNames(paths, [...readSeededNames(paths), ...SEEDED_TEMPLATES.map((template) => template.name)]);
   return SEEDED_TEMPLATES.length;
 }

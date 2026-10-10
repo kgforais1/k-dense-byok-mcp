@@ -37,7 +37,7 @@ describe("inbound MCP listener guard", () => {
     try {
       const outbound = await app.inject({ method: "GET", url: "/mcp" });
       expect(outbound.statusCode).toBe(200);
-      expect(outbound.json()).toMatchObject({ mcpServers: {}, disabledServers: {} });
+      expect(outbound.json()).toMatchObject({ scope: "project", mcpServers: {} });
       expect(app.hasRoute({ method: "POST", url: "/mcp-server" })).toBe(true);
       expect(app.hasRoute({ method: "GET", url: "/mcp-server" })).toBe(true);
 

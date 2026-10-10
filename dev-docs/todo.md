@@ -2,6 +2,9 @@
 
 ## Next Up
 
+- [ ] **Retain immutable tested Office runtime assets** — [#52](https://github.com/kgforais1/k-dense-byok-mcp/issues/52); keep the hash checks while preventing a moving CDN build from breaking cold-cache installations.
+- [ ] **Track paid tool spend during subscription runs** — [#53](https://github.com/kgforais1/k-dense-byok-mcp/issues/53); completed tool charges must affect admission before the whole chat run finishes.
+- [ ] **Review upstream compatibility observations** — [#54](https://github.com/kgforais1/k-dense-byok-mcp/issues/54); legacy Modal reservation recovery and JCAMP implicit-axis profiles need representative fixtures and policy/specification review.
 - [ ] **Evaluate alternate coding-agent engines** → [3. Alternate coding-agent engines](#3-alternate-coding-agent-engines)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)
 

@@ -7,22 +7,18 @@
  * frame sourced from Pi's per-session usage accounting.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { activePaths, getProject, touchProject, type ProjectPaths } from "../projects.ts";
-import { corsResponseHeaders } from "../cors.ts";
-import { currentProjectId } from "../scope.ts";
+import { snapshotChat } from "../agent/chat-snapshot.ts";
 import {
   contextUsageForClient,
-  contextUsageFrame,
-  toClientFrame,
-  type ClientFrame,
+  contextUsageFrame
 } from "../agent/events.ts";
-import { setFusionConfig } from "../agent/fusion-bridge.ts";
 import {
   clearFollowUpReceipts,
   settleFollowUpReceipt,
   tryReserveFollowUpReceipt,
   type FollowUpAdmission,
 } from "../agent/follow-up-receipts.ts";
+import { setFusionConfig } from "../agent/fusion-bridge.ts";
 import {
   cancelInterviewsForSession,
   pendingInterviewFor,
@@ -30,85 +26,84 @@ import {
   validateAnswer,
   type InterviewAnswer,
 } from "../agent/interview.ts";
+import { MethodsDraftError, runMethodsDraft } from "../agent/methods-draft.ts";
 import {
   setSessionComputeOptions,
   setSessionComputeTarget,
   type SessionComputeOptions,
 } from "../agent/modal-tool.ts";
 import {
-  cancelPermissionsForSession,
-  pendingPermissionFor,
-  resolvePermission,
-} from "../agent/permissions.ts";
-import {
   assertModelAuthentication,
   ModelAuthenticationError,
   modelReference,
   resolveModel,
 } from "../agent/models.ts";
-import { explainProviderRefusal } from "../agent/model-refusal.ts";
-import { parseRunImages, type RunImage } from "../agent/prompt-images.ts";
-import { expandLeadingCommand } from "../agent/prompt-expansion.ts";
-import { expandableTemplates } from "../agent/prompts.ts";
-import { globalSkillRoot, listProjectSkills, projectSkillRoot } from "../agent/skills.ts";
-import { schedulerSessionId } from "../agent/scheduler-state.ts";
-import { readNotebookEntries } from "../agent/notebook-store.ts";
-import { withNotebookArtifactHealth } from "../agent/notebook-artifacts.ts";
-import { withNotebookPlanHistory } from "../agent/notebook-research.ts";
-import { notebookToMarkdown } from "../agent/notebook-export.ts";
-import { buildNotebookZip } from "../agent/notebook-zip.ts";
 import {
   normalizeNotebookAnnotations,
   readNotebookAnnotations,
   writeNotebookAnnotations,
 } from "../agent/notebook-annotations.ts";
-import { MethodsDraftError, runMethodsDraft } from "../agent/methods-draft.ts";
-import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
-import { runBroker, type RunHandle } from "../agent/run-broker.ts";
-import { runStartFailure } from "../agent/run-start-errors.ts";
-import { persistTerminalRunResult } from "../agent/run-results.ts";
-import { ProvenanceRecorder } from "../provenance/recorder.ts";
+import { withNotebookArtifactHealth } from "../agent/notebook-artifacts.ts";
+import { notebookToMarkdown } from "../agent/notebook-export.ts";
+import { withNotebookPlanHistory } from "../agent/notebook-research.ts";
+import { readNotebookEntries } from "../agent/notebook-store.ts";
+import { buildNotebookZip } from "../agent/notebook-zip.ts";
 import {
+  cancelPermissionsForSession,
+  pendingPermissionFor,
+  resolvePermission,
+} from "../agent/permissions.ts";
+import { expandLeadingCommand } from "../agent/prompt-expansion.ts";
+import { parseRunImages, type RunImage } from "../agent/prompt-images.ts";
+import { expandableTemplates } from "../agent/prompts.ts";
+import { runBroker, type RunHandle } from "../agent/run-broker.ts";
+import { mintRunId, setSessionRunId } from "../agent/run-ids.ts";
+import {
+  claimRun,
+  executeRun,
   isRunClaimed,
+  openRun,
   snapshot,
+  type OpenedRun,
 } from "../agent/run-pipeline.ts";
-import { SandboxError } from "../sandbox-fs.ts";
+import { persistTerminalRunResult } from "../agent/run-results.ts";
+import { runStartFailure } from "../agent/run-start-errors.ts";
+import { schedulerSessionId } from "../agent/scheduler-state.ts";
 import {
   findSessionFile,
   toNotebook,
   toShellScript,
 } from "../agent/session-export.ts";
 import { toHistory } from "../agent/session-history.ts";
+import { deferSessionMessages } from "../agent/session-message-gate.ts";
 import {
   createSession,
   deleteSession,
-  isDeletedSession,
   getModelRegistry,
   getModelRuntime,
   getSession,
-  listSessionsLabelled,
-  pinSession,
-  unpinSession,
+  isDeletedSession,
+  listSessionsLabelled
 } from "../agent/session-registry.ts";
+import { globalSkillRoot, listProjectSkills, projectSkillRoot } from "../agent/skills.ts";
+import { corsResponseHeaders } from "../cors.ts";
+import { activePaths, getProject, touchProject, type ProjectPaths } from "../projects.ts";
+import { SandboxError } from "../sandbox-fs.ts";
+import { currentProjectId } from "../scope.ts";
 
 import { parseThinkingLevel } from "../agent/thinking.ts";
-import {
-  addTurnUsage,
-  emptySnapshot,
-  isBudgetExceeded,
-  recordRun,
-  sessionCostSummary,
-  snapshotDelta,
-  snapshotMax,
-  trackInFlightRun,
-  untrackInFlightRun,
-  type CostSnapshot,
-} from "../cost/ledger.ts";
 import {
   billingCountsTowardBudget,
   billingForModel,
   type BillingContext,
 } from "../cost/billing.ts";
+import {
+  emptySnapshot,
+  isBudgetExceeded,
+  recordRun,
+  sessionCostSummary,
+  snapshotDelta
+} from "../cost/ledger.ts";
 
 interface RunBody {
   message?: string;
@@ -128,7 +123,7 @@ interface RunBody {
 // flips true only after awaits inside prompt(), so concurrent POSTs could
 // otherwise both pass the guard and the loser's close handler would abort the
 // winner's live turn.
-const activeRuns = new Set<string>();
+// FORK: user, system, and manual compaction runs share the pipeline claim.
 
 /**
  * Expand a leading `/skill:name args` or `/template args` from disk (project
@@ -205,6 +200,8 @@ interface PreparedRun {
   runBilling: BillingContext;
   runId: string;
   handle: RunHandle;
+  opened: OpenedRun;
+  restoreTools?: () => void;
 }
 
 interface RunLifecycle {
@@ -234,6 +231,7 @@ interface RunPreparationFailure {
 async function prepareRun(
   sessionId: string,
   rawBody: RunBody | null | undefined,
+  log: FastifyRequest["log"],
 ): Promise<PreparedRun | RunPreparationFailure> {
   const projectId = currentProjectId();
   const paths = activePaths();
@@ -247,7 +245,7 @@ async function prepareRun(
 
   const runKey = `${projectId}:${sessionId}`;
   const retained = runBroker.get(projectId, sessionId);
-  if (session.isStreaming || activeRuns.has(runKey) || (retained && !retained.isComplete)) {
+  if (session.isStreaming || isRunClaimed(projectId, sessionId) || (retained && !retained.isComplete)) {
     return {
       failure: {
         statusCode: 409,
@@ -276,8 +274,8 @@ async function prepareRun(
     messages: historyFile ? toHistory(historyFile, paths.sandbox) : [],
     contextUsage: contextUsageForClient(session) ?? null,
   };
-  activeRuns.add(runKey);
-  pinSession(projectId, session.sessionId);
+  const claim = claimRun(projectId, sessionId);
+  if (!claim) return { failure: { statusCode: 409, body: { detail: "Session is already streaming a response", reason: "run_already_active" } } };
 
   let requestedModel: ReturnType<typeof resolveModel>;
   let runBilling: BillingContext;
@@ -288,8 +286,7 @@ async function prepareRun(
     await assertModelAuthentication(requestedModel, getModelRuntime());
     runBilling = await billingForModel(requestedModel, getModelRuntime());
   } catch (error) {
-    unpinSession(projectId, session.sessionId);
-    activeRuns.delete(runKey);
+    claim.release();
     return {
       failure: {
         statusCode: error instanceof ModelAuthenticationError ? 401 : 400,
@@ -309,18 +306,21 @@ async function prepareRun(
   // leading `/command` Kady did not recognize is left for Pi to dispatch:
   // extension commands such as pi-subagents' `/subagents-watchdog status`
   // answer with a custom message (a notice card) instead of a model turn.
-  const prompt = expandChatCommand(paths, body.message);
-  const dispatchExtensionCommand = prompt === body.message && /^\/[a-z]/i.test(prompt);
   try {
-    setSessionRunId(projectId, session.sessionId, runId);
-    const handle = runBroker.start(projectId, sessionId, {
-      runId,
-      prompt,
+    const prompt = expandChatCommand(paths, body.message);
+    const dispatchExtensionCommand = prompt === body.message && /^\/[a-z]/i.test(prompt);
+    // FORK: cleanup may run before preparation has finished.
+    const preparation: { run?: PreparedRun } = {};
+    const opened = openRun(claim, {
+      origin: "user", kind: "turn", runId, prompt,
       images: parsedImages.images.map(({ data, mimeType }) => ({ data, mimeType })),
-      baseline,
+      baseline, session,
+      // FORK: persist user runs for late inbound MCP polling before done.
+      beforeComplete: (handle) => persistTerminalResult(projectId, handle, log),
+      onCleanup: () => preparation.run?.restoreTools?.(),
     });
-    handle.publish({ type: "run_start", runId });
-    return {
+    const handle = opened.handle;
+    const prepared: PreparedRun = {
       projectId,
       paths,
       session,
@@ -336,50 +336,33 @@ async function prepareRun(
       runBilling,
       runId,
       handle,
+      opened,
     };
+    preparation.run = prepared;
+    return prepared;
   } catch (error) {
     setSessionRunId(projectId, session.sessionId, null);
-    unpinSession(projectId, session.sessionId);
-    activeRuns.delete(runKey);
+    claim.release();
     return { failure: runStartFailure(error) };
   }
 }
 
-function createRunLifecycle(run: PreparedRun, log: FastifyRequest["log"]): RunLifecycle {
-  let savedToolNames: string[] | null = null;
+function persistTerminalResult(projectId: string, handle: RunHandle, log: FastifyRequest["log"]): void {
+  try { persistTerminalRunResult(projectId, handle); }
+  catch (error) {
+    log.error({ error, runId: handle.runId }, "failed to persist terminal run result");
+    handle.publish({ type: "error", message: "Terminal run result could not be persisted; late MCP polling is unavailable." });
+  }
+}
+
+function createRunLifecycle(run: PreparedRun): RunLifecycle {
   let handedOff = false;
   return {
-    handOff: () => {
-      handedOff = true;
-    },
+    handOff: () => { handedOff = true; },
     wasHandedOff: () => handedOff,
-    saveToolNames: (names) => {
-      savedToolNames = names;
-    },
-    complete: () => {
-      if (run.handle.isComplete) return;
-      try {
-        persistTerminalRunResult(run.projectId, run.handle);
-      } catch (error) {
-        log.error({ error, runId: run.runId }, "failed to persist terminal run result");
-        run.handle.publish({
-          type: "error",
-          message: "Terminal run result could not be persisted; late MCP polling is unavailable.",
-        });
-      }
-      run.handle.publish({ type: "done" });
-      run.handle.complete();
-    },
-    cleanup: () => {
-      if (savedToolNames !== null) {
-        run.session.setActiveToolsByName(savedToolNames);
-        savedToolNames = null;
-      }
-      setSessionRunId(run.projectId, run.session.sessionId, null);
-      untrackInFlightRun(run.runKey);
-      unpinSession(run.projectId, run.session.sessionId);
-      activeRuns.delete(run.runKey);
-    },
+    saveToolNames: (names) => { run.restoreTools = () => run.session.setActiveToolsByName(names); },
+    complete: () => run.opened.abandon(),
+    cleanup: () => {},
   };
 }
 
@@ -436,131 +419,16 @@ async function configureRun(
   return null;
 }
 
-function publishContextUsage(run: PreparedRun): void {
-  const frame = contextUsageFrame(contextUsageForClient(run.session));
-  if (frame) run.handle.publish(frame);
-}
-
-function publishBudgetFailure(run: PreparedRun): boolean {
-  const budget = isBudgetExceeded(run.projectId);
-  if (!billingCountsTowardBudget(run.runBilling) || !budget.exceeded) return false;
-  run.handle.publish({
-    type: "error",
-    kind: "budget",
-    message:
-      `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
-      `$${(budget.limitUsd ?? 0).toFixed(2)}). Raise the limit in project settings and retry.`,
-  });
-  return true;
-}
-
-async function recordRunAccounting(
-  run: PreparedRun,
-  before: CostSnapshot,
-  turnTally: CostSnapshot,
-  log: FastifyRequest["log"],
-): Promise<void> {
-  try {
-    const usage = snapshotMax(snapshotDelta(before, snapshot(run.session)), turnTally);
-    const entry = recordRun({
-      sessionId: run.sessionId,
-      projectId: run.projectId,
-      model: run.session.model ? modelReference(run.session.model) : "unknown",
-      before: emptySnapshot(),
-      after: usage,
-      billing: run.runBilling,
-    });
-    const stats = run.session.getSessionStats();
-    publishContextUsage(run);
-    run.handle.publish({
-      type: "cost",
-      cost: sessionCostSummary(run.sessionId, run.projectId).totalUsd,
-      tokens: stats.tokens,
-      runCost: entry?.costUsd ?? 0,
-      runTokens: usage.total,
-      runBillingMode: run.runBilling.billingMode,
-      runProvider: run.runBilling.provider,
-      ...(entry?.listPriceUsd !== undefined ? { runListPriceUsd: entry.listPriceUsd } : {}),
-    });
-  } catch (error) {
-    log.warn({ error }, "failed to ledger run cost");
-  }
-}
-
-async function promptAndRecordRun(run: PreparedRun, log: FastifyRequest["log"]): Promise<void> {
-  const turnTally = emptySnapshot();
-  const provenance = new ProvenanceRecorder({
-    projectId: run.projectId,
-    sessionId: run.sessionId,
-    sandboxRoot: run.paths.sandbox,
-    runId: run.runId,
-    getModel: () => (run.session.model ? modelReference(run.session.model) : undefined),
-    onError: (error) => log.warn({ error }, "provenance recorder step failed"),
-  });
-  const withRefusalGuidance = (frame: ClientFrame): ClientFrame =>
-    frame.type === "error" && typeof frame.message === "string"
-      ? {
-          ...frame,
-          message: explainProviderRefusal(frame.message, {
-            projectId: run.projectId,
-            modelRef: run.session.model ? modelReference(run.session.model) : undefined,
-          }),
-        }
-      : frame;
-  const priorError = run.session.state.errorMessage;
-  const before = snapshot(run.session);
-  let unsubscribe = () => {};
-  try {
-    unsubscribe = run.session.subscribe((event) => {
-      provenance.observe(event);
-      if (event.type === "turn_end") {
-        const usage = (event.message as { usage?: Parameters<typeof addTurnUsage>[1] }).usage;
-        if (usage) addTurnUsage(turnTally, usage);
-      }
-      const frame = toClientFrame(event, run.paths.sandbox);
-      if (frame) run.handle.publish(withRefusalGuidance(frame));
-      if (event.type === "turn_end") publishContextUsage(run);
-    });
-    if (billingCountsTowardBudget(run.runBilling)) {
-      trackInFlightRun(run.runKey, run.projectId, () =>
-        Math.max(0, snapshot(run.session).costUsd - before.costUsd),
-      );
-    }
-    await run.session.prompt(run.prompt, {
+// FORK: REST and inbound MCP retain one adapter; upstream owns pumping/accounting.
+async function ownRun(run: PreparedRun, log: FastifyRequest["log"]): Promise<void> {
+  await executeRun(run.opened, {
+    session: run.session, paths: run.paths, billing: run.runBilling, log,
+    budgetPolicy: "refuse",
+    run: () => run.session.prompt(run.prompt, {
       expandPromptTemplates: run.dispatchExtensionCommand,
       ...(run.images.length > 0 ? { images: run.images } : {}),
-    });
-    const errorMessage = run.session.state.errorMessage;
-    if (errorMessage && errorMessage !== priorError) {
-      run.handle.publish(withRefusalGuidance({ type: "error", message: errorMessage }));
-    }
-  } catch (error) {
-    run.handle.publish({ type: "error", message: (error as Error).message });
-  } finally {
-    unsubscribe();
-    try {
-      await provenance.flush();
-    } catch (error) {
-      log.warn({ error }, "failed to flush provenance");
-    }
-    await recordRunAccounting(run, before, turnTally, log);
-  }
-}
-
-async function ownRun(run: PreparedRun, lifecycle: RunLifecycle, log: FastifyRequest["log"]): Promise<void> {
-  try {
-    if (!run.handle.isAbortRequested && !publishBudgetFailure(run)) {
-      await promptAndRecordRun(run, log);
-    }
-  } catch (error) {
-    log.error({ error }, "detached run failed");
-    if (!run.handle.isComplete) {
-      run.handle.publish({ type: "error", message: (error as Error).message });
-    }
-  } finally {
-    lifecycle.complete();
-    lifecycle.cleanup();
-  }
+    }),
+  });
 }
 
 /**
@@ -577,17 +445,17 @@ export async function beginRun(
   body: RunBody | null | undefined,
   log: FastifyRequest["log"],
 ): Promise<PreparedRun | RunPreparationFailure> {
-  const prepared = await prepareRun(sessionId, body);
+  const prepared = await prepareRun(sessionId, body, log);
   if ("failure" in prepared) return prepared;
 
-  const lifecycle = createRunLifecycle(prepared, log);
+  const lifecycle = createRunLifecycle(prepared);
   try {
     const setupError = await configureRun(prepared, lifecycle, log);
     if (setupError) {
       return { failure: { statusCode: 400, body: { detail: setupError } } };
     }
     lifecycle.handOff();
-    void ownRun(prepared, lifecycle, log);
+    void ownRun(prepared, log);
     return prepared;
   } catch (error) {
     if (!lifecycle.wasHandedOff() && !prepared.handle.isComplete) {
@@ -614,7 +482,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     try {
       const projectId = currentProjectId();
       const paths = activePaths();
-      const result = deleteSession(projectId, paths, req.params.id);
+      const result = await deleteSession(projectId, paths, req.params.id);
       switch (result) {
         case "not_found":
           reply.code(404);
@@ -829,6 +697,26 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
+  // Compact snapshot of a chat for another chat to reference (composer + →
+  // Research → Chats). POST because it writes into the project sandbox.
+  app.post<{ Params: { id: string }; Body: { title?: unknown } }>(
+    "/sessions/:id/snapshot",
+    async (req, reply) => {
+      try {
+        const title = typeof req.body?.title === "string" ? req.body.title.slice(0, 500) : undefined;
+        const snapshot = snapshotChat(activePaths(), req.params.id, { title });
+        if (!snapshot) {
+          reply.code(404);
+          return { detail: "No such session" };
+        }
+        return snapshot;
+      } catch (err) {
+        reply.code(400);
+        return { detail: (err as Error).message };
+      }
+    },
+  );
+
   // Reproducibility export: a runnable shell script (?format=sh) or a markdown
   // lab notebook (?format=md) reconstructed from the Pi session log.
   app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
@@ -932,7 +820,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
-  app.get<{ Params: { id: string }; Querystring: { after?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { after?: string; runId?: string } }>(
     "/sessions/:id/run/events",
     async (req, reply) => {
       const rawAfter = req.query.after;
@@ -945,6 +833,12 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       if (!handle) {
         reply.code(404);
         return { detail: "No retained run for this session" };
+      }
+      // A new system/user run can replace the retained handle after the client
+      // reads /run/state. Sequence cursors belong to one run, never its successor.
+      if (req.query.runId !== undefined && req.query.runId !== handle.runId) {
+        reply.code(409);
+        return { detail: "The retained run changed; refresh its state before reconnecting", runId: handle.runId };
       }
       streamRun(req, reply, handle, after);
     },
@@ -1036,64 +930,75 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
       const projectId = currentProjectId();
       const sessionId = req.params.id;
       const session = await getSession(projectId, activePaths(), sessionId);
-      if (!session) {
+      if (!session || isDeletedSession(projectId, sessionId)) {
         reply.code(404);
         return { detail: "No such session" };
       }
-      if (session.isStreaming || isRunClaimed(projectId, sessionId)) {
+      // Claim before billing/auth awaits, just like a chat run. Pi's compact()
+      // aborts existing work, so a second compaction must never enter it.
+      const claim = session.isStreaming || session.isCompacting
+        ? null
+        : claimRun(projectId, sessionId);
+      if (!claim) {
         reply.code(409);
         return { detail: "Wait for the current run to finish before compacting", reason: "streaming" };
       }
-      const instructions =
-        typeof req.body?.instructions === "string" ? req.body.instructions.slice(0, 2_000) : undefined;
-      const billing = session.model
-        ? await billingForModel(session.model, getModelRuntime())
-        : { provider: "unknown", authType: "none" as const, billingMode: "payg" as const };
-      const budget = isBudgetExceeded(projectId);
-      if (billingCountsTowardBudget(billing) && budget.exceeded) {
-        reply.code(402);
-        return {
-          detail:
-            `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
-            `$${(budget.limitUsd ?? 0).toFixed(2)}). Raise the limit in project settings.`,
-          reason: "budget",
-        };
-      }
-      const before = snapshot(session);
-      let result: Awaited<ReturnType<typeof session.compact>>;
+      const resumeMessages = deferSessionMessages(session, projectId);
       try {
-        result = await session.compact(instructions);
-      } catch (err) {
-        const message = (err as Error).message;
-        // Pi refuses when every message fits inside `keepRecentTokens`; that
-        // is a normal state, not a failure.
-        if (/nothing to compact/i.test(message)) {
-          reply.code(409);
+        const instructions =
+          typeof req.body?.instructions === "string" ? req.body.instructions.slice(0, 2_000) : undefined;
+        const billing = session.model
+          ? await billingForModel(session.model, getModelRuntime())
+          : { provider: "unknown", authType: "none" as const, billingMode: "payg" as const };
+        const budget = isBudgetExceeded(projectId);
+        if (billingCountsTowardBudget(billing) && budget.exceeded) {
+          reply.code(402);
           return {
-            detail: "Nothing to compact yet: the whole conversation still fits inside the recent-context window.",
-            reason: "too_small",
+            detail:
+              `Project spend limit reached ($${budget.totalUsd.toFixed(2)} / ` +
+              `$${(budget.limitUsd ?? 0).toFixed(2)}). Raise the limit in project settings.`,
+            reason: "budget",
           };
         }
-        reply.code(502);
-        return { detail: `Compaction failed: ${message}` };
+        const before = snapshot(session);
+        let result: Awaited<ReturnType<typeof session.compact>>;
+        try {
+          result = await session.compact(instructions);
+        } catch (err) {
+          const message = (err as Error).message;
+          // Pi refuses when every message fits inside `keepRecentTokens`; that
+          // is a normal state, not a failure.
+          if (/nothing to compact/i.test(message)) {
+            reply.code(409);
+            return {
+              detail: "Nothing to compact yet: the whole conversation still fits inside the recent-context window.",
+              reason: "too_small",
+            };
+          }
+          reply.code(502);
+          return { detail: `Compaction failed: ${message}` };
+        }
+        const entry = recordRun({
+          sessionId,
+          projectId,
+          model: session.model ? modelReference(session.model) : "unknown",
+          role: "agent",
+          before: emptySnapshot(),
+          after: snapshotDelta(before, snapshot(session)),
+          billing,
+        });
+        return {
+          ok: true,
+          tokensBefore: result.tokensBefore,
+          estimatedTokensAfter: result.estimatedTokensAfter ?? null,
+          costUsd: entry?.costUsd ?? 0,
+          billingMode: billing.billingMode,
+          contextUsage: contextUsageForClient(session) ?? null,
+        };
+      } finally {
+        claim.release();
+        resumeMessages();
       }
-      const entry = recordRun({
-        sessionId,
-        projectId,
-        model: session.model ? modelReference(session.model) : "unknown",
-        role: "agent",
-        before: emptySnapshot(),
-        after: snapshotDelta(before, snapshot(session)),
-        billing,
-      });
-      return {
-        ok: true,
-        tokensBefore: result.tokensBefore,
-        estimatedTokensAfter: result.estimatedTokensAfter ?? null,
-        costUsd: entry?.costUsd ?? 0,
-        billingMode: billing.billingMode,
-        contextUsage: contextUsageForClient(session) ?? null,
-      };
     },
   );
 

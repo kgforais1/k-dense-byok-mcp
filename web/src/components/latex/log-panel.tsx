@@ -8,7 +8,8 @@ export type LogFilter = "all" | "problems";
 
 // FORK: explicit alternation grouping (typescript:S5850); the anchored markers and the
 // unanchored keywords are intentionally separate top-level branches — do not merge under ^.
-const PROBLEM_RE = /^(!|.*:\d+:|LaTeX Warning|Overfull|Underfull|Package \S+ Warning)|(?:not found|failed|timed out|cancelled|error)/i;
+// Both branches are non-capturing groups so precedence is unambiguous; only .test() uses this.
+const PROBLEM_RE = /^(?:!|.*:\d+:|LaTeX Warning|Overfull|Underfull|Package \S+ Warning)|(?:not found|failed|timed out|cancelled|error)/i;
 
 export const LogPanel = memo(function LogPanel({
   log,

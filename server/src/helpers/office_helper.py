@@ -315,7 +315,10 @@ def main():
         contained = False
     if not contained:
         raise ValueError('File is outside the trusted directory')
-    pkg = Package(filename, kind)
+    # Open the canonical path, not the pre-validation spelling, to narrow the
+    # check/open race against same-user symlink swaps (defense in depth; the HTTP
+    # path only ever passes API-created regular files).
+    pkg = Package(real_file, kind)
     if command == 'validate':
         readonly = pkg.signed
         if kind == 'docx' and 'word/settings.xml' in pkg.names:
@@ -324,7 +327,8 @@ def main():
             readonly |= any(n.get('{' + namespace + '}enforcement') in ('1', 'true', 'on') for n in settings.findall('{' + namespace + '}documentProtection'))
         print(json.dumps({'readOnly': bool(readonly)}))
     elif command == 'inspect':
-        opts = json.loads(sys.argv[4]) if len(sys.argv) > 4 else {}
+        # Position-independent: --root was already stripped from argv above.
+        opts = json.loads(argv[3]) if len(argv) > 3 else {}
         result = table_model(pkg, opts) if kind == 'xlsx' else text_model(pkg)[0]
         print(json.dumps(result))
     else:

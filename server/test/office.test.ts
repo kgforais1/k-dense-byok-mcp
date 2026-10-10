@@ -1,11 +1,14 @@
 // FORK: name the preview structure used by the fixture assertion.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import Fastify from "fastify";
 import AdmZip from "adm-zip";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { registerOfficeRoutes } from "../src/api/office.ts";
+import { runHelperScript } from "../src/api/sci-helpers.ts";
+import { HELPERS_DIR } from "../src/helpers-env.ts";
 import { ensureProjectExists, resolvePaths } from "../src/projects.ts";
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { withActiveProject } from "../src/scope.ts";
@@ -91,5 +94,44 @@ describe("Office preview and binary editor saves", () => {
     expect((await get("only-here.pptx", true, "", "office-other")).statusCode).toBe(200);
     fs.symlinkSync(path.join(other.sandbox, "only-here.pptx"), file("escape.pptx"));
     expect((await get("escape.pptx", true)).statusCode).toBe(403);
+  });
+});
+
+// FORK: argv containment (pythonsecurity:S8707) — the helper must refuse files
+// outside the API-passed --root, and fail closed when --root is absent.
+describe("Office helper trusted-root containment", () => {
+  const helper = path.join(HELPERS_DIR, "office_helper.py");
+  const stage = (dir: string) => {
+    const input = path.join(dir, "input.docx");
+    fs.copyFileSync(path.join(fixtures, "report.docx"), input);
+    return input;
+  };
+  it("accepts a file inside the trusted --root", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-office-test-"));
+    try {
+      const result = await runHelperScript(helper, ["validate", stage(dir), "docx", "--root", dir]);
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ readOnly: false });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("refuses a file outside the trusted --root", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-office-test-"));
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "kady-office-test-"));
+    try {
+      const result = await runHelperScript(helper, ["validate", stage(other), "docx", "--root", dir]);
+      expect(result.status).toBe(5);
+      expect(result.stderr).toContain("outside the trusted directory");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+  it("requires --root (fail closed)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-office-test-"));
+    try {
+      const result = await runHelperScript(helper, ["validate", stage(dir), "docx"]);
+      expect(result.status).toBe(5);
+      expect(result.stderr).toContain("trusted --root");
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

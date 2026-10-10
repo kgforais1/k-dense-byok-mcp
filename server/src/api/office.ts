@@ -44,8 +44,9 @@ async function readBounded(target: string): Promise<Buffer> {
   } finally { await file.close(); }
 }
 
-async function run(args: string[]) {
-  const result = await runHelperScript(helper, args);
+async function run(args: string[], root: string) {
+  // FORK: pass the API-owned temp root so the helper enforces argv containment (pythonsecurity:S8707).
+  const result = await runHelperScript(helper, [...args, "--root", root]);
   if (result.status !== 0) {
     const missing = /No module named/.test(result.stderr);
     throw new SandboxError(missing ? 503 : result.status === 5 ? 422 : 500,
@@ -82,7 +83,7 @@ export async function registerOfficeRoutes(app: FastifyInstance) {
       dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kady-office-"));
       const input = path.join(dir, `input.${kind}`);
       await fs.promises.writeFile(input, bytes);
-      const model = await run(["validate", input, kind]);
+      const model = await run(["validate", input, kind], dir);
       return reply.header("Cache-Control", "no-store").header("X-Content-SHA256", digest(bytes))
         .header("X-Office-Read-Only", String(model.readOnly)).type(guessMime(target)).send(bytes);
     } catch (err) { return failure(reply, err); }
@@ -108,10 +109,10 @@ export async function registerOfficeRoutes(app: FastifyInstance) {
       dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kady-office-"));
       const input = path.join(dir, `input.${kind}`), output = path.join(dir, `output.${kind}`);
       await fs.promises.writeFile(input, bytes);
-      const original = await run(["validate", input, kind]);
+      const original = await run(["validate", input, kind], dir);
       if (original.readOnly) throw new SandboxError(403, "Protected or signed documents cannot be overwritten");
       await fs.promises.writeFile(output, req.body);
-      await run(["validate", output, kind]);
+      await run(["validate", output, kind], dir);
       const root = activePaths().sandbox, projectId = currentProjectId(), before = await priorIdentity(root, target);
       safePath(req.query.path);
       staging = path.join(path.dirname(target), `.office-${randomUUID()}.tmp`);
@@ -143,7 +144,7 @@ export async function registerOfficeRoutes(app: FastifyInstance) {
       dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kady-office-"));
       const input = path.join(dir, `input.${kind}`);
       await fs.promises.writeFile(input, bytes);
-      const model = await run(["inspect", input, kind, JSON.stringify(opts)]);
+      const model = await run(["inspect", input, kind, JSON.stringify(opts)], dir);
       reply.header("Cache-Control", "no-store");
       return { ...model, revision: digest(bytes), ...(kind !== "xlsx" ? { data: bytes.toString("base64") } : {}) };
     } catch (err) { return failure(reply, err); }

@@ -44,7 +44,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: server/src/helpers/uv.lock
       - name: Install scientific test dependencies
-        run: uv sync --frozen --project server/src/helpers --python 3.12.14 --python-preference only-managed
+        # FORK: --no-build (githubactions:S8541); deps install from wheels, never source builds.
+        run: uv sync --frozen --no-build --project server/src/helpers --python 3.12.14 --python-preference only-managed
       - name: Typecheck
         working-directory: server
         run: npm run typecheck

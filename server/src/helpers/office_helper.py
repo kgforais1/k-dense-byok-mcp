@@ -4,6 +4,7 @@ The host owns snapshots, conflict checks and atomic replacement.
 import io
 import json
 import math
+import os
 import posixpath
 import re
 import sys
@@ -293,7 +294,27 @@ def table_model(pkg, opts):
 
 
 def main():
-    command, filename, kind = sys.argv[1:4]
+    argv = sys.argv[1:]
+    root = None
+    if '--root' in argv:
+        i = argv.index('--root')
+        if i + 1 >= len(argv):
+            raise ValueError('Missing --root directory')
+        root = argv[i + 1]
+        del argv[i:i + 2]
+    command, filename, kind = argv[0:3]
+    # FORK: S8707 argv containment. The API passes its own temp dir as --root;
+    # refuse any file outside it. realpath resolves symlinks; commonpath is
+    # component-aware. A missing root or a cross-drive path denies (fail closed).
+    if root is None:
+        raise ValueError('A trusted --root directory is required')
+    real_root, real_file = os.path.realpath(root), os.path.realpath(filename)
+    try:
+        contained = os.path.commonpath([real_root, real_file]) == real_root
+    except ValueError:
+        contained = False
+    if not contained:
+        raise ValueError('File is outside the trusted directory')
     pkg = Package(filename, kind)
     if command == 'validate':
         readonly = pkg.signed

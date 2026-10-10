@@ -201,7 +201,7 @@ against the modified page. Measured, in the live runtime iframe:
 | External `runtime.css` fetched and its 2 rules applied | yes | yes | yes |
 | Canvas revealed (`computedVisibility: visible`) | yes | yes | yes |
 | Canvas inline style set by the engine | `cursor: default; visibility: visible;` | `cursor: default; visibility: visible;` | `cursor: default; visibility: visible;` |
-| Save round-trips to a valid package | yes (19 entries, content preserved) | yes (15 entries) | yes (73 entries) |
+| Save round-trips to a valid package | yes (19 entries; `Research overview` preserved; file hash changed across saves) | **not performed** — opened and revealed, but Save was never clicked; the 15-entry count was the uploaded fixture, not a post-save round-trip | yes (73 entries, valid zip; specific slide content not verified) |
 
 The engine setting its own `cursor` and `visibility` via CSSOM, under a policy
 containing `style-src 'self'` with no `unsafe-inline`, is the direct confirmation of
@@ -215,9 +215,11 @@ Two honest limitations on the "edit" leg:
   limitation of untrusted synthetic input into a WASM engine, not evidence against
   the change; the ribbon and document state were live throughout. A human
   open-type-save pass is still the final gate before merging.
-- The original content survived every save, but note the repo's documented caveat
-  that native Office export reserialises OOXML, so byte-preservation of advanced
-  objects is never promised.
+- **Calc was opened and revealed but never saved through the UI**, and only
+  Writer's original content (`Research overview`) was verified to survive a save;
+  Impress was verified as a valid package but its slide content was not checked.
+  The repo's documented caveat still applies: native Office export reserialises
+  OOXML, so byte-preservation of advanced objects is never promised.
 
 How the snapshot was obtained, for reproduction: Kady installs it itself. The
 `office-assets` route (`web/src/app/office-assets/[build]/[file]/route.ts`) downloads

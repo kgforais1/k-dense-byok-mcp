@@ -6,13 +6,14 @@
  * This file is the authoritative source of truth for reload and export;
  * the live SSE `tool_start` frame is only a provisional mirror.
  */
-import type { NotebookEvidenceLink, NotebookOutcome, NotebookArtifactSnapshot, NotebookArtifactHealth } from "../../../web/src/lib/notebook-evidence-core.ts";
+import { localizeEvidenceLinks, type NotebookEvidenceLink, type NotebookOutcome, type NotebookArtifactSnapshot, type NotebookArtifactHealth } from "../../../web/src/lib/notebook-evidence-core.ts";
 import type { AnalysisPlanInput, AnalysisPlanHistory } from "../../../web/src/lib/notebook-plans.ts";
 import type { NotebookResultLink, NotebookResultSnapshot } from "../../../web/src/lib/notebook-result-links.ts";
 import type { RobustnessDraft } from "../../../web/src/lib/notebook-robustness.ts";
 import type { NextExperimentPlan, NextExperimentBinding, NextExperimentChoice } from "../../../web/src/lib/next-experiments.ts";
 import fs from "node:fs";
 import { containedIn } from "../paths-contained.ts";
+import type { NotebookExecution } from "../../../web/src/lib/notebook-execution.ts";
 import path from "node:path";
 import { activePaths, resolvePaths } from "../projects.ts";
 
@@ -41,6 +42,7 @@ export interface NotebookEntryInput {
   scope?: string;
   revisitWhen?: string;
   outcome?: NotebookOutcome;
+  execution?: NotebookExecution;
   /** Authored proposal only, never a frozen/approved record. */
   analysisPlan?: AnalysisPlanInput;
   robustness?: RobustnessDraft;
@@ -157,7 +159,7 @@ export function readNotebookEntries(
   sessionId: string,
   projectId?: string,
 ): NotebookEntry[] {
-  return parseNotebookFile(notebookPath(sessionId, projectId));
+  return localizeEvidenceLinks(parseNotebookFile(notebookPath(sessionId, projectId)), sessionId);
 }
 
 export interface SessionNotebook {
@@ -181,7 +183,7 @@ export function readProjectNotebooks(projectId: string): SessionNotebook[] {
     if (!f.endsWith(".jsonl")) continue;
     const sessionId = f.slice(0, -".jsonl".length);
     if (!isValidSessionId(sessionId)) continue;
-    out.push({ sessionId, entries: parseNotebookFile(path.join(dir, f)) });
+    out.push({ sessionId, entries: localizeEvidenceLinks(parseNotebookFile(path.join(dir, f)), sessionId) });
   }
   return out;
 }

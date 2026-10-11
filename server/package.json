@@ -1,6 +1,6 @@
 {
   "name": "kady-server",
-  "version": "0.10.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,28 +11,32 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "postinstall": "node scripts/patch-subagents.mjs"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.85.1",
-    "@earendil-works/pi-ai": "0.85.1",
-    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@fastify/cors": "^10.0.1",
     "@fastify/multipart": "^9.0.1",
     "@fastify/rate-limit": "^11.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/adm-zip": "^0.5.8",
+    "acorn": "8.18.0",
     "adm-zip": "^0.6.1",
     "archiver": "^8.0.0",
     "fastify": "^5.2.0",
     "modal": "^0.8.2",
-    "pi-subagents": "0.66.0",
-    "pi-web-access": "0.28.0",
-    "skills": "1.5.24",
+    "pi-subagents": "0.74.0",
+    "pi-web-access": "0.35.0",
+    "skills": "1.7.0",
     "typebox": "^1.3.7",
-    "undici": "8.9.0",
+    "undici": "8.11.2",
+    "yaml": "2.8.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -44,5 +48,10 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.70.0",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "pi-web-access": {
+      "@modelcontextprotocol/sdk": "$@modelcontextprotocol/sdk"
+    }
   }
 }

@@ -94,11 +94,15 @@ starts backend + frontend together; it is the only supported full-app path.
   each project's `sandbox/.pi/agents/*.md` from `src/agent/subagents.ts`
   (write-if-missing; user edits win). Budget gating and cost ledgering for
   child runs live in `src/agent/subagent-bridge.ts`.
-- `workflowScript` is the only delegation surface since pi-subagents 0.43.
-  `workflowScriptTargets()` reads the `agent:`/`model:` literals out of the
-  script; `pinWorkflowScriptModel` refuses to pin when names are computed
-  because per-run `model` outranks agent frontmatter, `agentOverrides`, and
-  `subagents.defaultModel` (all checked first in `settingsPinnedModels`).
+- Pi 1.0 / pi-subagents 0.74 accepts `workflow: true` with one JavaScript
+  workflow block in the issuing assistant message, or a workflow path.
+  `workflowCallTargets()` locates that script and `workflowScriptTargets()`
+  extracts literal agent/model targets; computed targets disable model pinning.
+  The native child runtime meters actual resolved model calls independently.
+- Outbound MCP uses Pi's built-in extension (project and global `mcp.json`).
+  The lead uses `excludeTools`, preserving tools registered after connection.
+  Inbound MCP remains fork-owned under `src/mcp-server/`; its headless sessions
+  omit `interview` and retain that choice through cold opens.
 - Builtin tool overrides are reconciled in `src/agent/builtin-tool-overrides.ts`:
   drop tools the builtin no longer declares and that are not ours; rewrite from
   the current frontmatter. A hand-written allowlist is left alone; a user

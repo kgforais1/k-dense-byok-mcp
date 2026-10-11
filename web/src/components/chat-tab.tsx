@@ -1,5 +1,6 @@
 "use client";
 
+import { AddContextMenu } from "@/components/add-context-menu";
 import {
   Conversation,
   ConversationContent,
@@ -7,126 +8,111 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import {
-  Message,
-  MessageContent,
-  MessageResponse,
-  MessageActions,
-  MessageAction,
-  MessageToolbar,
-} from "@/components/ai-elements/message";
-import {
   PromptInput,
-  PromptInputTextarea,
   PromptInputFooter,
-  PromptInputSubmit,
   PromptInputProvider,
+  PromptInputSubmit,
+  PromptInputTextarea,
   usePromptInputAttachments,
   usePromptInputController,
   type PromptInputProviderState,
 } from "@/components/ai-elements/prompt-input";
-import { Shimmer } from "@/components/ai-elements/shimmer";
-import { buildDatabaseContext, type Database } from "@/components/database-selector";
 import {
-  ModelSelector,
+  SpeechInput,
+  type SpeechInputMode,
+} from "@/components/ai-elements/speech-input";
+import { ComputeSelector, type ModalInstance } from "@/components/compute-selector";
+import { ConnectModelCard } from "@/components/connect-model-card";
+import { ContextChipsBar } from "@/components/context-chips";
+import { ContextUsageIndicator } from "@/components/context-usage-indicator";
+import { buildDatabaseContext, type Database } from "@/components/database-selector";
+import { KadyFileIcon } from "@/components/file-icon";
+import {
   DEFAULT_MODEL,
+  ModelSelector,
   modelUsesBillableBudget,
   type Model,
 } from "@/components/model-selector";
-import { ComputeSelector, type ModalInstance } from "@/components/compute-selector";
+import { SettingsLink } from "@/components/settings-link";
+import { buildSkillsContext, type Skill } from "@/components/skills-selector";
 import {
   DEFAULT_THINKING_LEVEL,
   ThinkingSelector,
   type ThinkingLevel,
 } from "@/components/thinking-selector";
-import { apiFetch } from "@/lib/projects";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
+import { computeInstanceFromDefault, useAppDefaults } from "@/lib/app-settings";
 import { onChatPrefill } from "@/lib/chat-prefill";
-import { buildSkillsContext, type Skill } from "@/components/skills-selector";
-import { AddContextMenu } from "@/components/add-context-menu";
-import { ContextChipsBar } from "@/components/context-chips";
-import { ContextUsageIndicator } from "@/components/context-usage-indicator";
-import { CitationBadge } from "@/components/citation-badge";
+import { routeSubmit, type SendIntent } from "@/lib/chat-routing";
+import { withChatSnapshots } from "@/lib/chat-snapshot";
+import { slashMenuItems, type SlashMenuItem } from "@/lib/command-blocks";
 import {
-  ModalJobChip,
-  NotebookEntryChip,
-  ReasoningBlock,
-  ToolActivityList,
-} from "@/components/tool-activity";
-import { InterviewCard } from "@/components/interview-form";
-import { SystemCard } from "@/components/system-card";
-import { PermissionCard } from "@/components/permission-card";
-import { CommandBlockChip } from "@/components/command-block-chip";
-import { parseCommandBlock, slashMenuItems, type SlashMenuItem } from "@/lib/command-blocks";
-import { usePromptTemplates } from "@/lib/use-prompts";
-import { KadyFileIcon } from "@/components/file-icon";
-import { ScientificResultCard } from "@/components/scientific-result-card";
+  EMPTY_DELEGATION,
+  buildComposerContext,
+  type DelegationChoice,
+  type ResearchRef
+} from "@/lib/composer-context";
 import { hasDirectoryEntries, traverseDroppedEntries } from "@/lib/directory-upload";
 import {
   INLINE_IMAGE_ACCEPT,
-  isInlineImage,
   MAX_PROMPT_IMAGES,
+  isInlineImage,
   promptImagesFromParts,
   type PromptImage,
 } from "@/lib/image-attachments";
-import { suggestSkillsForFiles } from "@/lib/skill-suggestions";
-import {
-  useAgent,
-  type AgentRunState,
-  type ActivityItem,
-  type ChatMessage,
-  type ContextUsage,
-} from "@/lib/use-agent";
-import type { NotebookEntry } from "@/lib/notebook";
-import { routeSubmit, steerNotStreamingFallback, type SendIntent } from "@/lib/chat-routing";
 import {
   moveQueuedMessage,
   removeQueuedMessage,
   updateQueuedMessageText,
-  type QueueDirection,
+  type QueueDirection
 } from "@/lib/message-queue";
+import {
+  MODAL_JOB_FINISHED_EVENT,
+  type ModalCatalog,
+} from "@/lib/modal-jobs";
+import type { NotebookEntry } from "@/lib/notebook";
+import { apiFetch } from "@/lib/projects";
+import { openSettings } from "@/lib/settings-nav";
+import { suggestSkillsForFiles } from "@/lib/skill-suggestions";
+import {
+  useAgent,
+  type AgentRunState,
+  type ContextUsage
+} from "@/lib/use-agent";
+import { useModalCatalog } from "@/lib/use-modal-jobs";
+import { useModels, type ModelAvailability } from "@/lib/use-models";
+import { usePromptTemplates } from "@/lib/use-prompts";
+import { useSessionRestore } from "@/lib/use-session-restore";
+import { cn, formatUsd } from "@/lib/utils";
 import {
   type ChatWorkspaceState,
   type WorkspaceQueuedMessage,
 } from "@/lib/workspace-persistence";
 import {
-  MODAL_JOB_FINISHED_EVENT,
-  type ModalCatalog,
-} from "@/lib/modal-jobs";
-import { useModalCatalog } from "@/lib/use-modal-jobs";
-import { useModels, type ModelAvailability } from "@/lib/use-models";
-import { useSessionRestore } from "@/lib/use-session-restore";
-import {
-  SpeechInput,
-  type SpeechInputMode,
-} from "@/components/ai-elements/speech-input";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CopyIcon,
-  DatabaseIcon,
-  ImageIcon,
-  ListOrderedIcon,
   PaperclipIcon,
-  PencilIcon,
-  SparklesIcon,
-  XIcon,
-  ZapIcon,
+  XIcon
 } from "lucide-react";
-import { cn, formatUsd } from "@/lib/utils";
-import { InfoTooltip } from "@/components/ui/info-tooltip";
 import {
   forwardRef,
-  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
-  type MutableRefObject,
-  type ReactNode,
+  type MutableRefObject
 } from "react";
 import { toast } from "sonner";
+// FORK: keep queue presentation separate to preserve the frontend line cap.
+// FORK: retain the public message exports while splitting presentation.
+import { MessageQueueDisplay } from "./chat-message-queue";
+import { ChatMessageRow } from "./chat-message-row";
+export { AssistantMessageBody,ChatMessageRow } from "./chat-message-row";
+
+/** Toast action for "provider disconnected" errors. */
+const PROVIDERS_TOAST_ACTION = {
+  action: { label: "Open Settings", onClick: () => openSettings({ tab: "providers" }) },
+};
 
 const MAX_QUEUE = 5;
 
@@ -175,7 +161,11 @@ function BudgetBanner({
           <>
             <b>Project spend limit reached</b> ({formatUsd(totalUsd)}
             {limitUsd !== null ? ` / ${formatUsd(limitUsd)}` : ""}). New runs
-            are blocked. Raise the limit in the project settings to continue.
+            are blocked.{" "}
+            <SettingsLink tab="project" section="budget">
+              Raise the limit in project settings
+            </SettingsLink>{" "}
+            to continue.
           </>
         ) : (
           <>
@@ -369,279 +359,6 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
 }
 
 /** Inline editor for one queued message. Keyed by item id so state resets per item. */
-function QueuedMessageEditor({
-  initialText,
-  onSave,
-  onCancel,
-}: {
-  initialText: string;
-  onSave: (text: string) => void;
-  onCancel: () => void;
-}) {
-  const [draft, setDraft] = useState(initialText);
-  const ref = useRef<HTMLTextAreaElement | null>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
-  }, []);
-  const trimmed = draft.trim();
-  const canSave = trimmed.length > 0;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <textarea
-        ref={ref}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          // Keep composer shortcuts (Enter to send, ⌥⏎ to queue) out of here.
-          e.stopPropagation();
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            if (canSave) onSave(trimmed);
-          }
-        }}
-        rows={Math.min(8, Math.max(2, draft.split("\n").length))}
-        className="w-full resize-y rounded-md border bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        aria-label="Edit queued message"
-      />
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => onSave(trimmed)}
-          disabled={!canSave}
-          className="rounded bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded px-2 py-0.5 text-[10px] font-semibold text-muted-foreground transition-colors hover:bg-muted"
-        >
-          Cancel
-        </button>
-        <span className="ml-auto text-[10px] text-muted-foreground">⌘⏎ save · Esc cancel</span>
-      </div>
-    </div>
-  );
-}
-
-function MessageQueueDisplay({
-  queue,
-  steering,
-  followUp = [],
-  onRemove,
-  onMove,
-  onEdit,
-  editingId,
-  sendingId,
-  onEditingChange,
-  paused = false,
-  onResume,
-}: {
-  queue: QueuedMessage[];
-  steering: string[];
-  /** Pi follow-ups: delivered inside the live run once the agent is otherwise done. */
-  followUp?: string[];
-  onRemove: (id: string) => void;
-  onMove: (id: string, direction: QueueDirection) => void;
-  onEdit: (id: string, text: string) => void;
-  /** Item currently open in the inline editor; auto-send holds while set. */
-  editingId: string | null;
-  /** Item awaiting server admission; its controls stay locked. */
-  sendingId?: string | null;
-  onEditingChange: (id: string | null) => void;
-  /** True after Stop, while queued messages are held back. */
-  paused?: boolean;
-  onResume?: () => void;
-}) {
-  if (queue.length === 0 && steering.length === 0 && followUp.length === 0) return null;
-
-  return (
-    <div className="absolute bottom-full left-0 right-0 z-10 mb-2">
-      <div className="overflow-hidden rounded-xl border bg-background shadow-lg">
-        {steering.length > 0 && (
-          <>
-            <div className="flex items-center gap-2 border-b px-3 py-1.5">
-              <ZapIcon className="size-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Steering — delivers mid-run
-              </span>
-              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
-                {steering.length}
-              </span>
-            </div>
-            <div className="max-h-32 overflow-y-auto border-b py-1">
-              {steering.map((text, i) => (
-                <div key={`${i}-${text}`} className="flex items-center gap-2.5 px-3 py-2 text-xs">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] tabular-nums text-muted-foreground">
-                    ⏳
-                  </span>
-                  <div className="min-w-0 flex-1 truncate text-foreground">{text}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-        {followUp.length > 0 && (
-          <>
-            <div className="flex items-center gap-2 border-b px-3 py-1.5">
-              <ListOrderedIcon className="size-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                After this turn — Kady continues
-              </span>
-              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
-                {followUp.length}
-              </span>
-            </div>
-            <div className="max-h-32 overflow-y-auto border-b py-1" data-testid="follow-up-queue">
-              {followUp.map((text, i) => (
-                <div key={`${i}-${text}`} className="flex items-center gap-2.5 px-3 py-2 text-xs">
-                  <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 flex-1 truncate text-foreground">{text}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-        {queue.length > 0 && (
-          <>
-            <div className="flex items-center gap-2 border-b px-3 py-1.5">
-              <ListOrderedIcon className="size-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {editingId ? "Held while editing" : paused ? "Paused — stopped" : "Run after"}
-              </span>
-              {paused && onResume && (
-                <button
-                  type="button"
-                  onClick={onResume}
-                  className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/10"
-                >
-                  Resume
-                </button>
-              )}
-              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
-                {queue.length}/{MAX_QUEUE}
-              </span>
-            </div>
-            <div className="max-h-52 overflow-y-auto py-1">
-              {queue.map((item, i) => {
-                const editing = editingId === item.id;
-                const sending = sendingId === item.id;
-                return (
-                <div
-                  key={item.id}
-                  className="group flex items-start gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-muted/50"
-                >
-                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    {editing ? (
-                      <QueuedMessageEditor
-                        key={item.id}
-                        initialText={item.text}
-                        onSave={(text) => {
-                          onEdit(item.id, text);
-                          onEditingChange(null);
-                        }}
-                        onCancel={() => onEditingChange(null)}
-                      />
-                    ) : (
-                      <div className="truncate text-foreground">
-                        {item.rawText || item.text.split("\n")[0]}
-                      </div>
-                    )}
-                    <div className="mt-0.5 flex flex-wrap gap-1">
-                      <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        {item.model.label}
-                      </span>
-                      {item.files.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          <PaperclipIcon className="size-2.5" />
-                          {item.files.length}
-                        </span>
-                      )}
-                      {item.images.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          <ImageIcon className="size-2.5" />
-                          {item.images.length}
-                        </span>
-                      )}
-                      {item.databases.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          <DatabaseIcon className="size-2.5" />
-                          {item.databases.length}
-                        </span>
-                      )}
-                      {item.skills.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          <SparklesIcon className="size-2.5" />
-                          {item.skills.length}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {!editing && !sending && (
-                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => onMove(item.id, "up")}
-                        disabled={i === 0}
-                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                        aria-label={`Move queued message ${i + 1} up`}
-                      >
-                        <ChevronUpIcon className="size-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onMove(item.id, "down")}
-                        disabled={i === queue.length - 1}
-                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                        aria-label={`Move queued message ${i + 1} down`}
-                      >
-                        <ChevronDownIcon className="size-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onEditingChange(item.id)}
-                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label={`Edit queued message ${i + 1}`}
-                      >
-                        <PencilIcon className="size-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onRemove(item.id)}
-                        className="rounded p-1 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive"
-                        aria-label={`Remove queued message ${i + 1}`}
-                      >
-                        <XIcon className="size-3" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Full prompt input with @ mention overlay + drag-drop zone.
- * Must be rendered inside <PromptInputProvider>.
- */
 function ChatInput({
   isActiveTab,
   allFiles,
@@ -689,6 +406,12 @@ function ChatInput({
   budgetTotalUsd = 0,
   budgetLimitUsd = null,
   modelAvailability = "available",
+  projectId,
+  currentSessionId,
+  researchRefs,
+  onResearchChange,
+  delegation,
+  onDelegationChange,
 }: {
   isActiveTab: boolean;
   allFiles: string[];
@@ -739,6 +462,14 @@ function ChatInput({
   budgetTotalUsd?: number;
   budgetLimitUsd?: number | null;
   modelAvailability?: ModelAvailability;
+  projectId: string;
+  currentSessionId: string | null;
+  /** Per-message research references (+ → Research); cleared once sent. */
+  researchRefs: ResearchRef[];
+  onResearchChange: (refs: ResearchRef[]) => void;
+  /** Per-message delegation (+ → Delegate); cleared once sent. */
+  delegation: DelegationChoice;
+  onDelegationChange: (next: DelegationChoice) => void;
 }) {
   const modelAvailable = modelAvailability === "available";
   const budgetBlocked =
@@ -810,7 +541,7 @@ function ChatInput({
           setAttachError(
             modelAvailability === "checking"
               ? "Model provider status is still loading. Try again in a moment."
-              : "This model provider is disconnected. Reconnect it in Settings or choose another model.",
+              : "This model provider is disconnected. Reconnect it in Settings → Providers or choose another model.",
           );
         }
         return false;
@@ -825,17 +556,33 @@ function ChatInput({
         }
         return false;
       }
+      // Referenced chats are snapshotted now, so the message cites what they
+      // said when it was sent rather than whatever they say later.
+      const snapshots = researchRefs.some((r) => r.kind === "chat")
+        ? await withChatSnapshots(researchRefs, projectId)
+        : { refs: researchRefs, failed: [] };
+      if (snapshots.failed.length > 0) {
+        toast.warning(
+          `Couldn't snapshot ${snapshots.failed.length === 1 ? `"${snapshots.failed[0]}"` : `${snapshots.failed.length} chats`}`,
+          { description: "Kady will search the full chat log instead." },
+        );
+      }
+      const composerCtx = buildComposerContext({ delegation, research: snapshots.refs });
       const images = await promptImagesFromParts(msg.files);
       // Only clear once the message is actually accepted: a full queue or a
       // failed steer used to wipe the composer text and attachment chips.
-      const accepted = await onSend(baseText + refs + dbCtx + skillsCtx, intent, images);
+      const accepted = await onSend(baseText + refs + dbCtx + skillsCtx + composerCtx, intent, images);
       if (!accepted) {
         event?.preventDefault();
         return false;
       }
       onClearFiles();
+      // Research references and delegation are instructions for this one
+      // message; pinned skills and data sources stay.
+      onResearchChange([]);
+      onDelegationChange(EMPTY_DELEGATION);
     },
-    [budgetBlocked, modelAvailability, modelAvailable, onSend, attachedFiles, onClearFiles, selectedDbs, selectedSkills]
+    [budgetBlocked, modelAvailability, modelAvailable, onSend, attachedFiles, onClearFiles, selectedDbs, selectedSkills, delegation, researchRefs, onResearchChange, onDelegationChange, projectId]
   );
 
   // @ mention state
@@ -1166,6 +913,10 @@ function ChatInput({
             onDbsChange={onDbsChange}
             selectedSkills={selectedSkills}
             onSkillsChange={onSkillsChange}
+            researchRefs={researchRefs}
+            onResearchChange={onResearchChange}
+            delegation={delegation}
+            onDelegationChange={onDelegationChange}
           />
           <PromptInputTextarea
             placeholder={
@@ -1175,7 +926,7 @@ function ChatInput({
                   : "Steer the run… (⌥↵ to run after this turn)"
                 : queuedMessages.length >= MAX_QUEUE
                   ? `Queue full (${MAX_QUEUE}/${MAX_QUEUE})`
-                  : "Ask Kady anything… (@ for files, + for data / compute / skills)"
+                  : "Ask Kady anything… (@ for files, / for commands, + to add context)"
             }
             onChange={handleChange}
             onKeyDown={handleKeyDown}
@@ -1193,6 +944,12 @@ function ChatInput({
                 selectedSkills={selectedSkills}
                 onSkillsChange={onSkillsChange}
                 onUploadFiles={handleFilesUpload}
+                projectId={projectId}
+                currentSessionId={currentSessionId}
+                researchRefs={researchRefs}
+                onResearchChange={onResearchChange}
+                delegation={delegation}
+                onDelegationChange={onDelegationChange}
               />
               <ModelSelector
                 selected={selectedModel}
@@ -1256,7 +1013,7 @@ function ChatInput({
                       <br />
                       {modelAvailability === "checking"
                         ? "Wait a moment for provider status to load."
-                        : "Reconnect it in Settings or choose another model."}
+                        : "Reconnect it in Settings → Providers or choose another model."}
                     </>
                   ) : budgetBlocked ? (
                     <>
@@ -1267,7 +1024,7 @@ function ChatInput({
                       {budgetLimitUsd !== null
                         ? ` / ${formatUsd(budgetLimitUsd)}`
                         : ""}
-                      ). Raise the limit in the project settings to continue.
+                      ). Raise the limit in Settings → Project → General to continue.
                     </>
                   ) : isStreaming ? (
                     <>
@@ -1309,251 +1066,6 @@ function ChatInput({
   );
 }
 
-export const AssistantMessageBody = memo(function AssistantMessageBody({
-  message,
-  isStreaming,
-  isLast,
-  sessionId,
-  projectId,
-  onViewInNotebook,
-  onViewCompute,
-  onOpenFile,
-}: {
-  message: ChatMessage;
-  isStreaming: boolean;
-  isLast: boolean;
-  sessionId: string | null;
-  projectId: string;
-  onViewInNotebook?: (entryId: string) => void;
-  onViewCompute?: (jobId?: string) => void;
-  onOpenFile?: (path: string) => void;
-}) {
-  const activities = message.activities ?? [];
-  const hasReasoning = Boolean(message.reasoning?.trim());
-  const hasAnything =
-    Boolean(message.content) || activities.length > 0 || hasReasoning;
-  // Some models occasionally end a turn right after a tool call with no
-  // closing text, which used to leave the chat silently "done". Surface that
-  // explicitly on the final bubble so the user knows the run ended.
-  const endedWithoutReply =
-    !isStreaming && isLast && !message.content && (activities.length > 0 || hasReasoning);
-
-  // Prose and activities share one ordered timeline so a preamble stays above
-  // the tool it introduced and the post-tool answer stays below it.
-  const orderedBlocks: ReactNode[] = [];
-  let chunk: ActivityItem[] = [];
-  const flushChunk = () => {
-    if (!chunk.length) return;
-    orderedBlocks.push(
-      <ToolActivityList key={`tools-${chunk[0].id}`} activities={chunk} />,
-    );
-    chunk = [];
-  };
-  const appendActivity = (a: ActivityItem) => {
-    if (a.toolName === "interview") {
-      flushChunk();
-      orderedBlocks.push(
-        <InterviewCard
-          key={a.id}
-          item={a}
-          sessionId={sessionId}
-          projectId={projectId}
-        />,
-      );
-    } else if (a.toolName === "permission") {
-      flushChunk();
-      orderedBlocks.push(
-        <PermissionCard key={a.id} item={a} sessionId={sessionId} projectId={projectId} />,
-      );
-    } else if (a.toolName === "notebook") {
-      flushChunk();
-      orderedBlocks.push(
-        <NotebookEntryChip key={a.id} item={a} onView={onViewInNotebook} />,
-      );
-    } else if (a.toolName?.startsWith("modal_")) {
-      flushChunk();
-      orderedBlocks.push(
-        <ModalJobChip key={a.id} item={a} onView={onViewCompute} />,
-      );
-    } else if (a.scientificResult) {
-      flushChunk();
-      orderedBlocks.push(
-        <ScientificResultCard
-          key={a.id}
-          item={a}
-          projectId={projectId}
-          onOpenFile={onOpenFile}
-        />,
-      );
-    } else {
-      chunk.push(a);
-    }
-  };
-  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
-  const segments = message.segments?.length
-    ? message.segments
-    : [
-        ...activities.map((activity) => ({
-          type: "activity" as const,
-          activityId: activity.id,
-        })),
-        ...(message.content
-          ? [{ type: "text" as const, content: message.content }]
-          : []),
-      ];
-  for (const [index, segment] of segments.entries()) {
-    if (segment.type === "text") {
-      flushChunk();
-      if (segment.content) {
-        orderedBlocks.push(
-          <MessageResponse key={`text-${index}`}>{segment.content}</MessageResponse>,
-        );
-      }
-      continue;
-    }
-    const activity = activityById.get(segment.activityId);
-    if (activity) appendActivity(activity);
-  }
-  flushChunk();
-
-  return (
-    <>
-      {hasReasoning && <ReasoningBlock reasoning={message.reasoning ?? ""} />}
-      {orderedBlocks}
-      {isStreaming && !hasAnything ? (
-        <Shimmer className="text-sm" duration={1.5}>
-          Thinking...
-        </Shimmer>
-      ) : endedWithoutReply ? (
-        <p className="text-xs italic text-muted-foreground">
-          The model finished this turn without a closing message. The tool
-          results above are the outcome; ask a follow-up if you want a summary.
-        </p>
-      ) : null}
-      {message.citations && (
-        <div className="flex flex-wrap items-center gap-2">
-          <CitationBadge report={message.citations} />
-        </div>
-      )}
-    </>
-  );
-});
-
-/** Unchanged history rows keep their tool disclosures and skip token renders. */
-export const ChatMessageRow = memo(function ChatMessageRow({
-  message, isStreaming, isLast, sessionId, projectId,
-  onViewInNotebook, onViewCompute, onOpenFile, onCopy, copied,
-}: {
-  message: ChatMessage;
-  isStreaming: boolean;
-  isLast: boolean;
-  sessionId: string | null;
-  projectId: string;
-  onViewInNotebook?: (id: string) => void;
-  onViewCompute?: (id?: string) => void;
-  onOpenFile?: (path: string) => void;
-  onCopy: (id: string, content: string) => void;
-  copied: boolean;
-}) {
-  // Extension notices and compaction markers sit between the bubbles.
-  if (message.role === "system") return <SystemCard message={message} />;
-  return (
-    <Message from={message.role} key={message.id}>
-      <MessageContent>
-        {message.role === "assistant" ? (
-          <AssistantMessageBody
-            message={message}
-            isStreaming={isStreaming}
-            isLast={isLast}
-            sessionId={sessionId}
-            projectId={projectId}
-            onViewInNotebook={onViewInNotebook}
-            onViewCompute={onViewCompute}
-            onOpenFile={onOpenFile}
-          />
-        ) : (
-          <>
-            {message.images && message.images.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {message.images.map((img, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={i}
-                    src={`data:${img.mimeType};base64,${img.data}`}
-                    alt={`Attached image ${i + 1}`}
-                    className="max-h-56 max-w-64 rounded-lg border object-contain"
-                  />
-                ))}
-              </div>
-            )}
-            {(() => {
-              const block = parseCommandBlock(message.content);
-              return block ? <CommandBlockChip block={block} /> : <MessageResponse>{message.content}</MessageResponse>;
-            })()}
-          </>
-        )}
-        {message.role === "assistant" && message.modelVersion && (
-          <span className="text-xs text-muted-foreground mt-1">
-            {message.modelVersion}
-          </span>
-        )}
-      </MessageContent>
-      {message.role === "assistant" && message.content && (
-        <MessageToolbar>
-          <MessageActions>
-            <MessageAction
-              tooltip="Copy"
-              onClick={() => onCopy(message.id, message.content)}
-            >
-              {copied ? (
-                <CheckIcon className="size-4" />
-              ) : (
-                <CopyIcon className="size-4" />
-              )}
-            </MessageAction>
-          </MessageActions>
-          {((typeof message.runCostUsd === "number" &&
-            message.runCostUsd > 0) ||
-            (message.runBillingMode === "subscription" &&
-              (message.runTokens ?? 0) > 0)) && (
-              <InfoTooltip
-                content={
-                  <>
-                    <b>
-                      {message.runBillingMode === "subscription"
-                        ? "Subscription usage"
-                        : message.runBillingMode === "metered_oauth"
-                          ? "Metered extra usage"
-                          : "Cost of this reply"}
-                    </b>
-                    <br />
-                    {message.runBillingMode === "subscription"
-                      ? `${message.runProvider ?? "Provider"} manages billing and quota`
-                      : formatUsd(message.runCostUsd ?? 0)}
-                    {typeof message.runTokens === "number" &&
-                    message.runTokens > 0
-                      ? ` · ${message.runTokens.toLocaleString()} tokens`
-                      : ""}
-                    {message.runBillingMode === "subscription" &&
-                    typeof message.runListPriceUsd === "number"
-                      ? ` · ${formatUsd(message.runListPriceUsd)} list-price reference (not project spend)`
-                      : ""}
-                  </>
-                }
-              >
-                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                  {message.runBillingMode === "subscription"
-                    ? `subscription · ${(message.runTokens ?? 0).toLocaleString()} tok`
-                    : formatUsd(message.runCostUsd ?? 0)}
-                </span>
-              </InfoTooltip>
-            )}
-        </MessageToolbar>
-      )}
-    </Message>
-  );
-});
-
 // ---------------------------------------------------------------------------
 // ChatTab — full chat surface (Conversation + ChatInput + queue) for one tab.
 // Each tab owns its own agent session, model selection, attached files,
@@ -1579,7 +1091,7 @@ export interface ChatTabHandle {
   launchWorkflow: (
     prompt: string,
     model: Model,
-    uploadedFiles: string[],
+    inputFiles: string[],
   ) => Promise<void>;
   /**
    * Send a one-off prompt using the tab's currently selected model.
@@ -1665,6 +1177,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     messages,
     contextUsage,
     status,
+    reconnecting,
     runState,
     send,
     stop,
@@ -1703,7 +1216,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   const [selectedModel, setSelectedModel] = useState<Model>(
     () => initialWorkspaceState?.selectedModel ?? DEFAULT_MODEL,
   );
-  const { isModelAvailable, modelAvailability } = useModels();
+  const { isModelAvailable, modelAvailability, hasAnyModelAccess, models: knownModels } = useModels();
   const selectedModelAvailability = modelAvailability(selectedModel);
   const selectedModelAvailable = selectedModelAvailability === "available";
   const selectedBudgetBlocked =
@@ -1737,6 +1250,41 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     error: modalCatalogError,
     refresh: refreshModalCatalog,
   } = useModalCatalog(projectId);
+
+  // A tab with nothing to copy from (a project's first chat) starts from the
+  // saved Settings → Defaults once they load — unless the user already picked
+  // something on its chips. The model waits until its provider's list lands.
+  const appDefaults = useAppDefaults();
+  const chipsTouched = useRef(false);
+  const defaultsPending = useRef({
+    model: !initialWorkspaceState && !initialSessionId,
+    rest: !initialWorkspaceState && !initialSessionId,
+  });
+  useEffect(() => {
+    const pending = defaultsPending.current;
+    if (!appDefaults || chipsTouched.current) return;
+    if (pending.rest) {
+      pending.rest = false;
+      if (appDefaults.thinkingLevel) setThinkingLevel(appDefaults.thinkingLevel);
+      const compute = computeInstanceFromDefault(appDefaults.compute, modalCatalog?.instances);
+      if (compute) setSelectedComputeTarget(compute);
+    }
+    if (pending.model) {
+      if (!appDefaults.model) {
+        pending.model = false;
+        return;
+      }
+      const model = knownModels.find((candidate) => candidate.id === appDefaults.model);
+      if (model) {
+        pending.model = false;
+        setSelectedModel(model);
+      }
+    }
+  }, [appDefaults, knownModels, modalCatalog]);
+  const markChipsTouched = useCallback(() => {
+    chipsTouched.current = true;
+  }, []);
+
   const [attachedFiles, setAttachedFiles] = useState<string[]>(
     () => initialWorkspaceState?.attachedFiles ?? [],
   );
@@ -1745,6 +1293,12 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   );
   const [selectedSkills, setSelectedSkills] = useState<Skill[]>(
     () => initialWorkspaceState?.selectedSkills ?? [],
+  );
+  const [researchRefs, setResearchRefs] = useState<ResearchRef[]>(
+    () => initialWorkspaceState?.researchRefs ?? [],
+  );
+  const [delegation, setDelegation] = useState<DelegationChoice>(
+    () => initialWorkspaceState?.delegation ?? EMPTY_DELEGATION,
   );
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>(
     () => initialWorkspaceState?.queuedMessages ?? [],
@@ -1941,12 +1495,16 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
       attachedFiles,
       selectedDatabases: selectedDbs,
       selectedSkills,
+      researchRefs,
+      delegation,
       queuedMessages: messageQueue,
       composer: composerDraft,
     });
   }, [
     attachedFiles,
     composerDraft,
+    delegation,
+    researchRefs,
     messageQueue,
     onWorkspaceStateChange,
     selectedComputeTarget,
@@ -2011,7 +1569,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
   /** Returns false when the message could not be queued (caller keeps the draft). */
   const enqueue = useCallback(
     (trimmed: string, images: PromptImage[] = []) => {
-      if (messageQueue.length >= MAX_QUEUE) {
+      if (messageQueueLengthRef.current >= MAX_QUEUE) {
         toast.error(
           `Queue is full (${MAX_QUEUE}/${MAX_QUEUE}). Wait for the agent to work through it.`,
         );
@@ -2022,9 +1580,11 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
           selectedModelAvailability === "checking"
             ? "Model provider status is still loading. Try again in a moment."
             : "This model provider is disconnected. Reconnect it in Settings or choose another model.",
+          PROVIDERS_TOAST_ACTION,
         );
         return false;
       }
+      messageQueueLengthRef.current++;
       setMessageQueue((prev) => [
         ...prev,
         {
@@ -2048,7 +1608,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
       ]);
       return true;
     },
-    [messageQueue.length, selectedModel, selectedModelAvailability, selectedModelAvailable, selectedDbs, selectedSkills, attachedFiles, selectedComputeTarget, selectedComputeOptions, thinkingDisabled, thinkingLevel],
+    [selectedModel, selectedModelAvailability, selectedModelAvailable, selectedDbs, selectedSkills, attachedFiles, selectedComputeTarget, selectedComputeOptions, thinkingDisabled, thinkingLevel],
   );
 
   /**
@@ -2077,11 +1637,13 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
 
   const handleSend = useCallback(
     async (text: string, intent: SendIntent, images: PromptImage[] = []): Promise<boolean> => {
+      if (!initialSessionReady && !getSessionId()) return false;
       if (!selectedModelAvailable) {
         toast.error(
           selectedModelAvailability === "checking"
             ? "Model provider status is still loading. Try again in a moment."
             : "This model provider is disconnected. Reconnect it in Settings or choose another model.",
+          PROVIDERS_TOAST_ACTION,
         );
         return false;
       }
@@ -2103,18 +1665,15 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
           thinkingDisabled ? undefined : thinkingLevel,
           images.length > 0 ? images : undefined,
         );
-      const route = routeSubmit(isStreaming, intent, images.length > 0);
+      const route = routeSubmit(isStreaming, intent, images.length > 0, reconnecting);
+      if (route === "localQueue") return enqueue(trimmed, images);
       if (route === "followUp") {
         // Pi delivers it inside the live run once the agent is otherwise done.
         // If the run ends first, keep ordering behind any client-side queue.
         const result = await followUp(trimmed, images.length > 0 ? images : undefined);
         if (result === "ok") return true;
         if (result === "not_streaming") {
-          if (steerNotStreamingFallback(messageQueueLengthRef.current) === "queue") {
-            return enqueue(trimmed, images);
-          }
-          void sendNow();
-          return true;
+          return enqueue(trimmed, images);
         }
         // Transport failure: hold it in the client-side queue rather than lose it.
         return enqueue(trimmed, images);
@@ -2124,11 +1683,7 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
         if (result === "ok") return true;
         if (result === "not_streaming") {
           // The run ended while we typed: keep ordering behind any queue.
-          if (steerNotStreamingFallback(messageQueueLengthRef.current) === "queue") {
-            return enqueue(trimmed);
-          }
-          void sendNow();
-          return true;
+          return enqueue(trimmed);
         }
         // Reporting failure keeps the text AND the attachment chips; restoring
         // only the text used to drop the file context silently.
@@ -2143,9 +1698,12 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     },
     [
       selectedBudgetBlocked,
+      initialSessionReady,
+      getSessionId,
       selectedModelAvailability,
       selectedModelAvailable,
       isStreaming,
+      reconnecting,
       steer,
       followUp,
       enqueue,
@@ -2188,11 +1746,13 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
         return true;
       },
       sendQuick: async (prompt: string) => {
+        if (!initialSessionReady && !getSessionId()) return;
         if (!selectedModelAvailable) {
           toast.error(
             selectedModelAvailability === "checking"
               ? "Model provider status is still loading. Try again in a moment."
               : "Reconnect this model provider in Settings before sending.",
+            PROVIDERS_TOAST_ACTION,
           );
           return;
         }
@@ -2207,25 +1767,25 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
           thinkingDisabled ? undefined : thinkingLevel,
         );
       },
-      launchWorkflow: async (prompt, model, uploadedFiles) => {
+      launchWorkflow: async (prompt, model, inputFiles) => {
+        if (!initialSessionReady && !getSessionId()) return;
         const workflowModelAvailability = modelAvailability(model);
         if (workflowModelAvailability !== "available") {
           toast.error(
             workflowModelAvailability === "checking"
               ? "Model provider status is still loading. Try again in a moment."
               : "Reconnect this model provider in Settings before launching.",
+            PROVIDERS_TOAST_ACTION,
           );
           return;
         }
         if (budgetState === "exceeded" && modelUsesBillableBudget(model)) return;
         setSelectedModel(model);
-        const fileRefs = uploadedFiles.length > 0 ? "\n" + uploadedFiles.join("\n") : "";
-        const fullPrompt = prompt + fileRefs;
         await send(
-          fullPrompt,
+          prompt,
           model.id,
           {
-            attachments: uploadedFiles,
+            attachments: inputFiles,
             skills: [],
             databases: [],
           },
@@ -2239,6 +1799,8 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
     [
       send,
       stop,
+      initialSessionReady,
+      getSessionId,
       budgetState,
       isModelAvailable,
       modelAvailability,
@@ -2269,10 +1831,16 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
       <Conversation className="flex-1">
         <ConversationContent className="mx-auto w-full max-w-full px-4">
           {messages.length === 0 ? (
-            <ConversationEmptyState
-              title="What can I help you with?"
-              description="I can research topics, write code, and analyze data."
-            />
+            hasAnyModelAccess === false ? (
+              <div className="flex size-full items-center justify-center p-8">
+                <ConnectModelCard />
+              </div>
+            ) : (
+              <ConversationEmptyState
+                title="What can I help you with?"
+                description="I can research topics, write code, and analyze data."
+              />
+            )
           ) : (
             messages.map((message, i) => (
               <ChatMessageRow
@@ -2295,6 +1863,11 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
       </Conversation>
 
       <div className="px-4 pb-6 pt-2">
+        {(reconnecting || (!initialSessionReady && !getSessionId())) && (
+          <p role="status" className="mb-2 text-xs text-muted-foreground">
+            {reconnecting ? "Reconnecting to this run…" : "Restoring this conversation… Retrying if the server is unavailable."}
+          </p>
+        )}
         <PromptInputProvider
           initialInput={initialWorkspaceState?.composer.text}
           initialAttachments={initialWorkspaceState?.composer.attachments}
@@ -2318,13 +1891,22 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             selectedDbs={selectedDbs}
             onDbsChange={setSelectedDbs}
             selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
+            onModelChange={(model) => {
+              markChipsTouched();
+              setSelectedModel(model);
+            }}
             contextUsage={contextUsage}
             onCompact={handleCompact}
             selectedComputeTarget={selectedComputeTarget}
-            onComputeTargetChange={setSelectedComputeTarget}
+            onComputeTargetChange={(target) => {
+              markChipsTouched();
+              setSelectedComputeTarget(target);
+            }}
             thinkingLevel={thinkingLevel}
-            onThinkingLevelChange={setThinkingLevel}
+            onThinkingLevelChange={(level) => {
+              markChipsTouched();
+              setThinkingLevel(level);
+            }}
             thinkingDisabled={thinkingDisabled}
             modalCatalog={modalCatalog}
             modalCatalogLoading={modalCatalogLoading}
@@ -2347,6 +1929,12 @@ export const ChatTab = forwardRef<ChatTabHandle, ChatTabProps>(function ChatTab(
             budgetTotalUsd={budgetTotalUsd}
             budgetLimitUsd={budgetLimitUsd}
             modelAvailability={selectedModelAvailability}
+            projectId={projectId}
+            currentSessionId={sessionId}
+            researchRefs={researchRefs}
+            onResearchChange={setResearchRefs}
+            delegation={delegation}
+            onDelegationChange={setDelegation}
           />
         </PromptInputProvider>
       </div>

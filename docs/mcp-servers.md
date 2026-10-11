@@ -1,52 +1,100 @@
-# Connecting external tools (MCP servers)
+# MCP connectors
 
 > **Fork note:** this is the [kgforais1/k-dense-byok-mcp](https://github.com/kgforais1/k-dense-byok-mcp) fork of [K-Dense-AI/k-dense-byok](https://github.com/K-Dense-AI/k-dense-byok).
 
-Out of the box, Kady can read and write files, run code, search the web, and delegate to [sub-agents](./sub-agents.md). **MCP servers** let you give it more abilities - querying a database, reading your reference manager, controlling lab software, and so on.
+MCP servers add external tools such as databases, reference managers and lab
+software. Kady uses Pi's MCP support in both lead and specialist sessions.
 
-MCP ([Model Context Protocol](https://modelcontextprotocol.io)) is an open standard for connecting AI assistants to external tools. Many services publish an MCP server, and there are hundreds of community-built ones. When you connect one, every tool it provides shows up in Kady's toolbox automatically.
+## Add a connector
 
-## Adding a server
+Open **Settings → Connectors → Add server**, then choose **This project** or
+**All projects**. Project configuration lives in `sandbox/.pi/mcp.json`; global
+configuration defaults to `~/.kady/pi-agent/mcp.json`. A same-named project entry
+wins over the global entry.
 
-Open **Settings (gear icon) → Connectors** and click *Add server*. There are two kinds:
+| Connection | Fields |
+|---|---|
+| Remote HTTP | Name, server URL and authentication (below). SSE-only servers are unsupported. |
+| Local command | Executable, arguments and environment variables. Each session starts its own process. |
 
-### Remote (HTTP)
+Both kinds take an optional **Description**: one sentence on what the server
+offers. Kady's agent sees it next to the server's name and tool search uses it
+to rank the server's tools, so a clear description helps the agent find them.
 
-A server hosted somewhere on the internet. You need its URL and, usually, an access token from your account on that service.
+Environment/token values can reference the host environment with `${VAR}`.
+Use **Test connection** before saving and **Check status** to inspect tools and
+errors. Configuration changes apply to **new chat tabs**. Disable keeps the
+entry; removal deletes it.
 
-- **Name**: anything you like, e.g. `linear`
-- **Server URL**: e.g. `https://mcp.example.com/mcp`
-- **Bearer token**: the access token, if the service requires one
+Names are letters, digits, `-` and `_`. Tool names replace `-` with `_`
+(`lab-tools` becomes `mcp__lab_tools__…`), so two servers whose names differ
+only in `-` and `_` are refused.
 
-#### Example: Parallel Search
+### Authentication
 
-To add optional web search and URL fetching through Parallel Search MCP, use:
+| Option | Use it for |
+|---|---|
+| Sign in with OAuth (default) | Servers that sign in through the browser, such as Sentry or Linear. Save, check status and choose **Sign in**. |
+| Bearer token | A fixed token sent as `Authorization: Bearer …`. |
+| Use a signed-in provider | **All projects** only. Sends a provider login from Settings → Providers (for example Radius) as the bearer token, refreshed on every request. Requires https (or http on localhost). |
 
-- **Name**: `parallel-search`
-- **Server URL**: `https://search.parallel.ai/mcp`
-- **Bearer token**: leave blank
+OAuth tokens are stored per server in the shared Pi directory's
+`mcp-auth.json`; existing sessions pick up a completed login on their next turn.
+**Sign out** removes the stored login. Under **Advanced OAuth**, *Client name*
+helps with servers that only accept known OAuth clients, and *Authorization
+server metadata URL* fixes servers that advertise a wrong authorization server
+or none.
 
-The default endpoint requires no account or API key. After you test and save it, its `web_search` and `web_fetch` tools are available in new chat tabs.
+Provider logins are never allowed in a project's `mcp.json`, so a project
+cannot choose where your credentials are sent.
 
-### Local (command)
+**Radius.** When you are signed in to Radius, Connectors offers **Add Radius
+connector**, which adds `https://radius.pi.dev/mcp` to the connectors for all
+projects, authenticated with that sign-in.
 
-A small program that runs on your own computer when needed. These are typically published as npm packages and need no hosting.
+**Paperclip.** Saving a Paperclip API key (from
+[paperclip.gxl.ai/keys](https://paperclip.gxl.ai/keys)) under **Settings →
+Services** gives the agent Paperclip's literature search: papers, preprints,
+clinical trials, FDA documents and patents. Kady checks the key with Paperclip,
+stores it in `.env`, and adds a `paperclip` connector for all projects that
+sends it as `X-API-Key: ${PAPERCLIP_API_KEY}`. Only that reference is written
+to `mcp.json`: Pi reads the key from the environment when it connects, so
+subagents get it too and a new key needs no connector edit. An existing
+connector at `https://paperclip.gxl.ai/mcp` is reused, keeping its settings
+but not its old credential. Clearing the key turns the connector off without
+deleting it. Without a key, add the same URL here and sign in with OAuth.
+Paperclip usage counts against Paperclip's own rate limits, not Kady's spend
+cap. New chat tabs pick up the connector.
 
-- **Command**: usually `npx`
-- **Arguments**: e.g. `-y @modelcontextprotocol/server-github`
-- **Environment variables**: any keys the server needs, one per line, e.g. `GITHUB_TOKEN=ghp_…`
+## Tool exposure
 
-Click **Test connection** before saving - it dials the server and lists the tools it offers, so you catch a typo'd URL or token immediately.
+| Setting | How tools are called |
+|---|---|
+| Codemode (default) | Short scripts find the tools by search, combine calls and return selected results. The server connects in the background and does not delay the first reply. |
+| On demand | Tool search exposes tools for direct calls. |
+| Direct | Tools are listed alongside built-ins. |
+| Hidden | Connected, but tools cannot be called. |
 
-## Using the tools
+Older configurations may say `codemode-deferred`; Pi treats it as Codemode.
+Use Direct when the selected model struggles with codemode. Nested calls appear
+in chat and pass through tool hooks such as the raw-data guard and provenance.
+Those hooks do not inspect every external tool's internal effects.
 
-Nothing special required. Once a server is saved, its tools are available to Kady in **new chat tabs** in that project. Ask naturally - "search our GitHub issues for failed CI runs" - and Kady picks the right tool.
+## Specialist access and trust
 
-## Good to know
+Specialists connect through the required child runtime. The parent's capability
+ceiling and the specialist's own allowlist both apply. A restricted specialist
+can be granted connector tools with `mcp:<server>` or `mcp:<server>/<tool>` in
+its **Tools** list (the child then gets exactly those tools), or with
+`mcp__…` tool names, `codemode` or `tool_search`.
+Each lead/child session owns and closes its connections; a local server can
+therefore run once per session.
 
-- **Per project.** Each project has its own server list, stored in the project at `sandbox/.pi/mcp.json`. Tokens stay on your machine.
-- **Disabling is non-destructive.** Toggling a server off moves its entry to `sandbox/.pi/mcp-disabled.json`; toggle it back on when you need it again.
-- **A broken server never blocks you.** If a server is down or misconfigured, Kady starts without it (you'll see a warning in the backend logs) and everything else works normally.
-- **Changes apply to new chat tabs.** Already-open tabs keep the toolset they started with.
-- **Sub-agents don't see MCP tools yet.** Tools from MCP servers are currently available to Kady itself but not to the sub-agents it spawns. This is on the roadmap.
-- **Trust matters.** A local (command) server is a program running on your computer with your permissions, and a remote server receives whatever Kady sends it. Only connect servers you trust.
+A failed connector leaves other tools available. Local servers run with the
+host user's permissions; remote servers receive the data sent to them. Connector
+`env`, headers and OAuth client secrets are currently shown unmasked in Settings.
+
+Direct edits use `mcpServers` in the files above. Kady preserves additional Pi
+options when editing supported fields and refuses to rewrite malformed files.
+Implementation: [`mcp.ts`](../server/src/agent/mcp.ts) and
+[`kady-child-runtime`](../server/pi-packages/kady-child-runtime/).

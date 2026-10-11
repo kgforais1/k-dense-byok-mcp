@@ -22,7 +22,12 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { KADY_SKILLS_CACHE_DIR, SKILLS_BRANCH, SKILLS_REPO } from "../config.ts";
+import {
+  CATALOGUE_EXTRA_SOURCES,
+  KADY_SKILLS_CACHE_DIR,
+  SKILLS_BRANCH,
+  SKILLS_REPO,
+} from "../config.ts";
 
 const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
 /** Trailing CLI output kept for error messages. */
@@ -231,7 +236,7 @@ export async function fetchSkills(options: FetchSkillsOptions): Promise<FetchedS
         stdio: ["ignore", "pipe", "pipe"],
         timeout: FETCH_TIMEOUT_MS,
         killSignal: "SIGTERM",
-        env: { ...process.env, NO_COLOR: "1" },
+        env: skillsCliEnv(),
       });
       let combined = "";
       const collect = (chunk: string): void => {
@@ -271,32 +276,78 @@ export function clearStaging(cacheKey: string): void {
 /** Staging key for the K-Dense catalogue: one download serves every project. */
 export const CATALOGUE_CACHE_KEY = "catalogue";
 
+/** One staged catalogue skill. */
+export interface CatalogueSkill {
+  dir: string;
+  /** Repo it came from; recorded only for skills outside `SKILLS_REPO`. */
+  source?: string;
+}
+
 export interface FetchedCatalogue {
-  skillsDir: string;
+  /** Skill name → staged tree, after source precedence is applied. */
+  skills: Map<string, CatalogueSkill>;
   /**
-   * Upstream commit, when the fallback clone produced one. The CLI stages
-   * copies rather than a checkout, so this is normally null and callers
-   * identify a catalogue by the digest of its skill hashes instead.
+   * Upstream commit of the primary repo, when the fallback clone produced one.
+   * The CLI stages copies rather than a checkout, so this is normally null and
+   * callers identify a catalogue by the digest of its skill hashes instead.
    */
   commit: string | null;
   /** Release the fetch's temporary storage (no-op for the staging cache). */
   cleanup: () => void;
 }
 
-function runGitClone(target: string): Promise<void> {
+interface StagedSource {
+  skillsDir: string;
+  commit: string | null;
+  cleanup: () => void;
+}
+
+interface CatalogueFetchSource {
+  repo: string;
+  branch: string;
+  /** Names taken from this source; omitted for the primary (every skill). */
+  skills?: readonly string[];
+  cacheKey: string;
+}
+
+/**
+ * Environment for the `skills` CLI and our fallback clone.
+ *
+ * - Telemetry off: by default the CLI reports every install (source, skill
+ *   names, file paths) to a third-party endpoint, including private
+ *   GitLab/GitHub Enterprise sources. Research tooling in a regulated lab
+ *   must not announce what it installs.
+ * - `core.symlinks=false`: the CLI copies a fetched repo with symlinks
+ *   dereferenced, so a skill shipping `notes -> ~/.ssh` would copy the
+ *   target's contents into the sandbox. Checked out as plain files instead,
+ *   a link is just a small text file holding its target path.
+ */
+export function skillsCliEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, NO_COLOR: "1", DISABLE_TELEMETRY: "1", DO_NOT_TRACK: "1" };
+  const count = Number.parseInt(base.GIT_CONFIG_COUNT ?? "0", 10);
+  const index = Number.isFinite(count) && count > 0 ? count : 0;
+  env.GIT_CONFIG_COUNT = String(index + 1);
+  env[`GIT_CONFIG_KEY_${index}`] = "core.symlinks";
+  env[`GIT_CONFIG_VALUE_${index}`] = "false";
+  return env;
+}
+
+function runGitClone(repo: string, branch: string, target: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       "git",
       [
+        "-c",
+        "core.symlinks=false",
         "clone",
         "--depth",
         "1",
         "--branch",
-        SKILLS_BRANCH,
-        `https://github.com/${SKILLS_REPO}.git`,
+        branch,
+        `https://github.com/${repo}.git`,
         target,
       ],
-      { stdio: ["ignore", "ignore", "pipe"], timeout: FETCH_TIMEOUT_MS },
+      { stdio: ["ignore", "ignore", "pipe"], timeout: FETCH_TIMEOUT_MS, env: skillsCliEnv() },
     );
     let stderr = "";
     child.stderr.setEncoding("utf-8");
@@ -329,18 +380,19 @@ function runGitRevParse(cwd: string): Promise<string | null> {
 }
 
 /**
- * Shallow-clone the catalogue. Retained as a fallback for the CLI path: the
- * catalogue is on the first-run seeding path, so a CLI that is missing,
+ * Shallow-clone one catalogue source. Retained as a fallback for the CLI path:
+ * the catalogue is on the first-run seeding path, so a CLI that is missing,
  * broken, or incompatible must not be able to leave a new project with no
- * skills at all.
+ * skills at all. The clone holds the whole repo; `mergeCatalogueSources`
+ * narrows it to the source's named skills.
  */
-async function cloneCatalogue(): Promise<FetchedCatalogue> {
+async function cloneSource(repo: string, branch: string): Promise<StagedSource> {
   const tmpRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "kady-skills-clone-"));
   try {
-    await runGitClone(tmpRoot);
+    await runGitClone(repo, branch, tmpRoot);
     const skillsDir = path.join(tmpRoot, "skills");
     if (!fs.existsSync(skillsDir)) {
-      throw new Error("Cloned catalogue has no skills directory");
+      throw new Error(`Cloned ${repo} has no skills directory`);
     }
     return {
       skillsDir,
@@ -353,24 +405,103 @@ async function cloneCatalogue(): Promise<FetchedCatalogue> {
   }
 }
 
+async function stageSource(
+  source: CatalogueFetchSource,
+  onFallback?: (reason: string) => void,
+): Promise<StagedSource> {
+  try {
+    const staged = await fetchSkills({
+      source: source.repo,
+      ref: source.branch,
+      ...(source.skills ? { names: [...source.skills] } : {}),
+      cacheKey: source.cacheKey,
+    });
+    return { skillsDir: staged.skillsDir, commit: null, cleanup: () => {} };
+  } catch (err) {
+    onFallback?.(`${source.repo}: ${err instanceof Error ? err.message : String(err)}`);
+    return cloneSource(source.repo, source.branch);
+  }
+}
+
+/** `<name>/SKILL.md` trees directly under `skillsDir`, by name. */
+function stagedSkillTrees(skillsDir: string): Map<string, string> {
+  const trees = new Map<string, string>();
+  try {
+    for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+      const dir = path.join(skillsDir, entry.name);
+      if (entry.isDirectory() && fs.existsSync(path.join(dir, "SKILL.md"))) {
+        trees.set(entry.name, dir);
+      }
+    }
+  } catch {
+    // A missing staging directory is an empty source.
+  }
+  return trees;
+}
+
 /**
- * Fetch the default catalogue, preferring the CLI and falling back to a git
- * clone. `onFallback` reports the CLI failure that triggered the fallback —
- * silently degrading would hide a permanently broken CLI behind a slower path
- * that happens to work.
+ * Merge staged sources into one catalogue. A later source wins a name clash,
+ * and a source with a `skills` list contributes only those names. A listed
+ * name the source no longer has is simply absent, which sync treats as
+ * removed upstream.
+ */
+export function mergeCatalogueSources(
+  sources: readonly { skillsDir: string; source?: string; skills?: readonly string[] }[],
+): Map<string, CatalogueSkill> {
+  const merged = new Map<string, CatalogueSkill>();
+  for (const { skillsDir, source, skills } of sources) {
+    const wanted = skills ? new Set(skills) : null;
+    for (const [name, dir] of stagedSkillTrees(skillsDir)) {
+      if (wanted && !wanted.has(name)) continue;
+      merged.set(name, source ? { dir, source } : { dir });
+    }
+  }
+  return merged;
+}
+
+/**
+ * Fetch the default catalogue: `SKILLS_REPO` plus `CATALOGUE_EXTRA_SOURCES`,
+ * each through the CLI with a git-clone fallback. `onFallback` reports the CLI
+ * failure that triggered a fallback — silently degrading would hide a
+ * permanently broken CLI behind a slower path that happens to work.
+ *
+ * All or nothing: a catalogue missing one source's skills would read as those
+ * skills having been removed upstream, and sync would archive them.
  */
 export async function fetchCatalogue(
   onFallback?: (reason: string) => void,
 ): Promise<FetchedCatalogue> {
-  try {
-    const staged = await fetchSkills({
-      source: SKILLS_REPO,
-      ref: SKILLS_BRANCH,
-      cacheKey: CATALOGUE_CACHE_KEY,
-    });
-    return { skillsDir: staged.skillsDir, commit: null, cleanup: () => {} };
-  } catch (err) {
-    onFallback?.(err instanceof Error ? err.message : String(err));
-    return cloneCatalogue();
+  const sources: CatalogueFetchSource[] = [
+    { repo: SKILLS_REPO, branch: SKILLS_BRANCH, cacheKey: CATALOGUE_CACHE_KEY },
+    ...CATALOGUE_EXTRA_SOURCES.map((source) => ({
+      ...source,
+      cacheKey: `${CATALOGUE_CACHE_KEY}-${cacheKeyForSource(source.repo, source.branch)}`,
+    })),
+  ];
+  const settled = await Promise.allSettled(
+    sources.map((source) => stageSource(source, onFallback)),
+  );
+  const staged = settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  const cleanup = (): void => {
+    for (const source of staged) source.cleanup();
+  };
+  const failed = settled.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failed) {
+    cleanup();
+    throw failed.reason;
   }
+  return {
+    skills: mergeCatalogueSources(
+      staged.map((source, index) => ({
+        skillsDir: source.skillsDir,
+        ...(index > 0 ? { source: sources[index].repo, skills: sources[index].skills } : {}),
+      })),
+    ),
+    commit: staged[0].commit,
+    cleanup,
+  };
 }

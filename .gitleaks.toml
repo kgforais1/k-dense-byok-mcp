@@ -14,3 +14,10 @@ title = "k-dense-byok"
 # `.gitleaks-paths.toml`, which must run with `useDefault = false` — see the
 # comment there for why the two cannot share one config.
 useDefault = true
+
+[[allowlists]]
+description = "Exact synthetic credential literals in upstream 0.15.0 tests; no real credentials"
+regexTarget = "match"
+regexes = [
+  '''["'](?:existing-key-123|sk-live-1234567890abcd|gxl_test_key_0123456789|gxl_test_key_6789)["']''',
+]

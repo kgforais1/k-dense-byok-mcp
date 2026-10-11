@@ -14,8 +14,8 @@ import {
   recordLoaded,
 } from "../src/agent/local-context.ts";
 import {
-  OLLAMA_BASE_URL,
-  OPENAI_COMPATIBLE_BASE_URL,
+  ollamaBaseUrl,
+  openaiCompatibleBaseUrl,
 } from "../src/config.ts";
 
 // Reasoning-effort suffixes ("...-xhigh", "...-high", …) are an OpenRouter
@@ -151,7 +151,7 @@ describe("local-model context window (cache-backed builders)", () => {
 
   it("returns the cached architectural figure when warm", () => {
     recordArchitectural(
-      cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-warm-ollama-xyz:latest"),
+      cacheKey("ollama", ollamaBaseUrl(), "ctx-test-warm-ollama-xyz:latest"),
       40_960,
     );
     expect(
@@ -162,7 +162,7 @@ describe("local-model context window (cache-backed builders)", () => {
     recordArchitectural(
       cacheKey(
         "openai-compatible",
-        OPENAI_COMPATIBLE_BASE_URL,
+        openaiCompatibleBaseUrl(),
         "ctx-test-vendor/ctx-test-warm-compat-xyz",
       ),
       64_000,
@@ -178,7 +178,7 @@ describe("local-model context window (cache-backed builders)", () => {
   it("prefers the loaded figure over the architectural one", () => {
     const ollamaKey = cacheKey(
       "ollama",
-      OLLAMA_BASE_URL,
+      ollamaBaseUrl(),
       "ctx-test-loaded-ollama-xyz:latest",
     );
     recordArchitectural(ollamaKey, 40_960);
@@ -190,7 +190,7 @@ describe("local-model context window (cache-backed builders)", () => {
 
     const compatKey = cacheKey(
       "openai-compatible",
-      OPENAI_COMPATIBLE_BASE_URL,
+      openaiCompatibleBaseUrl(),
       "ctx-test-vendor/ctx-test-loaded-compat-xyz",
     );
     recordArchitectural(compatKey, 128_000);
@@ -209,11 +209,11 @@ describe("local-model context window (cache-backed builders)", () => {
     // to a bare id — without the `:latest` normalisation that run would miss
     // the cache forever and sit silently on the fallback.
     recordArchitectural(
-      cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-untagged-xyz:latest"),
+      cacheKey("ollama", ollamaBaseUrl(), "ctx-test-untagged-xyz:latest"),
       32_768,
     );
-    expect(cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-untagged-xyz")).toBe(
-      cacheKey("ollama", OLLAMA_BASE_URL, "ctx-test-untagged-xyz:latest"),
+    expect(cacheKey("ollama", ollamaBaseUrl(), "ctx-test-untagged-xyz")).toBe(
+      cacheKey("ollama", ollamaBaseUrl(), "ctx-test-untagged-xyz:latest"),
     );
     expect(
       resolveModel("ollama/ctx-test-untagged-xyz", registry).contextWindow,
@@ -226,7 +226,7 @@ describe("local-model context window (cache-backed builders)", () => {
     // retag every id and break every key here.
     const id = "qwen/ctx-test-notag-compat-xyz";
     recordArchitectural(
-      cacheKey("openai-compatible", OPENAI_COMPATIBLE_BASE_URL, id),
+      cacheKey("openai-compatible", openaiCompatibleBaseUrl(), id),
       96_000,
     );
     expect(

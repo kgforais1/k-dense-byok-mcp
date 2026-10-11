@@ -93,7 +93,7 @@ describe("a run cannot start on a session deleted mid-flight", () => {
       path.join(paths.sessionsDir, "session-busy.jsonl"),
       `${JSON.stringify({ type: "session", version: 3, id: "session-busy" })}\n`,
     );
-    expect(deleteSession(projectId, paths, "session-busy")).toBe("deleted");
+    expect(await deleteSession(projectId, paths, "session-busy")).toBe("deleted");
 
     const client = await connect();
     const result = await withActiveProject(projectId, () =>

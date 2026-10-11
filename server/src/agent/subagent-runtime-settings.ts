@@ -1,29 +1,21 @@
-/**
- * pi-subagents runtime settings Kady seeds into `sandbox/.pi/settings.json`.
- *
- * Both entries are write-if-missing: a key the user (or the Settings UI) has
- * already set is never touched, so this only fills in Kady's defaults for a
- * project that has none.
- *
- *  1. `subagents.forceTopLevelAsync = true`. Since pi-subagents 0.65 children
- *     are native Pi sessions: a background child runs in a detached runner
- *     process that loads the sandbox's ambient packages, a *foreground* child
- *     (`async: false`) runs inside the parent process and — by design — loads
- *     none of them. Every tool Kady gives a child arrives as an ambient package
- *     (kady-notebook, kady-modal, kady-pdf-annotations, pi-web-access, MCP), so
- *     a foreground child would silently lose all of them. Forcing background
- *     execution keeps the pre-0.65 capability set for every launch; the lead
- *     already blocks on children with `bg_wait`.
- *
- *  2. `subagents.agentOverrides.<name>.disabled = true` for the builtin
- *     specialists that drive an *external* coding CLI (`runner.type:
- *     external-cli` — Claude Code, Codex, Cursor Agent; pi-subagents ≥0.57).
- *     They need that CLI installed and authenticated on the host and run
- *     entirely outside Kady's model runtime, cost ledger and spend cap. Off by
- *     default; the Specialists tab can enable any of them, and that choice
- *     sticks because the key then exists.
+/** Seed the plugin's global config and the project's external-CLI defaults.
+ * Existing supported settings win. Remove the obsolete project key that the
+ * plugin never read; forceTopLevelAsync belongs in extensions/subagent/config.json.
  */
+
+/**
+ * pi-subagents (0.74+) feature groups the Kady host cannot present, removed
+ * from the model-facing `subagent` tool: `panes` drives the TUI inspector and
+ * project panes, `external-machines` targets Herdr saved machines (remote
+ * compute here is Modal). Every request carries the tool declaration, so the
+ * unused parameters and their guidance are paid for on every lead turn.
+ * Fleet controls (status/steer/stop/resume) and schedules are unaffected.
+ */
+export const KADY_DISABLED_SUBAGENT_FEATURES = ["panes", "external-machines"] as const;
 import fs from "node:fs";
+import path from "node:path";
+import { KADY_PI_AGENT_DIR } from "../config.ts";
+import { atomicJson } from "../atomic-json.ts";
 import { piSettingsPath, writePiSettings } from "./capability-state.ts";
 import { isExternalCliAgent, listBuiltinAgents } from "./agent-files.ts";
 import type { ProjectPaths } from "../projects.ts";
@@ -36,6 +28,20 @@ function asRecord(value: unknown): Rec {
 
 /** Returns true when the settings file was written. */
 export function seedSubagentRuntimeSettings(paths: ProjectPaths): boolean {
+  // This is a plugin config key, not a Pi settings key. Do not rewrite invalid
+  // configuration or override an explicit operator choice.
+  const configFile = path.join(KADY_PI_AGENT_DIR, "extensions", "subagent", "config.json");
+  let config: Rec = {};
+  try {
+    const value = JSON.parse(fs.readFileSync(configFile, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid subagent config");
+    config = value;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const configDefaults: Rec = { forceTopLevelAsync: true, disabledFeatures: [...KADY_DISABLED_SUBAGENT_FEATURES] };
+  const missing = Object.entries(configDefaults).filter(([key]) => !(key in config));
+  if (missing.length > 0) atomicJson(configFile, { ...config, ...Object.fromEntries(missing) });
   // Parsed here rather than via readPiSettings(): that helper maps a malformed
   // file to `{}`, and rewriting from that would destroy user configuration.
   // Missing is fine (start empty); unparseable means leave it alone.
@@ -48,8 +54,8 @@ export function seedSubagentRuntimeSettings(paths: ProjectPaths): boolean {
   const subagents = { ...asRecord(settings.subagents) };
   let changed = false;
 
-  if (!("forceTopLevelAsync" in subagents)) {
-    subagents.forceTopLevelAsync = true;
+  if ("forceTopLevelAsync" in subagents) {
+    delete subagents.forceTopLevelAsync;
     changed = true;
   }
 

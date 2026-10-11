@@ -32,6 +32,16 @@ function writeSession(name: string, rows: string[]): string {
 }
 
 describe("notebookEntriesFromSessionFile", () => {
+  it("retains child execution reports without treating unsupported completion as verified", () => {
+    const f = writeSession("execution.jsonl", [asstRow([
+      toolCall("planned", "notebook", { type: "method", title: "Plan", execution: { status: "planned" } }),
+      toolCall("bare", "notebook", { type: "method", title: "Claim", execution: { status: "completed" } }),
+      toolCall("done", "notebook", { type: "method", title: "Run", execution: { status: "completed", evidence: "child run 3, exit 0; derived/run3.log" } }),
+    ])]);
+    const entries = notebookEntriesFromSessionFile(f, "worker");
+    expect(entries.map((e) => e.execution?.status)).toEqual(["planned", "unverified", "completed"]);
+    expect(entries[2].execution?.evidence).toBe("child run 3, exit 0; derived/run3.log");
+  });
   it("extracts notebook tool-calls, stamping role and a namespaced id", () => {
     const f = writeSession("s.jsonl", [
       asstRow([
@@ -81,6 +91,20 @@ describe("notebookEntriesFromSessionFile", () => {
     const [got] = notebookEntriesFromSessionFile(f, "worker");
     expect(got.results).toEqual([{ toolCallId: "worker:r", childLocal: true }, { toolCallId: "parent-r", sessionId: "parent" }]);
     expect(got.planHistory).toBeUndefined(); expect(got.resultSnapshots).toBeUndefined();
+  });
+
+  it("skips calls the child's notebook tool rejected, so a retry is harvested once", () => {
+    const result = (id: string, isError: boolean) => JSON.stringify({
+      type: "message", id: `r-${id}`, timestamp: "2026-07-05T20:49:16.000Z",
+      message: { role: "toolResult", toolCallId: id, toolName: "notebook", content: [{ type: "text", text: isError ? "Validation failed" : "logged" }], isError },
+    });
+    const file = writeSession("retry.jsonl", [
+      asstRow([toolCall("first", "notebook", { type: "observation", title: "ARI 0.995", outcome: "positive" })]),
+      result("first", true),
+      asstRow([toolCall("retry", "notebook", { type: "observation", title: "ARI 0.995", outcome: "signal" })]),
+      result("retry", false),
+    ]);
+    expect(notebookEntriesFromSessionFile(file, "worker").map((e) => e.id)).toEqual(["worker:retry"]);
   });
 
   it("returns [] for a missing file", () => {

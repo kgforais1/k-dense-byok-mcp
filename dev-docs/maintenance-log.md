@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-10-10 — Live paid-tool accounting and extended correctness review (PR #51)
+
+- **Correction:** Issue [#53](https://github.com/kgforais1/k-dense-byok-mcp/issues/53) is implemented in this PR. Observe completed tool usage before persistence, classify by each model's credential with a conservative pending charge, and retain usage when a run fails before `turn_end`. Call ids are scoped to turns; completion, message and turn events update one charge. Payg lead runs release the additional hold when session stats include the result; subscription runs retain their paid-tool charge until ledger cleanup.
+- **Focused verification:** Sixteen tests pass across the live-tool and pipeline suites, including concurrent-tab refusal, the pre-persistence window, final ledger reconciliation, mixed providers, repeated call ids, failed billing lookup and interrupted turns. Backend typecheck and lint pass.
+- **Review:** After initial endpoint errors, the owner's resumed Longcat 2.5 Preview Free pass returned an approve verdict for `dab6fea`, with a substantial explicit list of unreviewed files. Its suspected nesting from two messages during finalization is not established: the first gate replaces both public methods, so subsequent messages enter that gate instead of re-entering the observer wrapper. Corrupt-receipt admission failure is intentional fail-closed accounting. GLM and Muse will independently review the updated full diff and these coverage gaps.
+- **Frontend assertion investigation:** Full verification passed 1,917 backend tests but one editor test timed out while its lazy-import fallback was still visible. The unchanged four-test file and unchanged full 928-test frontend suite both passed on rerun; no component defect was reproduced. The editor queries now wait up to five seconds for actual readiness (with a fifteen-second test ceiling), preserving real editor state and every draft/save assertion. Focused tests and the complete frontend typecheck/test ladder pass after the change.
+
 ### 2026-10-10 — Bot review corrections and dispositions (PR #51)
 
 - **Corrections:** Preserve image-provider usage and partial successful outputs when saving fails. Radius setup chooses a free numbered fallback instead of overwriting an unrelated global connector. Reject tombstoned warm/pending opens and dispose a cold session constructed while deletion was awaiting it.

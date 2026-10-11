@@ -53,9 +53,9 @@ import {
   type CostSnapshot,
 } from "../cost/ledger.ts";
 import { billingCountsTowardBudget, billingForProvider, type BillingContext } from "../cost/billing.ts";
+// FORK: expose completed tool-model spend to admission before final ledgering.
+import { LiveToolUsage } from "../cost/live-tool-usage.ts";
 import {
-  addToolResultUsage,
-  emptyToolUsageSplit,
   snapshotMinus,
   splitTotal,
 } from "../cost/tool-usage.ts";
@@ -311,7 +311,7 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
     // Tool-reported usage that is not the turn's model: models a tool ran
     // itself (billed by their own provider) and child-agent usage the
     // subagent meter already ledgered (see cost/tool-usage.ts).
-    const toolUsage = emptyToolUsageSplit();
+    const liveTools = new LiveToolUsage(opts.toolModelBilling ?? defaultToolModelBilling);
     // Observational provenance: binds each tool call to the sandbox files it
     // actually read and wrote. Constructed before the first model round-trip so
     // its baseline sandbox walk overlaps it.
@@ -343,10 +343,17 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
     const subscribe = opts.subscribe ?? ((l) => session.subscribe(l));
     unsubscribePi = subscribe((ev) => {
       provenance.observe(ev);
+      // FORK: Pi emits completion before persistence; hold paid usage immediately.
+      if (ev.type === "tool_execution_end") {
+        liveTools.observe({ ...ev.result, toolName: ev.toolName, toolCallId: ev.toolCallId });
+      }
+      if (ev.type === "message_end" && ev.message.role === "toolResult") {
+        liveTools.observe(ev.message, session.getSessionStats().toolResults + 1);
+      }
       if (ev.type === "turn_end") {
         const usage = (ev.message as { usage?: Parameters<typeof addTurnUsage>[1] }).usage;
         if (usage) addTurnUsage(turnTally, usage);
-        addToolResultUsage(toolUsage, (ev as { toolResults?: readonly unknown[] }).toolResults);
+        liveTools.endTurn(ev.toolResults, session.getSessionStats().toolResults);
       }
       if (ev.type === "message_start" && handle.origin === "system") {
         const message = ev.message as { role?: string; customType?: string };
@@ -361,22 +368,20 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
     const priorError = session.state.errorMessage;
     const before = snapshot(session);
 
-    let billing: BillingContext;
+    // FORK: subscription/local lead runs can still incur paid tool charges.
+    let billing = FAIL_CLOSED_BILLING;
+    trackInFlightRun(claim.key, projectId, () => {
+      const counts = billingCountsTowardBudget(billing);
+      const own = counts ? Math.max(0, snapshot(session).costUsd - before.costUsd, turnTally.costUsd) : 0;
+      return own + liveTools.accruedUsd(session.getSessionStats().toolResults, counts);
+    });
+
     try {
       billing = await opts.billing;
     } catch (err) {
       log.warn({ err }, "billing resolution failed; counting the run toward the cap");
       billing = FAIL_CLOSED_BILLING;
     }
-    // Publish this run's live spend so a concurrent run in another tab is
-    // admitted against what we are actually spending, not against the ledger
-    // total from before this run started.
-    if (billingCountsTowardBudget(billing)) {
-      trackInFlightRun(claim.key, projectId, () =>
-        Math.max(0, snapshot(session).costUsd - before.costUsd),
-      );
-    }
-
     // A user prompt must not start after Stop during model setup. An adopted
     // system turn already started, however: still await its settled boundary
     // and ledger incurred usage even if Stop raced with billing resolution.
@@ -425,6 +430,8 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
         // tokens. The stats delta catches a partial turn that never reached
         // turn_end; the tally catches compaction — take the max of the two.
         try {
+          // FORK: include completed tools even if the run failed before turn_end.
+          const toolUsage = liveTools.totals();
           const run = snapshotMax(
             snapshotMinus(snapshotDelta(before, snapshot(session)), splitTotal(toolUsage)),
             turnTally,
@@ -442,7 +449,7 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
           for (const [modelRef, usage] of toolUsage.models) {
             let toolBilling: BillingContext;
             try {
-              toolBilling = await (opts.toolModelBilling ?? defaultToolModelBilling)(modelRef);
+              toolBilling = await liveTools.billingFor(modelRef);
             } catch {
               toolBilling = FAIL_CLOSED_BILLING;
             }

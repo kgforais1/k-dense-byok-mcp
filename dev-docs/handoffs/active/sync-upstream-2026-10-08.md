@@ -18,8 +18,9 @@ Adopt Pi 1.0 and native outbound MCP; retain inbound MCP, headless session ident
 The owner approved a one-time exception to the 100-file PR limit for PR #51.
 Bot review corrections preserve usage after image-save failure, avoid Radius
 connector-name collisions, and prevent pending cold opens from escaping deletion.
-Office asset availability, live tool-spend accounting and compatibility review
-are tracked in issues #52, #53 and #54 respectively.
+Office asset availability and compatibility review remain tracked in issues
+#52 and #54. Live tool-spend accounting (#53) is implemented in this PR with
+pre-persistence admission and interrupted-turn regressions.
 
 ## Changed files
 - Upstream product code and docs, plus fork integration seams in session registry, routes, scheduling and transfer.
@@ -43,4 +44,8 @@ are tracked in issues #52, #53 and #54 respectively.
 - Current status supersedes the older scanner notes above: CodeQL, SonarCloud and DeepSource pass at `5ce59f3`. The Windows backend failure is a robustness result-readiness assertion; the review correction uses the shared wait budget and polls for both retained results. Latest-revision CI and Hyrax re-review remain pending before merge.
 
 ## Next action
-Check the CI follow-up and scanner review on PR #51. After review approval, finalize the plan/handoff closeout in the same PR before merge.
+Complete full verification of the live paid-tool repair and the requested
+parallel GLM 5.3 and Muse Spark 1.3 Contributor correctness reviews. Longcat
+2.5 Preview Free approved `dab6fea` after the owner resumed it, while explicitly
+listing substantial unreviewed areas; do not describe this as exhaustive coverage.
+After review approval, finalize the plan/handoff closeout in the same PR before merge.

@@ -27,7 +27,7 @@ vi.mock("../src/agent/session-registry.ts", () => ({
 
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { createProject, resolvePaths } from "../src/projects.ts";
-import { recordRun } from "../src/cost/ledger.ts";
+import { isBudgetExceeded, projectCostSummary, recordRun } from "../src/cost/ledger.ts";
 import { runBroker } from "../src/agent/run-broker.ts";
 import { currentRunId } from "../src/agent/run-ids.ts";
 import { claimRun, executeRun, isRunClaimed, openRun } from "../src/agent/run-pipeline.ts";
@@ -40,6 +40,7 @@ class FakeSession {
   model = { id: "fake-model", provider: "openrouter" } as never;
   messages: unknown[] = [];
   cost = 0;
+  toolResults = 0;
   private listeners = new Set<(event: any) => void>();
   subscribe(listener: (event: any) => void): () => void {
     this.listeners.add(listener);
@@ -49,7 +50,7 @@ class FakeSession {
     for (const listener of [...this.listeners]) listener(event);
   }
   getSessionStats() {
-    return { cost: this.cost, tokens: { input: 0, output: 0, cacheRead: 0, total: 0 } };
+    return { cost: this.cost, toolResults: this.toolResults, tokens: { input: 0, output: 0, cacheRead: 0, total: 0 } };
   }
   getContextUsage() {
     return undefined;
@@ -153,6 +154,80 @@ describe("openRun", () => {
 });
 
 describe("executeRun", () => {
+  it.each(["subscription", "payg"] as const)("exposes completed paid tools during a %s run and blocks another tab before turn_end", async (mode) => {
+    const capped = createProject({ name: "Live tools", spendLimitUsd: 0.05 });
+    const session = new FakeSession();
+    const billing: BillingContext = mode === "payg" ? payg
+      : { provider: "openai", authType: "oauth", billingMode: "subscription" };
+    const opened = openRun(requireValue(claimRun(capped.id, session.sessionId)), {
+      origin: "user", kind: "turn", prompt: "x", images: [], baseline, session,
+    });
+    let finish!: () => void;
+    let started!: () => void;
+    const start = new Promise<void>((resolve) => { started = resolve; });
+    let resolveBilling!: (billing: BillingContext) => void;
+    const toolBilling = new Promise<BillingContext>((resolve) => { resolveBilling = resolve; });
+    const running = executeRun(opened, {
+      session, paths: resolvePaths(capped.id), billing, budgetPolicy: "refuse", log,
+      toolModelBilling: () => toolBilling,
+      run: () => { started(); return new Promise<void>((resolve) => { finish = resolve; }); },
+    });
+    await start;
+    const result = {
+      role: "toolResult", toolCallId: "image-1", toolName: "generate_image",
+      usage: { input: 10, output: 20, cost: { total: 0.06 } },
+      details: { model: "openrouter/image" },
+    };
+    session.emit({ type: "tool_execution_end", toolCallId: result.toolCallId, toolName: result.toolName, result });
+    // Classification is pending and Pi has not persisted the result. Fail closed.
+    expect(isBudgetExceeded(capped.id).exceeded).toBe(true);
+    expect(projectCostSummary(capped.id).committedUsd).toBeCloseTo(0.06);
+    resolveBilling(payg);
+    await toolBilling;
+    const second = new FakeSession();
+    second.sessionId = "second-tab";
+    const secondOpened = openRun(requireValue(claimRun(capped.id, second.sessionId)), {
+      origin: "user", kind: "turn", prompt: "x", images: [], baseline, session: second,
+    });
+    const secondRun = vi.fn(async () => {});
+    await executeRun(secondOpened, {
+      session: second, paths: resolvePaths(capped.id), billing: payg,
+      budgetPolicy: "refuse", log, run: secondRun,
+    });
+    expect(secondRun).not.toHaveBeenCalled();
+    // Public message_end listeners run before persistence in the real SDK.
+    session.emit({ type: "message_end", message: result });
+    session.cost = 0.06;
+    session.toolResults++;
+    expect(projectCostSummary(capped.id).committedUsd).toBeCloseTo(0.06);
+    session.emit({ type: "turn_end", message: { role: "assistant" }, toolResults: [result] });
+    expect(projectCostSummary(capped.id).committedUsd).toBeCloseTo(0.06);
+    finish();
+    await running;
+    expect(projectCostSummary(capped.id).committedUsd).toBeCloseTo(0.06);
+    const rows = costRows(capped.id, session.sessionId).map((row) => JSON.parse(row));
+    expect(rows.filter((row) => row.model === "openrouter/image")).toHaveLength(1);
+  });
+
+  it("ledgers a completed paid tool when the run fails before turn_end", async () => {
+    const session = new FakeSession();
+    const opened = openRun(requireValue(claimRun(projectId, session.sessionId)), {
+      origin: "user", kind: "turn", prompt: "x", images: [], baseline, session,
+    });
+    await executeRun(opened, {
+      session, paths: resolvePaths(projectId), billing: payg, budgetPolicy: "refuse", log,
+      toolModelBilling: async () => payg,
+      run: async () => {
+        session.emit({ type: "tool_execution_end", toolCallId: "paid", toolName: "generate_image",
+          result: { usage: { input: 1, output: 2, cost: { total: 0.03 } }, details: { model: "openrouter/image" } } });
+        throw new Error("stopped before result persistence");
+      },
+    });
+    expect(projectCostSummary(projectId).totalUsd).toBeCloseTo(0.03);
+    expect(costRows(projectId, session.sessionId).map((row) => JSON.parse(row)).find((row) => row.model === "openrouter/image"))
+      .toMatchObject({ costUsd: 0.03, totalTokens: 3 });
+  });
+
   it("subscribes the pump before awaiting billing and ledgers on completion", async () => {
     const session = new FakeSession();
     const claim = claimRun(projectId, session.sessionId)!;

@@ -47,30 +47,34 @@ function panelProps(path = "a.txt"): React.ComponentProps<typeof FilePreviewPane
 
 afterEach(() => vi.restoreAllMocks());
 
+// FORK: real lazy editor imports can exceed RTL's 1s default on a loaded runner.
+// Wait for readiness; retain the actual editor, draft and save assertions.
+const findEditor = () => screen.findByRole("textbox", { name: "Editor" }, { timeout: 5_000 });
+
 it.each(["a.txt", "a.tex"])("retains %s draft across file, notebook, compute, and project navigation", async (path) => {
   const props = panelProps(path);
   const { rerender } = render(<FilePreviewPanel {...props} />);
   fireEvent.click(screen.getByTitle("Edit file"));
-  fireEvent.change(await screen.findByRole("textbox", { name: "Editor" }), { target: { value: "valuable unsaved A" } });
+  fireEvent.change(await findEditor(), { target: { value: "valuable unsaved A" } });
   expect(screen.queryByTitle("Where this file came from")).toBeNull();
   for (const change of [{ activeTabPath: "b.txt" }, { showNotebook: true }, { showCompute: true }, { isActive: false }]) {
     rerender(<FilePreviewPanel {...props} {...change} />);
     expect(screen.queryByRole("textbox", { name: "Editor" })).toBeNull();
     rerender(<FilePreviewPanel {...props} />);
-    expect((await screen.findByRole("textbox", { name: "Editor" }) as HTMLTextAreaElement).value).toBe("valuable unsaved A");
+    expect((await findEditor() as HTMLTextAreaElement).value).toBe("valuable unsaved A");
   }
   expect(props.onSaveText).not.toHaveBeenCalled();
   // The surviving editor saves through its owning workspace's callback/path.
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^Save$|^Save / })); });
   expect(props.onSaveText).toHaveBeenCalledWith(path, "valuable unsaved A");
-});
+}, 15_000);
 
 it("requires confirmation to close a dirty file tab or text editor", async () => {
   const props = panelProps();
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<FilePreviewPanel {...props} />);
   fireEvent.click(screen.getByTitle("Edit file"));
-  fireEvent.change(await screen.findByRole("textbox", { name: "Editor" }), { target: { value: "unsaved" } });
+  fireEvent.change(await findEditor(), { target: { value: "unsaved" } });
   fireEvent.click(screen.getAllByTitle("Close tab")[0]);
   expect(props.onTabClose).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
@@ -79,7 +83,7 @@ it("requires confirmation to close a dirty file tab or text editor", async () =>
   confirm.mockReturnValue(true);
   fireEvent.click(screen.getAllByTitle("Close tab")[0]);
   expect(props.onTabClose).toHaveBeenCalledWith("a.txt");
-});
+}, 15_000);
 
 it("retains annotations across navigation and treats a new stroke after saving as dirty", async () => {
   const props = panelProps("a.png");

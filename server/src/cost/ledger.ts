@@ -557,8 +557,9 @@ export function sessionCostSummary(sessionId: string, projectId?: string): Sessi
  * under a cap only one of them fits in. In-flight runs publish their accrued
  * spend here so admission and project summaries see it immediately.
  *
- * Only cap-counted runs should register; subscription usage is not project
- * spend. Callers untrack *after* recording their row, so a concurrent read may
+ * FORK: register cap-counted spend, including paid tools in subscription runs;
+ * the subscription model's own usage is not project spend.
+ * Callers untrack *after* recording their row, so a concurrent read may
  * briefly see both — overcounting blocks conservatively, undercounting would
  * overspend.
  */

@@ -1,13 +1,15 @@
 ---
 title: "Upstream sync #50"
-status: accepted
+status: completed
 created: 2026-10-08
 branch: sync/upstream-2026-10-08
 ---
 
 # Upstream sync #50 Implementation Plan
 
-**Status:** Accepted
+**Status:** Completed and merged in PR #51
+
+> Closeout recorded 2026-10-11 after merge. Office keyboard/save verification now passes for Writer, Calc and Impress; see [the verification record](../../office-keyboard-verification-2026-10-11.md). Earlier pending statements below are historical. Asset retention (#52) and compatibility investigation (#54) remain separate follow-ups. This late archival corrects the missed PR closing checklist; it does not redefine the lifecycle rule.
 
 **Goal:** Merge 44 upstream commits through 44c52cee8e9f, bringing the fork to upstream 0.15.0 while preserving inbound MCP capabilities and repository verification gates.
 

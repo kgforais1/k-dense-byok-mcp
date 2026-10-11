@@ -1,6 +1,6 @@
 ---
 title: "SonarCloud quality gate triage and disposition"
-status: accepted
+status: completed
 created: 2026-10-10
 branch: sync/upstream-2026-10-08
 pr: 51
@@ -8,7 +8,9 @@ pr: 51
 
 # SonarCloud quality gate triage and disposition
 
-**Status:** Accepted
+**Status:** Completed and merged in PR #51
+
+> Closeout recorded 2026-10-11 after merge. Office keyboard/save verification now passes for Writer, Calc and Impress; see [the verification record](../../office-keyboard-verification-2026-10-11.md). Earlier pending statements below are historical. Asset retention (#52) and compatibility investigation (#54) remain separate follow-ups. This late archival corrects the missed PR closing checklist; it does not redefine the lifecycle rule.
 
 **Goal:** Clear the failing `SonarCloud Code Analysis` check on PR #51 by fixing every
 issue that is genuinely fixable in repository code, and resolving the remainder in the

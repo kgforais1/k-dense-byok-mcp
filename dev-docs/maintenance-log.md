@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-10-11 — PR #51 closeout and Office keyboard verification
+
+- **Keyboard evidence:** Writer DOCX, Calc XLSX and Impress PPTX accepted unique markers through trusted Paseo canvas key events, saved through Kady, reopened and saved again at merge commit `8c59dc5`. Parent inspection independently confirmed marker presence, ZIP CRC validity and XML parsing in all six packages. See [the verification record](office-keyboard-verification-2026-10-11.md).
+- **Limits:** Native desktop tooling and screenshots were unavailable; visual layout and advanced-object preservation are not claimed. Isolated servers were stopped and user projects were untouched.
+- **Review closeout:** GLM's complete narrow review approves all three corrections at `8f5c12e`; Muse also approves. Final CI passed 1,928 backend tests (8 intentional skips) and 933 frontend tests. Earlier pending-review and pre-merge statements below are historical.
+- **Lifecycle repair:** Remove the shipped keyboard TODO, archive both PR #51 plans and remove its stale active handoff. These should have shipped before merge; this follow-up repairs that omission. Issues #52 and #54 remain open.
+
 ### 2026-10-11 — GLM correctness review corrections (PR #51)
 
 - **Review scope:** The fresh NVIDIA GLM 5.3 pass returned approve with three low-severity notes. It verified event ordering against pinned Pi code and listed substantial unreviewed files; no exhaustive whole-repository claim is made. The earlier GLM instance's unfinished notices are not counted as reviews.

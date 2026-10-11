@@ -33,9 +33,12 @@ export class LiveToolUsage {
         ? billingForProvider(provider, "local") : failClosed;
       entry = { value, promise: Promise.resolve(value) };
       const target = entry;
-      // Until asynchronous credential lookup finishes, count the charge.
-      target.promise = Promise.resolve().then(() => this.resolveBilling(ref))
-        .catch(() => failClosed).then((resolved) => (target.value = resolved));
+      // Local providers are always exempt, regardless of resolver behavior.
+      if (value.billingMode !== "local") {
+        // Until asynchronous credential lookup finishes, count the charge.
+        target.promise = Promise.resolve().then(() => this.resolveBilling(ref))
+          .catch(() => failClosed).then((resolved) => (target.value = resolved));
+      }
       this.billing.set(ref, target);
     }
     return entry.promise;

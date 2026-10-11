@@ -10,6 +10,15 @@ const result = (id: string, cost: number, ref = "openrouter/image") => ({
 });
 
 describe("live completed tool usage", () => {
+  it.each(["ollama/image", "openai-compatible/image"])("keeps %s local without consulting a resolver that would charge it", async (ref) => {
+    const resolve = vi.fn(async () => payg);
+    const live = new LiveToolUsage(resolve);
+    live.observe(result("local", 0.04, ref));
+    expect(await live.billingFor(ref)).toMatchObject({ provider: ref.split("/", 1)[0], billingMode: "local" });
+    expect(live.accruedUsd(0, false)).toBe(0);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("updates the same charge across completion, message and turn events, including nested usage", async () => {
     const resolve = vi.fn(async () => payg);
     const live = new LiveToolUsage(resolve);

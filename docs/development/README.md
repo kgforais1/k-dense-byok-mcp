@@ -29,6 +29,7 @@ docs do not.
 | [`verification.md`](verification.md) | Fast targeted checks, package checks, full local checks, CI matrix coverage, expected runtime. | Contributors picking a command; release engineers. |
 | [`workflow.md`](workflow.md) | Branch, plan, handoff, PR, release, and archive lifecycle. | Anyone working in a feature branch or handing work off. |
 | [`release-policy.md`](release-policy.md) | SemVer decisions, changelog rules, release-readiness checks, no-manual-tag rule. | Release captains and contributors touching public contracts. |
+| [`office-runtime-retention.md`](office-runtime-retention.md) | Tested Office runtime provenance, retained assets and update procedure. | Frontend maintainers and release contributors. |
 
 Out of scope here: product docs (under `../`), agent-harness policy
 (`../../AGENTS.md` and scoped `AGENTS.md`), and runtime Pi-agent policy
@@ -76,6 +77,7 @@ place reviewers go to learn what a doc covers.
 | [`workflow.md`](workflow.md) | Cross-cutting | Branch authors and reviewers | Branching, plan/handoff template, PR template change | `dev-docs/`, root templates. |
 | `dev-docs/plans/*.md` (active plans) | Planning | Branch authors and reviewers | Phase verdicts, scope change, implementation deviations — update in the implementing PR; archive to `completed/` on merge | Merged code/tests/CI win on disagreement. |
 | [`release-policy.md`](release-policy.md) | Release | Release captains and contributors touching public contracts | SemVer decision, changelog rule, release-readiness change | `server/package.json`, `CHANGELOG.md`, `.github/workflows/release.yml`. |
+| [`office-runtime-retention.md`](office-runtime-retention.md) | Frontend Office | Frontend maintainers and release contributors | Runtime build, source, mirror or hash change | Office asset manifest, route tests and published bytes. |
 | `../architecture.md` | Product (architecture) | Users and integrators | Runtime architecture changes (new tool family, new store, new provider) | Code; this doc is product-facing, not contributor-facing. |
 | `../file-previews.md` | Product (file previews) | Users | New viewer added to the registry | `web/src/lib/viewers/registry.ts`. |
 | `../limitations.md` | Product (limitations) | Users and integrators | Provider refusal, trust boundary, harness pin change | Code and tests; the limitations page is short and explicit. |

@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-10-11 — Retained Office runtime for cold-cache installations
+
+- **Retention:** Publish the four exact tested `zeta-2025-05-13` runtime files with build-prefixed names on the fork's existing `v0.15.0` release. Include checksums, embedded source revision, source download references and source-revision licensing/third-party notices. No manual release tag or asset replacement.
+- **Behavior:** Cold caches fetch retained release assets instead of the vendor's moving latest path. Keep hash verification, cache location, atomic replacement and explicit 503 failures. Record metadata's measured size (215,180 bytes) without changing its hash.
+- **Verification:** All four published files independently pass exact size/SHA-256 checks through the real route into a fresh disposable cache. Five offline route regressions pass; frontend typecheck and all 938 tests pass; changed-file lint and docs checks pass. The earlier keyboard/reopen evidence remains valid because the executable bytes are identical.
+- **Documentation:** Correct first-download size to approximately 250 MB for the mirror; document source provenance, administrator mutability versus digest enforcement, offline provisioning and update/retention procedure. Visual layout and advanced-object preservation are not newly claimed.
+
 ### 2026-10-11 — PR #51 closeout and Office keyboard verification
 
 - **Keyboard evidence:** Writer DOCX, Calc XLSX and Impress PPTX accepted unique markers through trusted Paseo canvas key events, saved through Kady, reopened and saved again at merge commit `8c59dc5`. Parent inspection independently confirmed marker presence, ZIP CRC validity and XML parsing in all six packages. See [the verification record](office-keyboard-verification-2026-10-11.md).

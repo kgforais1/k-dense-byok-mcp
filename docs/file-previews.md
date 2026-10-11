@@ -169,15 +169,17 @@ exports. Native New/Open/Close commands are disabled to keep the workspace tied
 to its project file. Other native file dialogs (for example Insert Image) address
 the engine's virtual filesystem.
 
-The first editor launch needs internet access to download about **50 MB** of
-compressed runtime assets (about **250 MB** cached on disk). Subsequent launches
+The first editor launch needs internet access to download about **250 MB** of
+runtime assets. Subsequent launches
 use that local cache. The Next.js server downloads only an allowlisted runtime
-snapshot from the official ZetaOffice CDN and verifies pinned SHA-256 hashes
+snapshot retained on the fork’s `v0.15.0` release and verifies pinned SHA-256 hashes
 before serving it. Cache: `~/.kady/office-assets/zeta-2025-05-13/`, or
-`KADY_OFFICE_ASSETS_DIR`. A changed upstream build fails explicitly rather than
+`KADY_OFFICE_ASSETS_DIR`. A changed or corrupt retained file fails explicitly rather than
 silently running different code; updating it requires reviewing the manifest
 in `web/src/lib/office-assets.ts`. For offline provisioning, place the exact
-manifest files in that cache directory.
+manifest files in that cache directory. See the
+[retention and update procedure](development/office-runtime-retention.md) for
+source notices, published checksums and build update verification.
 
 The editor requires a browser with WebAssembly threads and SharedArrayBuffer,
 served through localhost or HTTPS. Only `/office` receives the COOP/COEP headers

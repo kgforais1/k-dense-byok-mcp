@@ -44,8 +44,10 @@ pre-persistence admission and interrupted-turn regressions.
 - Current status supersedes the older scanner notes above: CodeQL, SonarCloud and DeepSource pass at `5ce59f3`. The Windows backend failure is a robustness result-readiness assertion; the review correction uses the shared wait budget and polls for both retained results. Latest-revision CI and Hyrax re-review remain pending before merge.
 
 ## Next action
-Complete full verification of the live paid-tool repair and the requested
-parallel GLM 5.3 and Muse Spark 1.3 Contributor correctness reviews. Longcat
-2.5 Preview Free approved `dab6fea` after the owner resumed it, while explicitly
-listing substantial unreviewed areas; do not describe this as exhaustive coverage.
+Complete validation and independent re-review of the three GLM corrections
+(interrupted-run ledger subtraction, unavailable-chat recovery and malformed
+specialist costs), then check latest-head CI. Longcat approved `dab6fea`, Muse
+approved `f9436a8` and its local-billing correction, and the fresh GLM pass
+approved `5e9e486` with three low-severity findings. Each report explicitly lists
+unreviewed areas; do not describe the combined passes as exhaustive coverage.
 After review approval, finalize the plan/handoff closeout in the same PR before merge.

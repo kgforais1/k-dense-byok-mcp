@@ -969,6 +969,13 @@ export function useAgent(projectId?: string) {
           throw new DOMException("aborted", "AbortError");
         }
       };
+      // FORK: permanent disappearance must terminate recovery without losing partial output.
+      const finishMissingChat = (response: Response) => {
+        if (response.status !== 404 && response.status !== 410) return false;
+        ensureCurrent();
+        applyRunFrame(consumer, { type: "error", message: "This chat is no longer available. Open a new chat to continue." });
+        return true;
+      };
       try {
         try {
           if (initial) await consumeRunResponse(initial, consumer);
@@ -986,6 +993,7 @@ export function useAgent(projectId?: string) {
               { signal: controller.signal, cache: "no-store" },
               scopedProjectId,
             );
+            if (finishMissingChat(response)) return;
             if (!response.ok) continue;
             const state = (await response.json()) as RunStateResponse;
             ensureCurrent();
@@ -999,6 +1007,7 @@ export function useAgent(projectId?: string) {
                 { signal: controller.signal },
                 scopedProjectId,
               );
+              if (finishMissingChat(historyResponse)) return;
               if (!historyResponse.ok) continue;
               const history = (await historyResponse.json()) as { messages?: HistoryItem[]; contextUsage?: unknown };
               ensureCurrent();

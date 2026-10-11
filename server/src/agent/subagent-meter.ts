@@ -68,7 +68,10 @@ export function handleSubagentMeter(action: string, raw: Record<string, unknown>
     return v;
   };
   const input = num(u.input), output = num(u.output), cacheRead = num(u.cacheRead), cacheWrite = num(u.cacheWrite);
-  const cost = num((u.cost as { total?: unknown } | undefined)?.total);
+  // FORK: reject shape drift instead of silently treating paid usage as free.
+  if (!u.cost || typeof u.cost !== "object" || Array.isArray(u.cost) ||
+      typeof (u.cost as { total?: unknown }).total !== "number") throw new Error("Invalid reported usage");
+  const cost = num((u.cost as { total: number }).total);
   let origin: CostOrigin = {};
   if (typeof raw.sessionFile === "string" && childIsMetered(pid, raw.sessionFile)) {
     origin = JSON.parse(fs.readFileSync(meteredSessionFile(pid, raw.sessionFile), "utf8")).origin ?? {};

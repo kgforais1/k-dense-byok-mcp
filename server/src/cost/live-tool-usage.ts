@@ -74,10 +74,11 @@ export class LiveToolUsage {
     return total;
   }
 
-  /** Latest result wins within a turn; repeated event surfaces never add twice. */
-  totals(): ToolUsageSplit {
+  /** Latest result wins; optionally include only charges actually in session stats. */
+  totals(persistedCount?: number): ToolUsageSplit {
     const total = emptyToolUsageSplit();
     for (const charge of this.charges.values()) {
+      if (persistedCount !== undefined && (charge.persistedAt === undefined || charge.persistedAt > persistedCount)) continue;
       for (const field of ["costUsd", "input", "output", "cacheRead", "total"] as const) {
         total.delegated[field] += charge.split.delegated[field];
       }

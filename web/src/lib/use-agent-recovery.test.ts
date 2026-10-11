@@ -25,6 +25,36 @@ function snapshot(frames: AgentFrame[], status = "running", runId = "run-1") {
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+it.each([
+  { endpoint: "state", status: 404 }, { endpoint: "state", status: 410 },
+  { endpoint: "history", status: 404 }, { endpoint: "history", status: 410 },
+])("ends reconnecting when $endpoint returns $status for a missing chat", async ({ endpoint, status }) => {
+  vi.useFakeTimers();
+  const calls: string[] = [];
+  vi.spyOn(projects, "apiFetch").mockImplementation(async (path) => {
+    calls.push(path);
+    if (path === "/sessions") return Response.json({ id: "s1" });
+    if (path.endsWith("/run")) return stream(opening);
+    if (path.endsWith("/run/state")) return endpoint === "state"
+      ? new Response("gone", { status }) : Response.json({ status: "none" });
+    if (path.endsWith("/history")) return new Response("gone", { status });
+    throw new Error(`unexpected ${path}`);
+  });
+  const { result, unmount } = renderHook(() => useAgent("p"));
+  let sending!: Promise<string | undefined>;
+  await act(async () => { sending = result.current.send("hello"); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(RUN_RECONNECT_MS); });
+  expect(result.current.status).toBe("ready");
+  expect(result.current.reconnecting).toBe(false);
+  expect(result.current.runState).toBe("error");
+  expect(result.current.messages.at(-1)?.content).toMatch(/^hel[\s\S]*chat is no longer available/i);
+  await sending;
+  const probes = calls.filter((path) => path.endsWith("/run/state")).length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(RUN_RECONNECT_MS * 2); });
+  expect(calls.filter((path) => path.endsWith("/run/state"))).toHaveLength(probes);
+  unmount();
+});
+
 it.each([false, true])("reconnects an interrupted stream (network error=%s) without duplicating replayed content", async (networkError) => {
   vi.useFakeTimers();
   const calls: string[] = [];
@@ -80,7 +110,7 @@ it("retries transient reconnect errors and reconciles a run that completed while
   unmount();
 });
 
-it("does not apply a reconnect snapshot that resolves after Stop and reset", async () => {
+it.each([200, 404])("does not apply a reconnect response HTTP %s that resolves after Stop and reset", async (status) => {
   vi.useFakeTimers();
   let resolveState!: (response: Response) => void;
   const state = new Promise<Response>((resolve) => { resolveState = resolve; });
@@ -99,7 +129,7 @@ it("does not apply a reconnect snapshot that resolves after Stop and reset", asy
   await act(async () => { await vi.advanceTimersByTimeAsync(RUN_RECONNECT_MS); });
   await act(async () => { await result.current.stop(); result.current.reset(); });
   await act(async () => {
-    resolveState(Response.json(snapshot([...opening, { type: "text_delta", delta: "stale response", seq: 3 }], "complete")));
+    resolveState(Response.json(snapshot([...opening, { type: "text_delta", delta: "stale response", seq: 3 }], "complete"), { status }));
     await sending;
   });
   expect(result.current.messages).toEqual([]);

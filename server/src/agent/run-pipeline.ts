@@ -432,8 +432,10 @@ export async function executeRun(opened: OpenedRun, opts: ExecuteRunOptions): Pr
         try {
           // FORK: include completed tools even if the run failed before turn_end.
           const toolUsage = liveTools.totals();
+          // FORK: never subtract an unpersisted charge from the session delta.
+          const persistedTools = liveTools.totals(session.getSessionStats().toolResults);
           const run = snapshotMax(
-            snapshotMinus(snapshotDelta(before, snapshot(session)), splitTotal(toolUsage)),
+            snapshotMinus(snapshotDelta(before, snapshot(session)), splitTotal(persistedTools)),
             turnTally,
           );
           const entry = recordRun({

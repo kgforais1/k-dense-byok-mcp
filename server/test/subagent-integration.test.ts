@@ -31,6 +31,28 @@ function bridge(projectId = "meter") {
 }
 
 describe("resolved provider admission and accounting", () => {
+  it.each([1, "1", null, {}, { total: undefined }])("rejects malformed usage cost %j instead of recording free spend", (cost) => {
+    ensureProjectExists("meter");
+    expect(() => handleSubagentMeter("usage", {
+      projectId: "meter", sessionId: "parent", requestId: "invalid", provider: "openrouter", model: "test",
+      kind: "subagent", authType: "api_key", usage: { ...usage, cost },
+    })).toThrow("Invalid reported usage");
+    expect(sessionCostSummary("parent", "meter").entries).toHaveLength(0);
+  });
+
+  it("retains a malformed durable receipt and refuses admission until accounting is repaired", () => {
+    ensureProjectExists("meter");
+    const receipt = { projectId: "meter", sessionId: "parent", requestId: "invalid", provider: "openrouter", model: "test",
+      kind: "subagent", authType: "api_key", usage: { ...usage, cost: 1 } };
+    const dir = path.join(resolvePaths("meter").kadyDir, "subagent-usage-pending");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "invalid.json");
+    fs.writeFileSync(file, JSON.stringify(receipt));
+    expect(() => handleSubagentMeter("admit", { ...receipt, requestId: "next" })).toThrow(/Unable to recover specialist usage.*Invalid reported usage/);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(sessionCostSummary("parent", "meter").entries).toHaveLength(0);
+  });
+
   it.each(["stop", "error", "aborted"])("meters %s terminal usage once before it is visible and blocks the next paid request", async (reason) => {
     createProject({ projectId: "meter", name: "Meter", spendLimitUsd: 0.5 });
     const base = vi.fn(() => resultStream(reason));

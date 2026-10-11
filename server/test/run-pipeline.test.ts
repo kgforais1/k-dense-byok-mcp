@@ -41,6 +41,7 @@ class FakeSession {
   messages: unknown[] = [];
   cost = 0;
   toolResults = 0;
+  tokens = { input: 0, output: 0, cacheRead: 0, total: 0 };
   private listeners = new Set<(event: any) => void>();
   subscribe(listener: (event: any) => void): () => void {
     this.listeners.add(listener);
@@ -50,7 +51,7 @@ class FakeSession {
     for (const listener of [...this.listeners]) listener(event);
   }
   getSessionStats() {
-    return { cost: this.cost, toolResults: this.toolResults, tokens: { input: 0, output: 0, cacheRead: 0, total: 0 } };
+    return { cost: this.cost, toolResults: this.toolResults, tokens: this.tokens };
   }
   getContextUsage() {
     return undefined;
@@ -226,6 +227,44 @@ describe("executeRun", () => {
     expect(projectCostSummary(projectId).totalUsd).toBeCloseTo(0.03);
     expect(costRows(projectId, session.sessionId).map((row) => JSON.parse(row)).find((row) => row.model === "openrouter/image"))
       .toMatchObject({ costUsd: 0.03, totalTokens: 3 });
+  });
+
+  it.each(["completion", "message", "mixed"])("retains persisted assistant usage when a paid tool fails persistence after %s", async (lastEvent) => {
+    const session = new FakeSession();
+    const opened = openRun(requireValue(claimRun(projectId, session.sessionId)), {
+      origin: "user", kind: "turn", prompt: "x", images: [], baseline, session,
+    });
+    await executeRun(opened, {
+      session, paths: resolvePaths(projectId), billing: payg, budgetPolicy: "refuse", log,
+      toolModelBilling: async () => payg,
+      run: async () => {
+        session.cost = 0.01;
+        session.tokens = { input: 4, output: 6, cacheRead: 0, total: 10 };
+        if (lastEvent === "mixed") {
+          const persisted = { role: "toolResult", toolCallId: "first", toolName: "generate_image",
+            usage: { input: 5, output: 15, cost: { total: 0.02 } }, details: { model: "openrouter/image" } };
+          session.emit({ type: "tool_execution_end", toolCallId: "first", toolName: "generate_image", result: persisted });
+          session.emit({ type: "message_end", message: persisted });
+          session.cost = 0.03;
+          session.tokens = { input: 9, output: 21, cacheRead: 0, total: 30 };
+          session.toolResults = 1;
+        }
+        const result = { role: "toolResult", toolCallId: "paid", toolName: "generate_image",
+          usage: { input: 20, output: 30, cost: { total: 0.03 } }, details: { model: "openrouter/image" } };
+        session.emit({ type: "tool_execution_end", toolCallId: "paid", toolName: "generate_image", result });
+        if (lastEvent !== "completion") session.emit({ type: "message_end", message: result });
+        // Pi's public listener ran, but appendMessage failed and stats never included this tool.
+        throw new Error("result persistence failed");
+      },
+    });
+    const rows = costRows(projectId, session.sessionId).map((row) => JSON.parse(row));
+    const lead = requireValue(rows.find((row) => row.model === "openrouter/fake-model"));
+    const tool = requireValue(rows.find((row) => row.model === "openrouter/image"));
+    expect(lead.costUsd).toBeCloseTo(0.01, 12);
+    expect(lead.totalTokens).toBe(10);
+    expect(tool.costUsd).toBeCloseTo(lastEvent === "mixed" ? 0.05 : 0.03, 12);
+    expect(tool.totalTokens).toBe(lastEvent === "mixed" ? 70 : 50);
+    expect(projectCostSummary(projectId).totalUsd).toBeCloseTo(lastEvent === "mixed" ? 0.06 : 0.04, 12);
   });
 
   it("subscribes the pump before awaiting billing and ledgers on completion", async () => {

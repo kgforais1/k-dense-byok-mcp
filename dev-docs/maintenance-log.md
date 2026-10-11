@@ -1,7 +1,8 @@
 # Maintenance Log
 
-### 2026-10-11 — Retained Office runtime for cold-cache installations
+### 2026-10-11 — Retained Office runtime for cold-cache installations (PR #55)
 
+- **Review and closeout:** OpenCode Go DeepSeek V4.1 Flash approves `a238c73` and `b87026b` with no blocking defects. Full local verification passes 1,928 backend tests (8 intentional skips) and 938 frontend tests; all CI checks pass at `b87026b`. Archive the retention plan and remove its shipped TODO in PR #55. The archived Sonar handoff instruction is explicitly marked historical.
 - **Retention:** Publish the four exact tested `zeta-2025-05-13` runtime files with build-prefixed names on the fork's existing `v0.15.0` release. Include checksums, embedded source revision, source download references and source-revision licensing/third-party notices. No manual release tag or asset replacement.
 - **Behavior:** Cold caches fetch retained release assets instead of the vendor's moving latest path. Keep hash verification, cache location, atomic replacement and explicit 503 failures. Record metadata's measured size (215,180 bytes) without changing its hash.
 - **Verification:** All four published files independently pass exact size/SHA-256 checks through the real route into a fresh disposable cache. Five offline route regressions pass; frontend typecheck and all 938 tests pass; changed-file lint and docs checks pass. The earlier keyboard/reopen evidence remains valid because the executable bytes are identical.

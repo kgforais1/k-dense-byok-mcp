@@ -1,13 +1,13 @@
 ---
 title: "Immutable Office runtime retention"
-status: accepted
+status: completed
 created: 2026-10-11
 branch: office-assets-retention
 ---
 
 # Immutable Office runtime retention
 
-**Status:** Accepted
+**Status:** Completed and merged in PR #55
 
 **Goal:** Resolve #52 by keeping the exact tested Office runtime available to
 cold-cache installations without weakening its pinned SHA-256 checks.
@@ -26,7 +26,7 @@ new installations. Keyboard edit/save is now verified for the existing pins.
   installation. A mirror is an availability source, never a trust bypass.
 - Retain vendor attribution and source/license information with distributed
   binaries. Verify the relevant source revisions and notices before publishing.
-- The vendor's official `examples/web-office/config.sample.js` supports hosting
+- The vendor's official `examples/web-office/config.sample.js` ([source](https://github.com/allotropia/zetajs/blob/main/examples/web-office/config.sample.js)) supports hosting
   the four runtime files at a custom base URL. No immutable vendor URL has yet
   been established; the CDN root returns 404.
 
@@ -76,3 +76,14 @@ identify the pinned build; never overwrite a retained asset with different bytes
 | Cold cache works | Fresh cache opens using retained build with vendor latest unavailable |
 | Integrity remains enforced | Offline mismatch/oversize tests return failure without installing bytes |
 | Maintenance is repeatable | Documented provenance, publication and update procedure |
+
+## Completion evidence
+
+Published all four tested assets with build-prefixed names and source/license
+notices on the existing fork v0.15.0 release. An actual-route cold-cache download
+independently verified every SHA-256 and measured size. Five offline route tests
+pass; full verification passes 1,928 backend tests (8 intentional skips), 938
+frontend tests, both typechecks and docs gates. All PR CI checks passed at
+`b87026b`. OpenCode Go DeepSeek V4.1 Flash approves both the docs and implementation
+commits with no blocking defects. Its non-blocking closeout reminder is resolved
+by this plan archival and deletion of the shipped TODO in PR #55.

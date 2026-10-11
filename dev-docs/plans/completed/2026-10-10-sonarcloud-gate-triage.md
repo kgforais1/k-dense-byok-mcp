@@ -398,7 +398,7 @@ Group 3, 4 and 5 rows are proposals pending explicit user approval, and the
 - **42 bugs / 36 vulnerabilities / 116 code smells are still open project-wide.**
   This plan clears only the 28 in PR #51's scope. Nothing here reduces the overall
   `reliability_rating` 4.0 / `security_rating` 5.0 baseline.
-- **Refresh the active handoff.** `dev-docs/handoffs/active/sync-upstream-2026-10-08.md`
+- **Historical handoff instruction (superseded by closeout above).** `dev-docs/handoffs/active/sync-upstream-2026-10-08.md`
   still phrases the 46-finding count as current and still describes runtime
   unsafe-eval as an open evidence gap, both of which are now stale (46 → 28 after
   the 2026-10-09 fixes). Update it in the same PR that lands the Group 1 code

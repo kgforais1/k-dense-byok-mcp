@@ -1,13 +1,13 @@
 ---
 title: "Next.js and brace-expansion security bumps"
-status: accepted
+status: completed
 created: 2026-10-11
 branch: security-next-brace-bumps
 ---
 
 # Next.js and brace-expansion security bumps
 
-**Status:** Accepted
+**Status:** Completed and merged in PR #56
 
 **Goal:** Investigate nine current dependency alerts with narrowly scoped updates:
 Next.js 16.3.7 to 16.3.8 (six alerts), and Pi's nested brace-expansion 5.0.9 to
@@ -73,3 +73,7 @@ vulnerable versions, not proof that every affected feature is reachable in Kady.
 | MCP child ceilings | Initial/late forbidden MCP excluded; permitted, unrestricted and empty-ceiling cases verified |
 | Azure compatibility | Legacy saved Kady refs restore the same Azure model without fallback |
 | No regressions | Full verification and production frontend build pass |
+
+## Completion evidence
+
+PR #56 includes Next 16.3.8 and Pi 1.1.0, Azure compatibility and strict child MCP regression coverage. Full verification passes 1,936 backend tests (8 intentional skips), 939 frontend tests, typechecks and docs gates. Clean and launcher-style installs retain the patched graph. GitHub alert closure is assessed after merge and graph refresh.

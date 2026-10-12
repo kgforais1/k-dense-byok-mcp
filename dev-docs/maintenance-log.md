@@ -1,6 +1,6 @@
 # Maintenance Log
 
-### 2026-10-12 — Pi 1.1 security upgrade and compatibility repairs
+### 2026-10-12 — Pi 1.1 security upgrade and compatibility repairs (PR #56)
 
 - **Dependency fix:** Upgrade pi-agent-core, pi-ai and pi-coding-agent together to exact 1.1.0; keep pi-subagents 0.74.0, pi-web-access 0.35.0 and skills 1.7.0. Pi 1.1 has no published shrinkwrap and directly pins brace-expansion 5.0.12, replacing the vulnerable 5.0.9 copy for GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7 and GHSA-6j4f-fj2g-mc7p. The nine known Next/Pi advisories are addressed by version on this branch; GitHub alert closure still depends on merge and dependency-graph refresh.
 - **Graph review:** The large lock diff removes 130 duplicate SDK-nested entries and Pi TUI's dropped optional koffi dependency. New hoisted Pi packages, Anthropic SDK 0.129.0 and marked 18.0.11 follow the upstream exact dependencies. No unrelated package upgrade or override. Parent independently verified clean npm ci and the exact launcher install retain 5.0.12 and the same lock hash, with normal postinstall seams.

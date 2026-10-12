@@ -1,6 +1,6 @@
 ---
 title: "SonarCloud quality gate triage and disposition"
-status: accepted
+status: completed
 created: 2026-10-10
 branch: sync/upstream-2026-10-08
 pr: 51
@@ -8,7 +8,9 @@ pr: 51
 
 # SonarCloud quality gate triage and disposition
 
-**Status:** Accepted
+**Status:** Completed and merged in PR #51
+
+> Closeout recorded 2026-10-11 after merge. Office keyboard/save verification now passes for Writer, Calc and Impress; see [the verification record](../../office-keyboard-verification-2026-10-11.md). Earlier pending statements below are historical. Asset retention (#52) and compatibility investigation (#54) remain separate follow-ups. This late archival corrects the missed PR closing checklist; it does not redefine the lifecycle rule.
 
 **Goal:** Clear the failing `SonarCloud Code Analysis` check on PR #51 by fixing every
 issue that is genuinely fixable in repository code, and resolving the remainder in the
@@ -396,7 +398,7 @@ Group 3, 4 and 5 rows are proposals pending explicit user approval, and the
 - **42 bugs / 36 vulnerabilities / 116 code smells are still open project-wide.**
   This plan clears only the 28 in PR #51's scope. Nothing here reduces the overall
   `reliability_rating` 4.0 / `security_rating` 5.0 baseline.
-- **Refresh the active handoff.** `dev-docs/handoffs/active/sync-upstream-2026-10-08.md`
+- **Historical handoff instruction (superseded by closeout above).** `dev-docs/handoffs/active/sync-upstream-2026-10-08.md`
   still phrases the 46-finding count as current and still describes runtime
   unsafe-eval as an open evidence gap, both of which are now stale (46 → 28 after
   the 2026-10-09 fixes). Update it in the same PR that lands the Group 1 code

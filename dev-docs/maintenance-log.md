@@ -1,5 +1,26 @@
 # Maintenance Log
 
+### 2026-10-11 — Sourcery slow-download and estimate corrections (PR #55)
+
+- **Findings:** Both Sourcery comments are valid. A cold-cache transfer exceeding the previous three-minute deadline returned 503; the workspace loading message still promised approximately 50 MB after the mirror changed the transfer estimate to approximately 250 MB.
+- **Corrections:** Raise the finite per-asset download deadline to 30 minutes and update the workspace loading estimate to approximately 250 MB. Keep download size/hash checks, atomic installation and explicit failure behavior.
+- **Regression:** A virtual-time streamed transfer delivering its final bytes after 181 seconds fails with 503 under the former timeout and succeeds with exact verified cache bytes after the correction. All 13 focused route/workspace tests pass.
+
+### 2026-10-11 — Retained Office runtime for cold-cache installations (PR #55)
+
+- **Review and closeout:** OpenCode Go DeepSeek V4.1 Flash approves `a238c73` and `b87026b` with no blocking defects. Full local verification passes 1,928 backend tests (8 intentional skips) and 938 frontend tests; all CI checks pass at `b87026b`. Archive the retention plan and remove its shipped TODO in PR #55. The archived Sonar handoff instruction is explicitly marked historical.
+- **Retention:** Publish the four exact tested `zeta-2025-05-13` runtime files with build-prefixed names on the fork's existing `v0.15.0` release. Include checksums, embedded source revision, source download references and source-revision licensing/third-party notices. No manual release tag or asset replacement.
+- **Behavior:** Cold caches fetch retained release assets instead of the vendor's moving latest path. Keep hash verification, cache location, atomic replacement and explicit 503 failures. Record metadata's measured size (215,180 bytes) without changing its hash.
+- **Verification:** All four published files independently pass exact size/SHA-256 checks through the real route into a fresh disposable cache. Five offline route regressions pass; frontend typecheck and all 938 tests pass; changed-file lint and docs checks pass. The earlier keyboard/reopen evidence remains valid because the executable bytes are identical.
+- **Documentation:** Correct first-download size to approximately 250 MB for the mirror; document source provenance, administrator mutability versus digest enforcement, offline provisioning and update/retention procedure. Visual layout and advanced-object preservation are not newly claimed.
+
+### 2026-10-11 — PR #51 closeout and Office keyboard verification
+
+- **Keyboard evidence:** Writer DOCX, Calc XLSX and Impress PPTX accepted unique markers through trusted Paseo canvas key events, saved through Kady, reopened and saved again at merge commit `8c59dc5`. Parent inspection independently confirmed marker presence, ZIP CRC validity and XML parsing in all six packages. See [the verification record](office-keyboard-verification-2026-10-11.md).
+- **Limits:** Native desktop tooling and screenshots were unavailable; visual layout and advanced-object preservation are not claimed. Isolated servers were stopped and user projects were untouched.
+- **Review closeout:** GLM's complete narrow review approves all three corrections at `8f5c12e`; Muse also approves. Final CI passed 1,928 backend tests (8 intentional skips) and 933 frontend tests. Earlier pending-review and pre-merge statements below are historical.
+- **Lifecycle repair:** Remove the shipped keyboard TODO, archive both PR #51 plans and remove its stale active handoff. These should have shipped before merge; this follow-up repairs that omission. Issues #52 and #54 remain open.
+
 ### 2026-10-11 — GLM correctness review corrections (PR #51)
 
 - **Review scope:** The fresh NVIDIA GLM 5.3 pass returned approve with three low-severity notes. It verified event ordering against pinned Pi code and listed substantial unreviewed files; no exhaustive whole-repository claim is made. The earlier GLM instance's unfinished notices are not counted as reviews.

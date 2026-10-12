@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import { OFFICE_ASSETS, OFFICE_BUILD } from "@/lib/office-assets";
+import { OFFICE_ASSETS, OFFICE_ASSET_BASE, OFFICE_BUILD } from "@/lib/office-assets";
 export const runtime = "nodejs";
 const pending = new Map<string, Promise<string>>();
 const verified = new Map<string, string>();
@@ -20,7 +20,9 @@ async function asset(name: string): Promise<string> {
     const bytes = await fs.promises.readFile(file);
     if (hash(bytes) === spec.sha256) { verified.set(file, version); return file; }
   } catch { /* First open populates the cache. */ }
-  const response = await fetch(`https://cdn.zetaoffice.net/zetaoffice_latest/${name}`, { signal: AbortSignal.timeout(180_000) });
+  // FORK: a cold cache fetches retained, hash-pinned bytes rather than a moving vendor build.
+  // FORK: allow slow transfers of the 162 MB WASM while bounding stalled downloads.
+  const response = await fetch(`${OFFICE_ASSET_BASE}${name}`, { signal: AbortSignal.timeout(30 * 60_000) });
   if (!response.ok || !response.body) throw new Error("Could not download the Office editor. Check your connection and retry.");
   const chunks: Buffer[] = []; let size = 0;
   for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {

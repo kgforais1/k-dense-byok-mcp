@@ -1,6 +1,18 @@
 # Maintenance Log
 
+### 2026-10-12 — Pi 1.1 security upgrade and compatibility repairs
+
+- **Dependency fix:** Upgrade pi-agent-core, pi-ai and pi-coding-agent together to exact 1.1.0; keep pi-subagents 0.74.0, pi-web-access 0.35.0 and skills 1.7.0. Pi 1.1 has no published shrinkwrap and directly pins brace-expansion 5.0.12, replacing the vulnerable 5.0.9 copy for GHSA-q2hr-2g5m-vwhr, GHSA-qhr7-859c-m2p7 and GHSA-6j4f-fj2g-mc7p. The nine known Next/Pi advisories are addressed by version on this branch; GitHub alert closure still depends on merge and dependency-graph refresh.
+- **Graph review:** The large lock diff removes 130 duplicate SDK-nested entries and Pi TUI's dropped optional koffi dependency. New hoisted Pi packages, Anthropic SDK 0.129.0 and marked 18.0.11 follow the upstream exact dependencies. No unrelated package upgrade or override. Parent independently verified clean npm ci and the exact launcher install retain 5.0.12 and the same lock hash, with normal postinstall seams.
+- **Compatibility:** Pi renamed Azure to `azure`; Kady resolves old Azure references at model/default resolution and cold-session restoration, and projects canonical verifier overrides without rewriting app defaults or credentials. Native Pi custom settings and hand-written specialist refs require manual provider-ID updates; see [model selection](../docs/model-selection.md).
+- **MCP review finding:** Pi 1.1 retains unlisted MCP tools under ordinary child allowlists. The fork-owned host restores strict filtering and refreshes the registry immediately, covering existing and late registrations. The private filter/refresh seam is pinned to Pi 1.1 and rejects SDK-shape drift. Real child-factory regressions cover forbidden, permitted, unrestricted and empty allowlists; removing the refresh reproduces the initial-registration failure. Parent independently reproduced the defect and verified the repaired callable set.
+- **Review:** OpenCode Go DeepSeek V4.1 Flash implemented the upgrade and compatibility repairs; parent reviewed the full dependency delta and session/tool-event changes. Focused parent regression run passes 39 tests, including legacy verifier projection with the original saved default left intact. KaTeX remains separately tracked; no SDK-native user files or secrets were migrated.
+
+- **Final verification:** `npm run verify -- all` passes both typechecks, 1,936 backend tests (8 intentional skips), 939 frontend tests and all documentation gates. Backend lint has zero warnings/errors. Frontend production build passes; frontend lint has zero errors and 58 existing warnings on the unchanged Next patch tree.
+
 ### 2026-10-11 — Next security patch and Pi shrinkwrap investigation
+
+Historical result at f3dc275; the Pi 1.1 upgrade above supersedes the brace blocker.
 
 - **Shipped scope:** Next and eslint-config-next 16.3.7 → 16.3.8; lock changes are limited to matching Next packages. This addresses the vulnerable version in six Next alerts. No SDK, extension or KaTeX upgrade.
 - **Brace blocker:** Pi coding-agent 1.0.0 publishes a shrinkwrap pinning brace-expansion 5.0.9. DeepSeek reproduced a scoped override being ignored. A root-lock metadata workaround retained 5.0.12 through two plain installs and clean npm ci, but explicit `npm install --save-exact @earendil-works/pi-coding-agent@1.0.0` restored both `hasShrinkwrap: true` and installed 5.0.9. Parent independently confirmed the final scratch lock and runtime. No ineffective backend change is shipped; three brace alerts remain open and tracked for a patched SDK release.

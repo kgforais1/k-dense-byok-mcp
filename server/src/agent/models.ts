@@ -405,6 +405,26 @@ function environmentDefaultRef(): string {
 }
 
 /**
+ * FORK: Pi 1.1 renamed the Azure provider id from `azure-openai-responses` to
+ * `azure` (env vars unchanged). Kady resolves refs it reads from app defaults,
+ * project settings, session cold-opens and pins through this boundary, so a
+ * pre-upgrade ref must still resolve to the same model. This is read-time only:
+ * no user auth/config file is rewritten or migrated.
+ */
+export function normalizeProviderId(providerId: string): string {
+  return providerId === "azure-openai-responses" ? "azure" : providerId;
+}
+
+/** Normalize the provider prefix of a `<provider>/<model-id>` ref, model id intact. */
+export function normalizeModelRef(ref: string): string {
+  const slash = ref.indexOf("/");
+  const providerId = slash <= 0 ? ref : ref.slice(0, slash);
+  const normalized = normalizeProviderId(providerId);
+  if (normalized === providerId) return ref;
+  return slash <= 0 ? normalized : `${normalized}${ref.slice(slash)}`;
+}
+
+/**
  * Split a `<provider>/<model-id>` ref for any direct Pi provider Kady exposes
  * (API-key providers from `provider-catalog.ts` and OAuth providers from
  * `provider-auth.ts`). Everything after the first slash is the model id
@@ -418,7 +438,7 @@ function directProviderRef(
 ): { providerId: string; modelId: string } | null {
   const slash = ref.indexOf("/");
   if (slash <= 0) return null;
-  const providerId = ref.slice(0, slash);
+  const providerId = normalizeProviderId(ref.slice(0, slash));
   if (providerId === "openrouter") return null;
   // Custom servers from models.json are first-class Pi providers too.
   if (!isDirectProvider(providerId) && !isSubscriptionProvider(providerId) && !isCustomProvider(providerId)) {
@@ -534,10 +554,12 @@ export function resolveModel(
 }
 
 function resolveRef(
-  r: string,
+  input: string,
   registry: ModelRegistry,
   fusionConfig?: Record<string, unknown>,
 ): Model<Api> {
+  // FORK: resolve Pi 1.1's renamed Azure id from any saved Kady ref.
+  const r = normalizeModelRef(input);
   // A "fusion/<id>" ref is the synthetic selector entry; resolve it to the real
   // openrouter/fusion Model, priced by the panel sum. The bare string ref can't
   // carry the panel prices, so the fusionConfig must be threaded in by the

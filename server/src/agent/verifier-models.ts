@@ -35,6 +35,7 @@ import { atomicJson } from "../atomic-json.ts";
 import { readAppDefaults } from "../app-settings.ts";
 import { piSettingsPath, writePiSettings } from "./capability-state.ts";
 import { listAgents } from "./agent-files.ts";
+import { normalizeModelRef } from "./models.ts";
 import { SUBAGENT_TYPES } from "./subagents.ts";
 
 /** pi-subagents builtins that review rather than produce. */
@@ -113,8 +114,12 @@ export function reconcileVerifierModels(
   const overrides: Rec = { ...((subagents.agentOverrides as Rec | undefined) ?? {}) };
   const owned = readOwned(paths);
   const nextOwned: Record<string, string> = {};
-  const available = Boolean(verifierModel) && isAvailable(requireValue(verifierModel));
-  const desired = available ? verifierModel : undefined;
+  // FORK: project a canonical Azure ref. pi-subagents reads this override
+  // straight from `.pi/settings.json` and cannot alias Pi 1.1's renamed
+  // `azure-openai-responses` provider, so Kady must write the canonical id.
+  const configuredModel = verifierModel !== undefined ? normalizeModelRef(verifierModel) : undefined;
+  const available = Boolean(configuredModel) && isAvailable(requireValue(configuredModel));
+  const desired = available ? configuredModel : undefined;
   const agents = new Map(listAgents(paths).map((agent) => [agent.name, agent] as const));
   let changed = false;
 
@@ -161,7 +166,7 @@ export function reconcileVerifierModels(
     changed,
     // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
     routed: Object.keys(nextOwned).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
-    ...(verifierModel && !available ? { skipped: "unavailable" as const } : {}),
+    ...(configuredModel && !available ? { skipped: "unavailable" as const } : {}),
   };
 }
 

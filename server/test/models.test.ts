@@ -5,9 +5,11 @@ import {
   ModelAuthenticationError,
   ModelResolutionError,
   modelReference,
+  normalizeModelRef,
+  normalizeProviderId,
   resolveModel,
 } from "../src/agent/models.ts";
-import { getModelRegistry } from "../src/agent/session-registry.ts";
+import { getModelRegistry, persistedModel } from "../src/agent/session-registry.ts";
 import {
   cacheKey,
   recordArchitectural,
@@ -102,6 +104,42 @@ describe("provider-aware model resolution", () => {
         oauthRuntime as Parameters<typeof assertModelAuthentication>[1],
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+// FORK: Pi 1.1 renamed the Azure provider id ("azure-openai-responses" ->
+// "azure"). Refs Kady saved before the upgrade must still resolve to the same
+// model at the canonical resolution boundaries, not silently fall back.
+describe("Pi 1.1 Azure provider rename compatibility", () => {
+  const azure = { provider: "azure", id: "gpt-5.4", name: "GPT-5.4" };
+
+  it("normalizes the legacy provider id with the model id intact", () => {
+    expect(normalizeProviderId("azure-openai-responses")).toBe("azure");
+    expect(normalizeProviderId("azure")).toBe("azure");
+    expect(normalizeModelRef("azure-openai-responses/gpt-5.4")).toBe("azure/gpt-5.4");
+    expect(normalizeModelRef("azure/gpt-5.4")).toBe("azure/gpt-5.4");
+    expect(normalizeModelRef("openrouter/anthropic/claude-opus-4.8")).toBe(
+      "openrouter/anthropic/claude-opus-4.8",
+    );
+  });
+
+  it("resolves a saved legacy ref to the Azure model, never an OpenRouter fallback", () => {
+    const registry = {
+      find: (provider: string, id: string) => (provider === "azure" && id === "gpt-5.4" ? azure : null),
+    } as never;
+    expect(resolveModel("azure-openai-responses/gpt-5.4", registry)).toBe(azure);
+    expect(modelReference(resolveModel("azure-openai-responses/gpt-5.4", registry))).toBe("azure/gpt-5.4");
+    // A missing Azure model must fail loudly instead of becoming an OpenRouter vendor ref.
+    expect(() => resolveModel("azure-openai-responses/not-listed", registry)).toThrow(/Unknown Azure model/);
+  });
+
+  it("restores a cold session stored on the legacy provider id", () => {
+    const runtime = {
+      getModel: (provider: string, id: string) =>
+        provider === "azure" && id === "gpt-5.4" ? azure : undefined,
+    } as never;
+    expect(persistedModel(runtime, {} as never, "azure-openai-responses", "gpt-5.4")).toBe(azure);
+    expect(persistedModel(runtime, {} as never, "azure", "gpt-5.4")).toBe(azure);
   });
 });
 

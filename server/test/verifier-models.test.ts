@@ -16,6 +16,7 @@ import { deleteProjectAgent, listProjectAgents, seedAgentFiles, writeProjectAgen
 import { SEEDED_TEMPLATES, seedPromptTemplates, listPromptTemplates } from "../src/agent/prompts.ts";
 import { SUBAGENT_TYPES } from "../src/agent/subagents.ts";
 import {
+  applyVerifierDefault,
   isVerifierAgent,
   reconcileVerifierModels,
   routedVerifiers,
@@ -164,6 +165,24 @@ describe("reconcileVerifierModels", () => {
 
 describe("delegation", () => {
   afterEach(() => fs.rmSync(appSettingsPath(), { force: true }));
+
+  it("projects a saved legacy Azure verifier ref without rewriting the app default", () => {
+    const paths = seeded("legacy-azure-verifier");
+    const legacy = "azure-openai-responses/gpt-5.4";
+    const canonical = "azure/gpt-5.4";
+    writeAppDefaults({ verifierModel: legacy });
+    const saved = fs.readFileSync(appSettingsPath(), "utf-8");
+    const checked: string[] = [];
+    const result = applyVerifierDefault(paths, (ref) => {
+      checked.push(ref);
+      return ref === canonical;
+    });
+    expect(result).toMatchObject({ changed: true });
+    expect(checked).toEqual([canonical]);
+    expect(overrides(paths)["math-checker"].model).toBe(canonical);
+    expect(routedVerifiers(paths)?.model).toBe(canonical);
+    expect(fs.readFileSync(appSettingsPath(), "utf-8")).toBe(saved);
+  });
 
   it("routes a verifier child before launch and pins only the producers to the parent", async () => {
     const paths = seeded("verifier-launch");

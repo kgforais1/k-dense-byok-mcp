@@ -103,6 +103,12 @@ starts backend + frontend together; it is the only supported full-app path.
   The lead uses `excludeTools`, preserving tools registered after connection.
   Inbound MCP remains fork-owned under `src/mcp-server/`; its headless sessions
   omit `interview` and retain that choice through cold opens.
+- Pi 1.1 retains MCP tools under ordinary tool allowlists. The child host in
+  `src/agent/subagent-host.mjs` restores strict child allowlists using the pinned
+  SDK's MCP-filter flag and an immediate registry refresh before extension
+  binding. It rejects SDK shape drift. Review this seam and run
+  `test/subagent-mcp-ceiling.test.ts` on every Pi upgrade; both already-registered
+  tools and tools registered after MCP connects must respect the ceiling.
 - Builtin tool overrides are reconciled in `src/agent/builtin-tool-overrides.ts`:
   drop tools the builtin no longer declares and that are not ours; rewrite from
   the current frontmatter. A hand-written allowlist is left alone; a user

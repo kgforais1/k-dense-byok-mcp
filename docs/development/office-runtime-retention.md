@@ -10,7 +10,9 @@ The [fork release](https://github.com/kgforais1/k-dense-byok-mcp/releases/tag/v0
 retains them as `zeta-2025-05-13-<filename>`. The route uses those fixed asset
 names instead of `zetaoffice_latest`, hashes every new download and checks cached
 files before serving. Wrong hashes, oversized downloads and unavailable sources
-return 503; no unverified download is installed. Asset administrators can still
+return 503; no unverified download is installed. Downloads have a 30-minute
+per-asset deadline to allow slow transfers of the 162 MB WASM while bounding
+stalled requests. Asset administrators can still
 remove or replace GitHub release assets, so retention is an operational promise;
 the pinned digest remains the execution trust boundary.
 

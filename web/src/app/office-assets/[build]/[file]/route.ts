@@ -21,7 +21,8 @@ async function asset(name: string): Promise<string> {
     if (hash(bytes) === spec.sha256) { verified.set(file, version); return file; }
   } catch { /* First open populates the cache. */ }
   // FORK: a cold cache fetches retained, hash-pinned bytes rather than a moving vendor build.
-  const response = await fetch(`${OFFICE_ASSET_BASE}${name}`, { signal: AbortSignal.timeout(180_000) });
+  // FORK: allow slow transfers of the 162 MB WASM while bounding stalled downloads.
+  const response = await fetch(`${OFFICE_ASSET_BASE}${name}`, { signal: AbortSignal.timeout(30 * 60_000) });
   if (!response.ok || !response.body) throw new Error("Could not download the Office editor. Check your connection and retry.");
   const chunks: Buffer[] = []; let size = 0;
   for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {

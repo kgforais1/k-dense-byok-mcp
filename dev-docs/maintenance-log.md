@@ -1,5 +1,11 @@
 # Maintenance Log
 
+### 2026-10-11 — Sourcery slow-download and estimate corrections (PR #55)
+
+- **Findings:** Both Sourcery comments are valid. A cold-cache transfer exceeding the previous three-minute deadline returned 503; the workspace loading message still promised approximately 50 MB after the mirror changed the transfer estimate to approximately 250 MB.
+- **Corrections:** Raise the finite per-asset download deadline to 30 minutes and update the workspace loading estimate to approximately 250 MB. Keep download size/hash checks, atomic installation and explicit failure behavior.
+- **Regression:** A virtual-time streamed transfer delivering its final bytes after 181 seconds fails with 503 under the former timeout and succeeds with exact verified cache bytes after the correction. All 13 focused route/workspace tests pass.
+
 ### 2026-10-11 — Retained Office runtime for cold-cache installations (PR #55)
 
 - **Review and closeout:** OpenCode Go DeepSeek V4.1 Flash approves `a238c73` and `b87026b` with no blocking defects. Full local verification passes 1,928 backend tests (8 intentional skips) and 938 frontend tests; all CI checks pass at `b87026b`. Archive the retention plan and remove its shipped TODO in PR #55. The archived Sonar handoff instruction is explicitly marked historical.

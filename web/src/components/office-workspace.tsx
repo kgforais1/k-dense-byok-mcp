@@ -80,7 +80,8 @@ export function OfficeWorkspace({ path, projectId }: { path: string; projectId: 
       else if (message.cmd === "opened") { setAdvanced(false); documentOpen.current = true; setOpened(true); setPhase("Ready"); }
       else if (message.cmd === "command-state") setCommandState(previous => ({ ...previous, [message.command]: { enabled: !!message.enabled, value: message.value } }));
       else if (message.cmd === "selection") { setCell(String(message.cell)); setFormula(String(message.formula)); formulaDraft.current = null; }
-      else if (message.cmd === "progress") { if (!ready.current) setPhase("Loading Office engine… First open downloads about 50 MB; later opens use the local cache."); }
+      // FORK: retained assets are not served with the vendor CDN's transfer compression.
+      else if (message.cmd === "progress") { if (!ready.current) setPhase("Loading Office engine… First open downloads about 250 MB; later opens use the local cache."); }
       else if (message.cmd === "modified" && !latest.current.readOnly) { changeVersion.current++; setDirty(true); setPhase("Unsaved changes"); }
       else if (message.cmd === "save-request") requestExport();
       else if (message.cmd === "download-request") requestExport(true);

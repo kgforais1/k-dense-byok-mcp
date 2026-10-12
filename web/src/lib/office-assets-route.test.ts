@@ -27,11 +27,41 @@ beforeEach(async () => {
   get = (await import("../app/office-assets/[build]/[file]/route")).GET;
 });
 afterEach(async () => {
+  vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks();
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.doUnmock("@/lib/office-assets");
   await rm(root, { recursive: true, force: true });
 });
 
 describe("retained Office runtime route", () => {
+  it("finishes a valid slow body transfer beyond the former three-minute deadline", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new Error("Download timed out")), ms);
+      return controller.signal;
+    });
+    let started!: () => void;
+    const downloading = new Promise<void>(resolve => { started = resolve; });
+    fetcher.mockImplementationOnce((_url, { signal }: { signal: AbortSignal }) =>
+      new Response(new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(new Uint8Array(bytes.subarray(0, 4)));
+        const delivery = setTimeout(() => {
+          controller.enqueue(new Uint8Array(bytes.subarray(4))); controller.close();
+        }, 181_000);
+        signal.addEventListener("abort", () => {
+          clearTimeout(delivery); controller.error(signal.reason);
+        }, { once: true });
+        started();
+      } })),
+    );
+    const job = request();
+    await downloading;
+    await vi.advanceTimersByTimeAsync(181_000);
+    const result = await job;
+    expect(result.status).toBe(200);
+    expect(Buffer.from(await result.arrayBuffer())).toEqual(bytes);
+    expect(await readFile(join(root, "soffice.js"))).toEqual(bytes);
+  });
   it("fills a cold cache from the retained build and then serves it offline", async () => {
     const first = await request();
     expect(first.status).toBe(200);

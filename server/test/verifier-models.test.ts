@@ -8,7 +8,7 @@ import { required as requireValue } from "../src/required.ts";
  */
 import fs from "node:fs";
 import path from "node:path";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { ensureProjectExists, type ProjectPaths } from "../src/projects.ts";
 import { piSettingsPath } from "../src/agent/capability-state.ts";
@@ -95,6 +95,66 @@ describe("reconcileVerifierModels", () => {
     expect(after.packages).toEqual(["npm:pi-web-access"]);
     expect(after.subagents.defaultModel).toBe(OTHER);
     expect(after.subagents.agentOverrides).toEqual({ reviewer: { tools: ["read", "notebook"] } });
+    expect(routedVerifiers(paths)).toBeNull();
+  });
+
+  it.each([
+    ["create", "settings"], ["create", "ownership"],
+    ["change", "settings"], ["change", "ownership"],
+    ["clear", "settings"], ["clear", "ownership"],
+  ])("recovers an interrupted %s before committing %s", (operation, stage) => {
+    const paths = seeded();
+    const sidecar = path.join(paths.kadyDir, "verifier-models.json");
+    if (operation !== "create") reconcileVerifierModels(paths, MODEL);
+    const desired = operation === "clear" ? undefined : "azure-openai-responses/gpt-5.4";
+    const rename = fs.renameSync;
+    const remove = fs.rmSync;
+    let sidecarWrites = 0;
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
+      if (target === sidecar) sidecarWrites++;
+      if ((stage === "settings" && target === piSettingsPath(paths)) ||
+          (stage === "ownership" && target === sidecar && sidecarWrites === 2)) {
+        throw new Error("simulated interruption");
+      }
+      return rename(source, target);
+    });
+    const removeSpy = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (stage === "ownership" && operation === "clear" && target === sidecar) throw new Error("simulated interruption");
+      return remove(target, options);
+    });
+    try {
+      expect(() => reconcileVerifierModels(paths, desired)).toThrow("simulated interruption");
+    } finally { renameSpy.mockRestore(); removeSpy.mockRestore(); }
+    reconcileVerifierModels(paths, desired);
+    expect(overrides(paths)["math-checker"]?.model).toBe(operation === "clear" ? undefined : "azure/gpt-5.4");
+    if (operation !== "clear") {
+      expect(JSON.parse(fs.readFileSync(sidecar, "utf-8"))).not.toHaveProperty("pending");
+      reconcileVerifierModels(paths, OTHER);
+      expect(overrides(paths)["math-checker"].model).toBe(OTHER);
+    }
+    reconcileVerifierModels(paths, undefined);
+    expect(overrides(paths)["math-checker"]).toBeUndefined();
+    expect(routedVerifiers(paths)).toBeNull();
+  });
+
+  it("preserves user edits made after an interrupted ownership update", () => {
+    const paths = seeded();
+    reconcileVerifierModels(paths, MODEL);
+    const sidecar = path.join(paths.kadyDir, "verifier-models.json");
+    const rename = fs.renameSync;
+    let writes = 0;
+    const spy = vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
+      if (target === sidecar && ++writes === 2) throw new Error("interrupted");
+      return rename(source, target);
+    });
+    try { expect(() => reconcileVerifierModels(paths, "azure/gpt-5.4")).toThrow("interrupted"); }
+    finally { spy.mockRestore(); }
+    const edited = settings(paths);
+    edited.subagents.agentOverrides["math-checker"].model = OTHER;
+    writeSettings(paths, edited);
+    reconcileVerifierModels(paths, undefined);
+    expect(overrides(paths)["math-checker"].model).toBe(OTHER);
+    expect(overrides(paths)["code-reviewer"]).toBeUndefined();
     expect(routedVerifiers(paths)).toBeNull();
   });
 

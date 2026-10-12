@@ -13,6 +13,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Type } from "typebox";
+import { waitFor } from "./helpers/timing.ts";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { ensureProjectExists } from "../src/projects.ts";
@@ -34,11 +35,11 @@ const earlyMcpTool: sdk.ToolDefinition = {
   description: "Forbidden MCP fixture, registered before the allowlist seam.",
   parameters: Type.Object({}),
   exposure: "codemode",
-  execute: async () => ({ content: [{ type: "text", text: "denied" }], details: {} }),
+  execute: () => Promise.resolve({ content: [{ type: "text", text: "denied" }], details: {} }),
 };
 
 /** Create a real child through the installed factory with an MCP echo server. */
-async function createChild(tools: string[] | undefined) {
+async function createChild(tools?: string[]) {
   const paths = ensureProjectExists("mcpceiling");
   fs.mkdirSync(path.join(paths.sandbox, ".pi"), { recursive: true });
   fs.writeFileSync(path.join(paths.sandbox, ".pi", "mcp.json"), JSON.stringify({
@@ -49,7 +50,7 @@ async function createChild(tools: string[] | undefined) {
   const captured: sdk.AgentSession[] = [];
   const { createDefaultChildSessionFactory } = await internal("src/runs/shared/child-session.js");
   const factory = createDefaultChildSessionFactory({
-    loadPiCodingAgent: async () => ({
+    loadPiCodingAgent: () => Promise.resolve({
       ...sdk,
       createAgentSession: async (args: Parameters<typeof sdk.createAgentSession>[0]) => {
         const result = await sdk.createAgentSession({ ...args, customTools: [earlyMcpTool] });
@@ -63,7 +64,7 @@ async function createChild(tools: string[] | undefined) {
     cwd: paths.sandbox, storage: { kind: "memory" }, ambientExtensions: false,
     extensionPaths: required.map((r) => r.path), requiredExtensions: required, hooks: [],
     noSkills: true, noContextFiles: true, ...(tools !== undefined ? { tools } : {}),
-    runtime: { agent: "researcher", orchestratorSessionId: "parent", runId: "run" }, onExtensionError: () => { },
+    runtime: { agent: "researcher", orchestratorSessionId: "parent", runId: "run" }, onExtensionError: (failure: { error: unknown }) => { throw failure.error; },
   }) as FixtureChildSession;
   return { child, factory, session: requireValue(captured[0]) };
 }
@@ -73,10 +74,9 @@ const callable = (session: sdk.AgentSession) => session.getCallableToolNames();
 
 /** MCP connects after session start; wait until the extension has registered it. */
 async function waitLateRegistered(session: sdk.AgentSession) {
-  await expect.poll(
-    () => session.extensionRunner.getAllRegisteredTools().some((tool) => tool.definition.name === LATE_MCP),
-    { timeout: 15_000 },
-  ).toBe(true);
+  await waitFor(() => {
+    expect(session.extensionRunner.getAllRegisteredTools().some((tool) => tool.definition.name === LATE_MCP)).toBe(true);
+  });
 }
 
 it("excludes both already-registered and late MCP tools a restricted child does not name", async () => {
@@ -102,7 +102,7 @@ it("keeps MCP tools the allowlist names (early and late)", async () => {
 }, 30_000);
 
 it("keeps normal MCP for an unrestricted child (no allowlist)", async () => {
-  const { child, factory, session } = await createChild(undefined);
+  const { child, factory, session } = await createChild();
   try {
     expect(registered(session)).toContain(EARLY_MCP);
     await waitLateRegistered(session);

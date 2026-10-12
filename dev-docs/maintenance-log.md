@@ -10,6 +10,8 @@
 
 - **Final verification:** `npm run verify -- all` passes both typechecks, 1,936 backend tests (8 intentional skips), 939 frontend tests and all documentation gates. Backend lint has zero warnings/errors. Frontend production build passes; frontend lint has zero errors and 58 existing warnings on the unchanged Next patch tree.
 
+- **Bot review follow-up:** Sourcery correctly identified interrupted verifier settings/ownership writes. A write-ahead ownership record now recognizes either committed settings value, recovers on retry, and preserves intervening user edits. Seven fault-injection regressions cover creation, changes, clearing and user edits. Greptile’s shared timing-helper requirement is applied to MCP polling. DeepSource fixture cleanup removes empty error handling, redundant undefined and unnecessary async syntax; the SDK namespace is required for the factory module facade, and the short fail-closed MCP guard remains readable. Its callback-arity warning is a false positive against the typed one-argument contract (now also explicit on the default implementation). Focused regressions pass 46 tests; backend lint/typecheck pass. The complete post-fix ladder passes 1,943 backend tests (8 intentional skips), 939 frontend tests, both typechecks and all docs gates.
+
 ### 2026-10-11 — Next security patch and Pi shrinkwrap investigation
 
 Historical result at f3dc275; the Pi 1.1 upgrade above supersedes the brace blocker.

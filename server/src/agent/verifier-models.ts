@@ -59,14 +59,30 @@ function sidecarPath(paths: ProjectPaths): string {
   return path.join(paths.kadyDir, "verifier-models.json");
 }
 
-/** Agent name → model ref Kady wrote. Missing or malformed reads as none. */
-function readOwned(paths: ProjectPaths): Record<string, string> {
+/** Recover ownership from a write-ahead record without claiming user edits. */
+function readOwnership(paths: ProjectPaths): { owned: Record<string, string>; pending: boolean } {
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(sidecarPath(paths), "utf-8"));
-    const owned = isRecord(parsed) && isRecord(parsed.owned) ? parsed.owned : {};
-    return Object.fromEntries(Object.entries(owned).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    const before = isRecord(parsed) && isRecord(parsed.owned) ? parsed.owned : {};
+    const pending = isRecord(parsed) && isRecord(parsed.pending);
+    if (!pending) {
+      return { owned: Object.fromEntries(Object.entries(before).filter((entry): entry is [string, string] => typeof entry[1] === "string")), pending: false };
+    }
+    // FORK: either settings version may be on disk after an interrupted write.
+    // Only the recorded before/after values are ours; any other edit stays user-owned.
+    const after = parsed.pending as Rec;
+    const settings: unknown = JSON.parse(fs.readFileSync(piSettingsPath(paths), "utf-8"));
+    const subagents = isRecord(settings) && isRecord(settings.subagents) ? settings.subagents : {};
+    const overrides = isRecord(subagents.agentOverrides) ? subagents.agentOverrides : {};
+    const owned: Record<string, string> = {};
+    for (const name of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const entry = overrides[name];
+      const current = isRecord(entry) ? entry.model : undefined;
+      if (typeof current === "string" && (current === before[name] || current === after[name])) owned[name] = current;
+    }
+    return { owned, pending: true };
   } catch {
-    return {};
+    return { owned: {}, pending: false };
   }
 }
 
@@ -94,7 +110,7 @@ export interface VerifierReconcileResult {
 export function reconcileVerifierModels(
   paths: ProjectPaths,
   verifierModel: string | undefined,
-  isAvailable: (ref: string) => boolean = () => true,
+  isAvailable: (ref: string) => boolean = (_ref: string) => true,
   { createSettings = false }: { createSettings?: boolean } = {},
 ): VerifierReconcileResult {
   let settings: Rec;
@@ -112,7 +128,7 @@ export function reconcileVerifierModels(
     return { changed: false, routed: [], skipped: "malformed-settings" };
   }
   const overrides: Rec = { ...((subagents.agentOverrides as Rec | undefined) ?? {}) };
-  const owned = readOwned(paths);
+  const { owned, pending } = readOwnership(paths);
   const nextOwned: Record<string, string> = {};
   // FORK: project a canonical Azure ref. pi-subagents reads this override
   // straight from `.pi/settings.json` and cannot alias Pi 1.1's renamed
@@ -156,9 +172,12 @@ export function reconcileVerifierModels(
     const next: Rec = { ...settings, subagents };
     // Removing the last entry Kady wrote must not leave an empty block behind.
     if (Object.keys(subagents).length === 0) delete next.subagents;
+    // FORK: persist both ownership states before settings. A retry can identify
+    // either committed value if settings or the final sidecar write is interrupted.
+    atomicJson(sidecarPath(paths), { version: 1, owned, pending: nextOwned });
     writePiSettings(paths, next);
   }
-  if (ownedChanged) {
+  if (changed || ownedChanged || pending) {
     if (Object.keys(nextOwned).length > 0) atomicJson(sidecarPath(paths), { version: 1, owned: nextOwned });
     else fs.rmSync(sidecarPath(paths), { force: true });
   }
@@ -172,7 +191,7 @@ export function reconcileVerifierModels(
 
 /** The verifiers Kady currently routes in this project, and their model. */
 export function routedVerifiers(paths: ProjectPaths): { model: string; agents: string[] } | null {
-  const owned = readOwned(paths);
+  const { owned } = readOwnership(paths);
   // FORK: explicit code-unit comparator (typescript:S2871); localeCompare would be locale-dependent.
   const agents = Object.keys(owned).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const models = new Set(Object.values(owned));

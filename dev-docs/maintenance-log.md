@@ -1,5 +1,11 @@
 # Maintenance Log
 
+### 2026-10-11 — Next security patch and Pi shrinkwrap investigation
+
+- **Shipped scope:** Next and eslint-config-next 16.3.7 → 16.3.8; lock changes are limited to matching Next packages. This addresses the vulnerable version in six Next alerts. No SDK, extension or KaTeX upgrade.
+- **Brace blocker:** Pi coding-agent 1.0.0 publishes a shrinkwrap pinning brace-expansion 5.0.9. DeepSeek reproduced a scoped override being ignored. A root-lock metadata workaround retained 5.0.12 through two plain installs and clean npm ci, but explicit `npm install --save-exact @earendil-works/pi-coding-agent@1.0.0` restored both `hasShrinkwrap: true` and installed 5.0.9. Parent independently confirmed the final scratch lock and runtime. No ineffective backend change is shipped; three brace alerts remain open and tracked for a patched SDK release.
+- **Review:** Implementation delegated to OpenCode Go DeepSeek V4.1 Flash; parent reviewed every changed lock entry and ran frontend typecheck, all 939 tests, production build and lint (zero errors; 58 existing warnings). KaTeX compatibility work remains separately tracked. Full elevated `npm run verify -- all` passes backend/frontend typechecks, 1,928 backend tests (8 intentional skips), 939 frontend tests and documentation gates. The first sandboxed run stalled and was stopped; it is not counted as a pass.
+
 ### 2026-10-11 — Sourcery slow-download and estimate corrections (PR #55)
 
 - **Findings:** Both Sourcery comments are valid. A cold-cache transfer exceeding the previous three-minute deadline returned 503; the workspace loading message still promised approximately 50 MB after the mirror changed the transfer estimate to approximately 250 MB.

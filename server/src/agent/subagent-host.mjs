@@ -74,7 +74,56 @@ export function meteredStream(base, owner, usingOAuth) {
     };
   };
 }
+// FORK: Pi 1.1 keeps MCP (`mcp__*`) tools registered unless the child allowlist
+// is empty or names an `mcp__` tool. A restricted child — an explicit
+// `launch.tools` (which also carries a capability-ceiling allowlist, see
+// pi-subagents resolvePiLaunchToolPlan) — must still exclude the MCP tools it
+// does not name, exactly as before 1.1.
+//
+// Pinned-Pi compat seam (Pi 1.1.x AgentSession): `_allowlistFiltersMcp` chooses
+// whether a non-empty allowlist also filters `mcp__*` tools, and
+// `_refreshToolRegistry()` re-derives the registry. The flag alone only affects
+// later filtering: tools registered at construction (custom tools, or an
+// extension that registers before this seam) and not re-derived would stay
+// callable, and `bindExtensions` does not refresh the registry either. So flip
+// the flag and refresh immediately; MCP that connects later is filtered at its
+// own registration. Fail visibly if a Pi upgrade changes this shape rather than
+// silently leaving a restricted child with MCP tools it must not have.
+/** No explicit tool list means the child is not under a capability ceiling. */
+function childHasNoToolCeiling(tools) {
+  return tools === undefined || tools.length === 0;
+}
+
+/** The pinned Pi fields this seam writes. Null means the SDK shape drifted. */
+function childMcpAllowlistSeam(session) {
+  if (typeof session._allowlistFiltersMcp !== "boolean") return null;
+  if (typeof session._refreshToolRegistry !== "function") return null;
+  return session;
+}
+
+/**
+ * Restore a strict MCP ceiling for one child session.
+ *
+ * Input is the child `AgentSession` and its launch, whose `tools` list is the
+ * ceiling. When that list is present and non-empty, unlisted `mcp__` tools are
+ * removed, including tools already registered. Returns nothing. Requires the
+ * pinned Pi fields `_allowlistFiltersMcp` and `_refreshToolRegistry`.
+ */
+export function restrictChildMcpToAllowlist(session, launch) {
+  if (childHasNoToolCeiling(launch.tools)) return;
+  if (!childMcpAllowlistSeam(session)) {
+    throw new Error(
+      "Kady child MCP allowlist seam no longer matches the pinned Pi SDK " +
+      "(AgentSession._allowlistFiltersMcp/_refreshToolRegistry). Review " +
+      "server/src/agent/subagent-host.mjs before upgrading Pi.",
+    );
+  }
+  if (session._allowlistFiltersMcp) return; // already filtering: empty allowlist or a named mcp__ tool
+  session._allowlistFiltersMcp = true;
+  session._refreshToolRegistry();
+}
 export function attachChildSession(session, launch, runtime) {
+  restrictChildMcpToAllowlist(session, launch);
   const parentId = launch.runtime.orchestratorSessionId || launch.runtime.parentSessionId || session.sessionId;
   const owner = { ...projectOwner(launch.cwd), sessionId: childOwners.get(parentId)?.sessionId || parentId,
     childSessionId: session.sessionId, sessionFile: session.sessionFile, kind: 'subagent', runId: launch.runtime.runId };

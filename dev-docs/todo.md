@@ -2,6 +2,7 @@
 
 ## Next Up
 
+- [ ] **Upgrade transitive KaTeX with rendering compatibility checks** — [GHSA-238p-pmpm-9mq7](https://github.com/advisories/GHSA-238p-pmpm-9mq7), installed `0.16.47`, fixed in `0.18.2`; Streamdown math, Mermaid, rehype-katex and micromark currently require `0.16.x`, so prefer compatible parent upgrades or a verified override with math/Mermaid rendering checks.
 - [ ] **Review upstream compatibility observations** — [#54](https://github.com/kgforais1/k-dense-byok-mcp/issues/54); legacy Modal reservation recovery and JCAMP implicit-axis profiles need representative fixtures and policy/specification review.
 - [ ] **Evaluate alternate coding-agent engines** → [3. Alternate coding-agent engines](#3-alternate-coding-agent-engines)
 - [ ] **Bring the lint and coverage ratchets down** → [1. CI and hooks](#1-ci-and-hooks)

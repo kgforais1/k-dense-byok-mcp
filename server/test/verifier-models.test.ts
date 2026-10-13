@@ -8,7 +8,7 @@ import { required as requireValue } from "../src/required.ts";
  */
 import fs from "node:fs";
 import path from "node:path";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { ensureProjectExists, type ProjectPaths } from "../src/projects.ts";
 import { piSettingsPath } from "../src/agent/capability-state.ts";
@@ -16,6 +16,7 @@ import { deleteProjectAgent, listProjectAgents, seedAgentFiles, writeProjectAgen
 import { SEEDED_TEMPLATES, seedPromptTemplates, listPromptTemplates } from "../src/agent/prompts.ts";
 import { SUBAGENT_TYPES } from "../src/agent/subagents.ts";
 import {
+  applyVerifierDefault,
   isVerifierAgent,
   reconcileVerifierModels,
   routedVerifiers,
@@ -51,6 +52,53 @@ const writeSettings = (paths: ProjectPaths, value: unknown) => {
   fs.mkdirSync(path.dirname(piSettingsPath(paths)), { recursive: true });
   fs.writeFileSync(piSettingsPath(paths), JSON.stringify(value, null, 2));
 };
+
+// FORK: fault-injection helpers for the write-ahead ownership record.
+function interruptRename(stage: string, target: fs.PathLike, settingsPath: string, sidecar: string, sidecarWrites: number): boolean {
+  if (stage === "settings") return target === settingsPath;
+  if (stage === "ownership") return target === sidecar && sidecarWrites === 2;
+  return false;
+}
+
+function interruptRemoval(stage: string, operation: string, target: fs.PathLike, sidecar: string): boolean {
+  if (stage !== "ownership") return false;
+  if (operation !== "clear") return false;
+  return target === sidecar;
+}
+
+/** Fail the next settings or final-ownership write, then restore the real fs methods. */
+function armInterruption(paths: ProjectPaths, sidecar: string, operation: string, stage: string): () => void {
+  const rename = fs.renameSync;
+  const remove = fs.rmSync;
+  let sidecarWrites = 0;
+  const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
+    if (target === sidecar) sidecarWrites += 1;
+    if (interruptRename(stage, target, piSettingsPath(paths), sidecar, sidecarWrites)) throw new Error("simulated interruption");
+    return rename(source, target);
+  });
+  const removeSpy = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+    if (interruptRemoval(stage, operation, target, sidecar)) throw new Error("simulated interruption");
+    return remove(target, options);
+  });
+  return () => {
+    renameSpy.mockRestore();
+    removeSpy.mockRestore();
+  };
+}
+
+function assertRecovered(paths: ProjectPaths, sidecar: string, operation: string, desired: string | undefined): void {
+  reconcileVerifierModels(paths, desired);
+  const expected = operation === "clear" ? undefined : "azure/gpt-5.4";
+  expect(overrides(paths)["math-checker"]?.model).toBe(expected);
+  if (operation !== "clear") {
+    expect(JSON.parse(fs.readFileSync(sidecar, "utf-8"))).not.toHaveProperty("pending");
+    reconcileVerifierModels(paths, OTHER);
+    expect(overrides(paths)["math-checker"].model).toBe(OTHER);
+  }
+  reconcileVerifierModels(paths);
+  expect(overrides(paths)["math-checker"]).toBeUndefined();
+  expect(routedVerifiers(paths)).toBeNull();
+}
 
 describe("verifier roster", () => {
   it("covers the reviewer personas, the comparative reviewer and the builtin reviewers, not producers", () => {
@@ -94,6 +142,45 @@ describe("reconcileVerifierModels", () => {
     expect(after.packages).toEqual(["npm:pi-web-access"]);
     expect(after.subagents.defaultModel).toBe(OTHER);
     expect(after.subagents.agentOverrides).toEqual({ reviewer: { tools: ["read", "notebook"] } });
+    expect(routedVerifiers(paths)).toBeNull();
+  });
+
+  it.each([
+    ["create", "settings"], ["create", "ownership"],
+    ["change", "settings"], ["change", "ownership"],
+    ["clear", "settings"], ["clear", "ownership"],
+  ])("recovers an interrupted %s before committing %s", (operation, stage) => {
+    const paths = seeded();
+    const sidecar = path.join(paths.kadyDir, "verifier-models.json");
+    if (operation !== "create") reconcileVerifierModels(paths, MODEL);
+    const desired = operation === "clear" ? undefined : "azure-openai-responses/gpt-5.4";
+    const restore = armInterruption(paths, sidecar, operation, stage);
+    try {
+      expect(() => reconcileVerifierModels(paths, desired)).toThrow("simulated interruption");
+    } finally {
+      restore();
+    }
+    assertRecovered(paths, sidecar, operation, desired);
+  });
+
+  it("preserves user edits made after an interrupted ownership update", () => {
+    const paths = seeded();
+    reconcileVerifierModels(paths, MODEL);
+    const sidecar = path.join(paths.kadyDir, "verifier-models.json");
+    const rename = fs.renameSync;
+    let writes = 0;
+    const spy = vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
+      if (target === sidecar && ++writes === 2) throw new Error("interrupted");
+      return rename(source, target);
+    });
+    try { expect(() => reconcileVerifierModels(paths, "azure/gpt-5.4")).toThrow("interrupted"); }
+    finally { spy.mockRestore(); }
+    const edited = settings(paths);
+    edited.subagents.agentOverrides["math-checker"].model = OTHER;
+    writeSettings(paths, edited);
+    reconcileVerifierModels(paths);
+    expect(overrides(paths)["math-checker"].model).toBe(OTHER);
+    expect(overrides(paths)["code-reviewer"]).toBeUndefined();
     expect(routedVerifiers(paths)).toBeNull();
   });
 
@@ -164,6 +251,24 @@ describe("reconcileVerifierModels", () => {
 
 describe("delegation", () => {
   afterEach(() => fs.rmSync(appSettingsPath(), { force: true }));
+
+  it("projects a saved legacy Azure verifier ref without rewriting the app default", () => {
+    const paths = seeded("legacy-azure-verifier");
+    const legacy = "azure-openai-responses/gpt-5.4";
+    const canonical = "azure/gpt-5.4";
+    writeAppDefaults({ verifierModel: legacy });
+    const saved = fs.readFileSync(appSettingsPath(), "utf-8");
+    const checked: string[] = [];
+    const result = applyVerifierDefault(paths, (ref) => {
+      checked.push(ref);
+      return ref === canonical;
+    });
+    expect(result).toMatchObject({ changed: true });
+    expect(checked).toEqual([canonical]);
+    expect(overrides(paths)["math-checker"].model).toBe(canonical);
+    expect(routedVerifiers(paths)?.model).toBe(canonical);
+    expect(fs.readFileSync(appSettingsPath(), "utf-8")).toBe(saved);
+  });
 
   it("routes a verifier child before launch and pins only the producers to the parent", async () => {
     const paths = seeded("verifier-launch");

@@ -51,6 +51,14 @@ Everything after the provider's first slash is the model ID, including any
 further slashes. `anthropic/<model>` uses the Anthropic credential;
 `openrouter/anthropic/<model>` uses OpenRouter.
 
+Azure uses `azure/<model-id>` with Pi 1.1. Kady recognizes the previous
+`azure-openai-responses/<model-id>` form when resolving its saved defaults,
+restoring sessions and projecting verifier defaults. Existing
+`AZURE_OPENAI_*` environment credentials continue to be used. If you maintain
+native Pi provider configuration or hand-written specialist model references,
+change the old provider ID to `azure` there as part of this upgrade; those
+user-authored settings and credential files are not automatically migrated.
+
 OpenRouter's checked-in catalogue and pricing live in
 [`models.json`](../web/src/data/models.json), refreshed by
 [`update-models.py`](../scripts/update-models.py). Pi's built-in entry is used

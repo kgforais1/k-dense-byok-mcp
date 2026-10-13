@@ -32,7 +32,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
 import { migrateDisabledMcpServers } from "./mcp.ts";
-import { catalogueEntryFor, defaultModel, isLocalProvider, resolveModel, setupModelRuntime } from "./models.ts";
+import { catalogueEntryFor, defaultModel, isLocalProvider, normalizeProviderId, resolveModel, setupModelRuntime } from "./models.ts";
 import { seedAgentFiles } from "./agent-files.ts";
 import {
   forgetHeadlessSession,
@@ -536,9 +536,13 @@ export async function latestProjectModel(
 export function persistedModel(
   runtime: ModelRuntime,
   registry: ModelRegistry,
-  provider: string,
+  inputProvider: string,
   modelId: string,
 ): Model<Api> | undefined {
+  // FORK: a session stored before Pi 1.1 names the renamed Azure provider;
+  // resolve it as `azure` so a cold-open restores the model instead of falling
+  // back to the project/default model.
+  const provider = normalizeProviderId(inputProvider);
   // FORK: a stored Fusion alias has no panel configuration to restore.
   if (provider === "openrouter" && modelId === "openrouter/fusion") return undefined;
   if (!isLocalProvider(provider)) {

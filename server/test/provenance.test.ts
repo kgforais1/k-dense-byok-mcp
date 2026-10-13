@@ -234,6 +234,9 @@ describe("provenance scanner", () => {
 describe("provenance recorder", () => {
   it("records a declared write as an observed output edge with a hash", async () => {
     const rec = recorder();
+    // The baseline walk is async. Settle the empty sandbox first, matching the
+    // bash tests, so a slow scan cannot classify this write as a modification.
+    await rec.flush();
     rec.observe(startEvent("tc_w", "write", { path: "de_analysis.py" }));
     write("de_analysis.py", "print(1)");
     rec.observe(endEvent("tc_w", "write"));

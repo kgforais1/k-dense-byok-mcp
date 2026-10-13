@@ -336,8 +336,10 @@ export const DIRECT_PROVIDERS: readonly DirectProviderDefinition[] = [
   }),
 
   // ---- Cloud platforms -----------------------------------------------------
+  // FORK: track Pi's provider id — 1.1.0 renamed "azure-openai-responses" to
+  // "azure" (display name "Azure"); the AZURE_OPENAI_* env vars are unchanged.
   {
-    ...simple("azure-openai-responses", "Azure OpenAI", "AZURE_OPENAI_API_KEY", {
+    ...simple("azure", "Azure", "AZURE_OPENAI_API_KEY", {
       keysUrl: "https://portal.azure.com/",
       keyLabel: "Azure OpenAI API key",
       hint: "OpenAI models hosted in your Azure subscription. Set the key plus either the resource endpoint URL or the resource name; root endpoints are normalized to /openai/v1 by Pi.",

@@ -81,6 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Extension harness pins:** pi-subagents 0.74.0 → 0.78.0, pi-web-access 0.35.0 → 0.40.0, and skills 1.7.0 → 1.7.2, still on Pi 1.1.0. Background children keep working because 0.78 treats the removed `pi-agent-core/node` alias as optional. A lone plain JavaScript fence is now a workflow script when the reply has no tagged workflow fence, matching the plugin. The skills CLI stages Pi installs under `.agents/skills`; project skills still load from `.pi/skills`. pi-web-access stays on this repo's MCP SDK via the existing override. No app version bump: these are pinned dependency upgrades, not a Kady release.
 - Sync 44 upstream commits through `44c52cee8e9f` (issue #50), bringing product behavior to upstream 0.15.0: Pi 1.0/native outbound MCP, request authentication and browser guards, specialist fleet controls and metering, reorganized Settings, Office previews/editing, richer scientific previews, and composer research/delegation references.
 - Preserve the fork's inbound MCP server, durable run polling, headless session identity, session deletion safeguards, scheduling budget holds, rate limits and atomic Modal output rollback. REST and MCP runs now use upstream's shared billing pipeline so image-model usage is billed independently of a subscription chat.
 - Regenerate dependency lockfiles with compatible advisory fixes and undici 8.11.2; retain the exact upstream harness pins and repository verification gates.

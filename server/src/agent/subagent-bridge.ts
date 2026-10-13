@@ -376,8 +376,9 @@ const UNKNOWN_SCRIPT = (): WorkflowScriptTargets => ({ agents: new Set(), models
 /**
  * Script targets for a `subagent` tool call, or undefined when it runs no script.
  *
- * Mirrors how pi-subagents 0.74 resolves the script it will execute: the one
+ * Mirrors how pi-subagents 0.78 resolves the script it will execute: the one
  * ```js workflow block of the assistant message that issued `workflow: true`,
+ * or the reply's single plain ```js block when no workflow fence is present,
  * or a `workflow` file path resolved against the request cwd. A script that
  * cannot be read here — a named workflow resource, a missing file, a reply
  * without exactly one block — reports `dynamic`, which widens billing to
@@ -411,44 +412,153 @@ export function workflowCallTargets(
 }
 
 const WORKFLOW_FENCE = /^```(?:js|javascript) workflow[ \t]*$/;
+const PLAIN_JS_FENCE = /^```(?:js|javascript)[ \t]*$/;
 const OPEN_FENCE = /^(`{3,}|~{3,})/;
 const CLOSE_FENCE = /^(`{3,}|~{3,})[ \t]*$/;
 
+type WorkflowFenceKind = "tagged" | "plain";
+
+/** How pi-subagents classifies one opening fence line. */
+function workflowFenceKind(line: string): WorkflowFenceKind | undefined {
+  if (WORKFLOW_FENCE.test(line)) return "tagged";
+  if (PLAIN_JS_FENCE.test(line)) return "plain";
+  return undefined;
+}
+
+interface WorkflowFences {
+  tagged: string[];
+  plain: string[];
+  /** True when the script fence the plugin would run is still open. */
+  unclosed: boolean;
+}
+
+/** Opening fence on this line, or undefined when the line does not open one. */
+function openingFence(line: string, index: number): { marker: string; kind: WorkflowFenceKind | undefined; start: number } | undefined {
+  const open = OPEN_FENCE.exec(line);
+  if (!open) return undefined;
+  return { marker: open[1], kind: workflowFenceKind(line), start: index + 1 };
+}
+
+/** True when this line closes the fence opened by `marker`. */
+function fenceCloses(line: string, marker: string): boolean {
+  const close = CLOSE_FENCE.exec(line);
+  return close !== null && close[1][0] === marker[0] && close[1].length >= marker.length;
+}
+
+/** True when the fence the plugin would run is still open at the end of the reply. */
+function fenceStillOpen(
+  fence: { kind: WorkflowFenceKind | undefined } | undefined,
+  taggedCount: number,
+): boolean {
+  if (fence?.kind === "tagged") return true;
+  return fence?.kind === "plain" && taggedCount === 0;
+}
+
+/** Keep a closed fence body in the tagged or plain list. */
+function rememberFence(kind: WorkflowFenceKind | undefined, body: string, tagged: string[], plain: string[]): void {
+  if (kind === "tagged") tagged.push(body);
+  else if (kind === "plain") plain.push(body);
+}
+
+// FORK: same fence rules as pi-subagents readReplyWorkflowScript, split out
+// so the branch walk stays a lookup. A tagged fence wins; one plain js fence
+// is used only when the reply has none.
+function workflowFences(text: string): WorkflowFences {
+  const tagged: string[] = [];
+  const plain: string[] = [];
+  let fence: { marker: string; kind: WorkflowFenceKind | undefined; start: number } | undefined;
+  const lines = text.split("\n");
+  for (let line = 0; line < lines.length; line++) {
+    const value = lines[line].replace(/\r$/, "");
+    if (!fence) {
+      fence = openingFence(value, line);
+      continue;
+    }
+    if (!fenceCloses(value, fence.marker)) continue;
+    rememberFence(fence.kind, lines.slice(fence.start, line).join("\n"), tagged, plain);
+    fence = undefined;
+  }
+  return { tagged, plain, unclosed: fenceStillOpen(fence, tagged.length) };
+}
+
+/** Tagged bodies win. A single plain body is used only when there is no tagged body. */
+function chosenFenceBodies(tagged: string[], plain: string[]): string[] {
+  if (tagged.length > 0) return tagged;
+  if (plain.length === 1) return plain;
+  return [];
+}
+
+/** The one script body the plugin would run, or undefined when it would refuse. */
+function workflowFenceBody(text: string): string | undefined {
+  const { tagged, plain, unclosed } = workflowFences(text);
+  const blocks = chosenFenceBodies(tagged, plain);
+  if (unclosed || blocks.length !== 1) return undefined;
+  if (!blocks[0].trim()) return undefined;
+  return blocks[0];
+}
+
+type ReplyBlock = { type?: string; id?: string; name?: string; text?: unknown; arguments?: Record<string, unknown> };
+
+/** The `workflow` argument of a tool-call block, or undefined when it has none. */
+function workflowArgument(block: ReplyBlock): unknown {
+  const args = block.arguments;
+  if (!args) return undefined;
+  return args.workflow;
+}
+
+/** True for a subagent call the plugin counts as `workflow: true`, including the string form. */
+function isWorkflowTrueCall(block: ReplyBlock): boolean {
+  if (block.type !== "toolCall") return false;
+  if (block.name !== "subagent") return false;
+  const workflow = workflowArgument(block);
+  if (workflow === true) return true;
+  return workflow === "true";
+}
+
+/** Content blocks of an assistant reply, or undefined for any other branch entry. */
+function assistantContent(message: { role?: string; content?: unknown } | undefined): ReplyBlock[] | undefined {
+  if (!message) return undefined;
+  if (message.role !== "assistant") return undefined;
+  if (!Array.isArray(message.content)) return undefined;
+  return message.content as ReplyBlock[];
+}
+
+/** Assistant message content from one branch entry, or undefined when it is not one. */
+function assistantReply(entry: unknown): ReplyBlock[] | undefined {
+  if (typeof entry !== "object") return undefined;
+  if (entry === null) return undefined;
+  const record = entry as { type?: string; message?: { role?: string; content?: unknown } };
+  if (record.type !== "message") return undefined;
+  return assistantContent(record.message);
+}
+
+/** True when this reply contains the tool call that issued `toolCallId`. */
+function issuedThisCall(content: ReplyBlock[], toolCallId: string): boolean {
+  return content.some((block) => block.type === "toolCall" && block.id === toolCallId);
+}
+
+/** Visible text of an assistant reply, joined in block order. */
+function replyText(content: ReplyBlock[]): string {
+  return content.flatMap((block) => (
+    block.type === "text" && typeof block.text === "string" ? [block.text] : []
+  )).join("\n");
+}
+
 /**
- * The ```js workflow block of the assistant message that issued `toolCallId`,
+ * The workflow script of the assistant message that issued `toolCallId`,
  * or undefined when pi-subagents would refuse to run it. A port of the
  * plugin's `readReplyWorkflowScript` (src/extension/reply-workflow-script.js,
- * not a public export): Pi persists the whole assistant message before its
- * tool calls run, so the message is on the branch when `tool_call` fires.
+ * not a public export): a tagged ```js workflow block wins, and a reply with
+ * no tagged block can use its single plain ```js block. Pi persists the whole
+ * assistant message before its tool calls run, so the message is on the
+ * branch when `tool_call` fires.
  */
 export function replyWorkflowScript(branch: ReadonlyArray<unknown>, toolCallId: string): string | undefined {
-  type Block = { type?: string; id?: string; name?: string; text?: unknown; arguments?: Record<string, unknown> };
   for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = branch[index] as { type?: string; message?: { role?: string; content?: unknown } } | undefined;
-    if (entry?.type !== "message" || entry.message?.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
-    const content = entry.message.content as Block[];
-    if (!content.some((block) => block.type === "toolCall" && block.id === toolCallId)) continue;
-    const replyCalls = content.filter((block) =>
-      block.type === "toolCall" && block.name === "subagent" && block.arguments?.workflow === true).length;
-    if (replyCalls > 1) return undefined;
-    const text = content.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
-    const blocks: string[] = [];
-    let fence: { marker: string; tagged: boolean; start: number } | undefined;
-    const lines = text.split("\n");
-    for (let line = 0; line < lines.length; line++) {
-      const value = lines[line].replace(/\r$/, "");
-      if (!fence) {
-        const open = OPEN_FENCE.exec(value);
-        if (open) fence = { marker: open[1], tagged: WORKFLOW_FENCE.test(value), start: line + 1 };
-        continue;
-      }
-      const close = CLOSE_FENCE.exec(value);
-      if (!close || close[1][0] !== fence.marker[0] || close[1].length < fence.marker.length) continue;
-      if (fence.tagged) blocks.push(lines.slice(fence.start, line).join("\n"));
-      fence = undefined;
-    }
-    if (fence?.tagged || blocks.length !== 1 || !blocks[0].trim()) return undefined;
-    return blocks[0];
+    const content = assistantReply(branch[index]);
+    if (!content || !issuedThisCall(content, toolCallId)) continue;
+    if (content.filter(isWorkflowTrueCall).length > 1) return undefined;
+    return workflowFenceBody(replyText(content));
   }
   return undefined;
 }

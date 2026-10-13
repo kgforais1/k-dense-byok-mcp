@@ -341,6 +341,7 @@ describe("subagent model inheritance", () => {
   // Since pi-subagents 0.43 children are declared inside a workflow script,
   // so none of them are reachable by walking the tool input; since 0.74 the
   // script is a ```js workflow block in the reply that issues `workflow: true`.
+  // Since 0.76 one plain ```js block is enough when that reply has no workflow fence.
   const parent = {
     provider: "openai-codex",
     id: "gpt-5.6-sol",
@@ -394,9 +395,33 @@ describe("subagent model inheritance", () => {
     expect(unknown(replyBranch("call-1", fenced(script)), "another-call")).toBe(true);
     expect(unknown(replyBranch("call-1", fenced(script) + "\n" + fenced(script)))).toBe(true);
     expect(unknown(replyBranch("call-1", fenced(script), 2))).toBe(true);
+    const stringTrue = (count: number) => [{
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: fenced(script) },
+          ...Array.from({ length: count }, (_, index) => ({
+            type: "toolCall", id: index === 0 ? "call-1" : `call-1-${index}`,
+            name: "subagent", arguments: { workflow: "true" },
+          })),
+        ],
+      },
+    }];
+    expect([...requireValue(workflowCallTargets({ workflow: true }, {
+      toolCallId: "call-1", sessionManager: { getBranch: () => stringTrue(1) },
+    })).agents]).toEqual(["scout"]);
+    expect(unknown(stringTrue(2))).toBe(true);
     expect(unknown(replyBranch("call-1", "```js workflow\n" + script))).toBe(true);
     expect(unknown(replyBranch("call-1", "No block, just prose."))).toBe(true);
     expect(requireValue(workflowCallTargets({ workflow: true })).dynamic).toBe(true);
+
+    // pi-subagents 0.76+ runs one untagged js block when the reply has no workflow fence.
+    const plain = `Plan:\n\`\`\`js\n${script}\n\`\`\`\nLaunching.`;
+    expect([...requireValue(workflowCallTargets({ workflow: true }, {
+      toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", plain) },
+    })).agents]).toEqual(["scout"]);
+    expect(unknown(replyBranch("call-1", `${plain}\n\`\`\`js\nreturn 1\n\`\`\``))).toBe(true);
 
     // A workflow fence quoted inside another fence is documentation, not the script.
     const quoted = "````md\n```js workflow\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n````\n" + fenced(script);

@@ -45,11 +45,15 @@ describe("background runner host aliases", () => {
 
   it("fails when a declared runner alias file is missing", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "kady-alias-"));
-    fs.writeFileSync(path.join(root, "index.js"), "");
-    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
-      name: "@earendil-works/pi-agent-core",
-      exports: { ".": "./index.js", "./node": "./missing.js" },
-    }));
-    expect(resolveHostPeerAliases(root).missing).toContain(CORE_NODE);
+    try {
+      fs.writeFileSync(path.join(root, "index.js"), "");
+      fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+        name: "@earendil-works/pi-agent-core",
+        exports: { ".": "./index.js", "./node": "./missing.js" },
+      }));
+      expect(resolveHostPeerAliases(root).missing).toContain(CORE_NODE);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

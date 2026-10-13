@@ -432,17 +432,20 @@ interface WorkflowFences {
   unclosed: boolean;
 }
 
+/** Opening fence on this line, or undefined when the line does not open one. */
 function openingFence(line: string, index: number): { marker: string; kind: WorkflowFenceKind | undefined; start: number } | undefined {
   const open = OPEN_FENCE.exec(line);
   if (!open) return undefined;
   return { marker: open[1], kind: workflowFenceKind(line), start: index + 1 };
 }
 
+/** True when this line closes the fence opened by `marker`. */
 function fenceCloses(line: string, marker: string): boolean {
   const close = CLOSE_FENCE.exec(line);
   return close !== null && close[1][0] === marker[0] && close[1].length >= marker.length;
 }
 
+/** True when the fence the plugin would run is still open at the end of the reply. */
 function fenceStillOpen(
   fence: { kind: WorkflowFenceKind | undefined } | undefined,
   taggedCount: number,
@@ -451,6 +454,7 @@ function fenceStillOpen(
   return fence?.kind === "plain" && taggedCount === 0;
 }
 
+/** Keep a closed fence body in the tagged or plain list. */
 function rememberFence(kind: WorkflowFenceKind | undefined, body: string, tagged: string[], plain: string[]): void {
   if (kind === "tagged") tagged.push(body);
   else if (kind === "plain") plain.push(body);
@@ -477,6 +481,7 @@ function workflowFences(text: string): WorkflowFences {
   return { tagged, plain, unclosed: fenceStillOpen(fence, tagged.length) };
 }
 
+/** Tagged bodies win. A single plain body is used only when there is no tagged body. */
 function chosenFenceBodies(tagged: string[], plain: string[]): string[] {
   if (tagged.length > 0) return tagged;
   if (plain.length === 1) return plain;
@@ -494,6 +499,7 @@ function workflowFenceBody(text: string): string | undefined {
 
 type ReplyBlock = { type?: string; id?: string; name?: string; text?: unknown; arguments?: Record<string, unknown> };
 
+/** The `workflow` argument of a tool-call block, or undefined when it has none. */
 function workflowArgument(block: ReplyBlock): unknown {
   const args = block.arguments;
   if (!args) return undefined;
@@ -509,6 +515,7 @@ function isWorkflowTrueCall(block: ReplyBlock): boolean {
   return workflow === "true";
 }
 
+/** Content blocks of an assistant reply, or undefined for any other branch entry. */
 function assistantContent(message: { role?: string; content?: unknown } | undefined): ReplyBlock[] | undefined {
   if (!message) return undefined;
   if (message.role !== "assistant") return undefined;
@@ -516,6 +523,7 @@ function assistantContent(message: { role?: string; content?: unknown } | undefi
   return message.content as ReplyBlock[];
 }
 
+/** Assistant message content from one branch entry, or undefined when it is not one. */
 function assistantReply(entry: unknown): ReplyBlock[] | undefined {
   if (typeof entry !== "object") return undefined;
   if (entry === null) return undefined;
@@ -524,10 +532,12 @@ function assistantReply(entry: unknown): ReplyBlock[] | undefined {
   return assistantContent(record.message);
 }
 
+/** True when this reply contains the tool call that issued `toolCallId`. */
 function issuedThisCall(content: ReplyBlock[], toolCallId: string): boolean {
   return content.some((block) => block.type === "toolCall" && block.id === toolCallId);
 }
 
+/** Visible text of an assistant reply, joined in block order. */
 function replyText(content: ReplyBlock[]): string {
   return content.flatMap((block) => (
     block.type === "text" && typeof block.text === "string" ? [block.text] : []

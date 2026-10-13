@@ -5,6 +5,8 @@
  * installed package does not declare, for every host, and still fails when
  * a declared alias cannot be resolved.
  */
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,5 +41,15 @@ describe("background runner host aliases", () => {
       expect(aliases["@earendil-works/pi-agent-core"]).toBeTruthy();
       expect(aliases).not.toHaveProperty(CORE_NODE);
     }
+  });
+
+  it("fails when a declared runner alias file is missing", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kady-alias-"));
+    fs.writeFileSync(path.join(root, "index.js"), "");
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      name: "@earendil-works/pi-agent-core",
+      exports: { ".": "./index.js", "./node": "./missing.js" },
+    }));
+    expect(resolveHostPeerAliases(root).missing).toContain(CORE_NODE);
   });
 });

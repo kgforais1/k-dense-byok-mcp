@@ -433,7 +433,8 @@ export function replyWorkflowScript(branch: ReadonlyArray<unknown>, toolCallId: 
     const content = entry.message.content as Block[];
     if (!content.some((block) => block.type === "toolCall" && block.id === toolCallId)) continue;
     const replyCalls = content.filter((block) =>
-      block.type === "toolCall" && block.name === "subagent" && block.arguments?.workflow === true).length;
+      block.type === "toolCall" && block.name === "subagent" &&
+      (block.arguments?.workflow === true || block.arguments?.workflow === "true")).length;
     if (replyCalls > 1) return undefined;
     const text = content.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
     const tagged: string[] = [];

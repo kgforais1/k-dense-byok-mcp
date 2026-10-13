@@ -2,11 +2,12 @@
 
 ### 2026-10-13 — Extension harness bump (pi-subagents 0.78, pi-web-access 0.40, skills 1.7.2)
 
-- **Pins:** Stay on Pi 1.1.0. Move pi-subagents 0.74.0 → 0.78.0, pi-web-access 0.35.0 → 0.40.0, and skills 1.7.0 → 1.7.2. Peers still accept Pi ≥ 0.86.1. Pi 1.2 is a package split (pi-mcp, pi-codemode) and is not part of this bump; 0.78 is the release that starts background children on 1.2 again, and it also runs on 1.1.
+- **Pins:** Stay on Pi 1.1.0. Move pi-subagents 0.74.0 → 0.78.0, pi-web-access 0.35.0 → 0.40.0, and skills 1.7.0 → 1.7.2. Peers still accept Pi ≥ 0.86.1. Pi 1.1.0 already depends on `pi-mcp` and `pi-codemode`; this bump does not move the Pi version line. 0.78 runs on 1.1 and also starts background children on 1.2 again.
 - **Host seams:** The patch script now requires 0.78.0. Schedule save/read keep the new `missionId` field while still pinning the host model. The headless drain skip keeps `.then(resultWatcher.deliverPendingResults)`. The `pi-agent-core/node` seam is removed because 0.78 marks that alias optional and skips it when the installed Pi does not export it.
 - **Workflow scripts:** 0.76 runs one untagged `js` block when the reply has no `js workflow` fence. `replyWorkflowScript` follows that rule so budget gating sees the script the plugin will run. Two untagged blocks stay dynamic.
 - **Skills layout:** skills 1.7.1 installs `--agent pi` into `.agents/skills`. Staging follows that path. Live project skills remain `.pi/skills`, which Pi 1.1 discovers.
-- **Left in place:** reviewer/oracle/evidence-auditor acceptance reports are no longer written unless the call passes `acceptance` (0.78). Kady does not read those files. `run-history.jsonl` is no longer written; nothing here reads it. pi-web-access 0.38–0.40 search and fetch changes are opt-in or provider-side; the MCP SDK bump inside that package is overridden to this repo's SDK.
+- **Left in place:** reviewer/oracle/evidence-auditor acceptance reports are no longer written unless the call passes `acceptance` (0.78). Kady does not read those files. `run-history.jsonl` is no longer written; nothing here reads it. pi-web-access 0.38–0.40 search and fetch changes are opt-in or provider-side; the MCP SDK bump inside that package is overridden to this repo's SDK. The chat chip still collapses only a tagged workflow fence.
+- **Review corrections:** OpenCode Muse Spark 1.3 Free and Kilo Step 5 Preview Free both approved. Follow-up: the Pi 1.1 pin note no longer claims that 1.2 is what split out MCP and codemode; a reply counts `workflow: "true"` the same way the plugin does; a fixture package asserts that a declared runner alias with a missing file still fails; the skills staging comment names `.agents/`.
 
 ### 2026-10-12 — Pi 1.1 security upgrade and compatibility repairs (PR #56)
 

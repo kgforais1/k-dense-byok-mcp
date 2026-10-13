@@ -47,7 +47,7 @@ export interface SkillLockEntry {
 export interface FetchedSkills {
   /** Directory holding `<name>/SKILL.md` trees, ready to install from. */
   skillsDir: string;
-  /** Staging root (parent of `.pi/`), where the lock file lives. */
+  /** Staging root (parent of `.agents/`), where the lock file lives. */
   stagingDir: string;
   lock: Record<string, SkillLockEntry>;
 }

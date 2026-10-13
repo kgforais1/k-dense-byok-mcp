@@ -89,6 +89,7 @@ export function meteredStream(base, owner, usingOAuth) {
 // the flag and refresh immediately; MCP that connects later is filtered at its
 // own registration. Fail visibly if a Pi upgrade changes this shape rather than
 // silently leaving a restricted child with MCP tools it must not have.
+/** No explicit tool list means the child is not under a capability ceiling. */
 function childHasNoToolCeiling(tools) {
   return tools === undefined || tools.length === 0;
 }
@@ -100,6 +101,14 @@ function childMcpAllowlistSeam(session) {
   return session;
 }
 
+/**
+ * Restore a strict MCP ceiling for one child session.
+ *
+ * Input is the child `AgentSession` and its launch, whose `tools` list is the
+ * ceiling. When that list is present and non-empty, unlisted `mcp__` tools are
+ * removed, including tools already registered. Returns nothing. Requires the
+ * pinned Pi fields `_allowlistFiltersMcp` and `_refreshToolRegistry`.
+ */
 export function restrictChildMcpToAllowlist(session, launch) {
   if (childHasNoToolCeiling(launch.tools)) return;
   if (!childMcpAllowlistSeam(session)) {

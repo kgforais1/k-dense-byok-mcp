@@ -14,7 +14,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 import { waitFor } from "./helpers/timing.ts";
-import * as sdk from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { PROJECTS_ROOT } from "../src/config.ts";
 import { ensureProjectExists } from "../src/projects.ts";
 import { disposeProjectSessions } from "../src/agent/session-registry.ts";
@@ -29,7 +29,7 @@ const LATE_MCP = "mcp__echo__echo"; // registers when the MCP echo server connec
 const EARLY_MCP = "mcp__fixture__denied"; // registered at construction as a custom tool
 
 /** An MCP-named tool present before the host seam runs (custom = already registered). */
-const earlyMcpTool: sdk.ToolDefinition = {
+const earlyMcpTool: ToolDefinition = {
   name: EARLY_MCP,
   label: "Early MCP fixture",
   description: "Forbidden MCP fixture, registered before the allowlist seam.",
@@ -47,7 +47,11 @@ async function createChild(tools?: string[]) {
   }));
   vi.stubEnv("KADY_SUBAGENT_HOST_MODULE", pathToFileURL(path.resolve(import.meta.dirname, "../src/agent/subagent-host.mjs")).href);
   vi.stubEnv("PI_SUBAGENT_CHILD", "");
-  const captured: sdk.AgentSession[] = [];
+  // Load the module object at runtime so the child factory still receives every
+  // export. A static namespace import is what DeepSource flags, and naming each
+  // export would drop ones the factory reads.
+  const sdk = await import("@earendil-works/pi-coding-agent");
+  const captured: AgentSession[] = [];
   const { createDefaultChildSessionFactory } = await internal("src/runs/shared/child-session.js");
   const factory = createDefaultChildSessionFactory({
     loadPiCodingAgent: () => Promise.resolve({
@@ -69,11 +73,11 @@ async function createChild(tools?: string[]) {
   return { child, factory, session: requireValue(captured[0]) };
 }
 
-const registered = (session: sdk.AgentSession) => session.getAllTools().map((tool) => tool.name);
-const callable = (session: sdk.AgentSession) => session.getCallableToolNames();
+const registered = (session: AgentSession) => session.getAllTools().map((tool) => tool.name);
+const callable = (session: AgentSession) => session.getCallableToolNames();
 
 /** MCP connects after session start; wait until the extension has registered it. */
-async function waitLateRegistered(session: sdk.AgentSession) {
+async function waitLateRegistered(session: AgentSession) {
   await waitFor(() => {
     expect(session.extensionRunner.getAllRegisteredTools().some((tool) => tool.definition.name === LATE_MCP)).toBe(true);
   });

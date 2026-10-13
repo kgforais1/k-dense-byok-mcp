@@ -94,8 +94,9 @@ starts backend + frontend together; it is the only supported full-app path.
   each project's `sandbox/.pi/agents/*.md` from `src/agent/subagents.ts`
   (write-if-missing; user edits win). Budget gating and cost ledgering for
   child runs live in `src/agent/subagent-bridge.ts`.
-- Pi 1.0 / pi-subagents 0.74 accepts `workflow: true` with one JavaScript
-  workflow block in the issuing assistant message, or a workflow path.
+- Pi 1.1 / pi-subagents 0.78 accepts `workflow: true` with one JavaScript
+  workflow block in the issuing assistant message (a single plain ```js
+  block when no workflow fence is present), or a workflow path.
   `workflowCallTargets()` locates that script and `workflowScriptTargets()`
   extracts literal agent/model targets; computed targets disable model pinning.
   The native child runtime meters actual resolved model calls independently.

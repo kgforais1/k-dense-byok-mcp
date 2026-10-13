@@ -2,8 +2,10 @@
  * Fetching skills from any source, via the `skills` CLI (vercel-labs/skills).
  *
  * The CLI is the *fetcher* only. It downloads into a disposable staging dir
- * under `KADY_SKILLS_CACHE_DIR`, laid out as `<staging>/.pi/skills/<name>/`
- * because `-a pi` targets exactly the directory shape Pi discovers. Installing
+ * under `KADY_SKILLS_CACHE_DIR`, laid out as `<staging>/.agents/skills/<name>/`
+ * because skills 1.7.1+ installs `--agent pi` into the universal skills
+ * directory. Live project skills stay in `.pi/skills`, which Pi 1.1 discovers;
+ * the sync step copies the staged trees there. Installing
  * from there into a project's (or the user's) live skill dirs stays with
  * `skills-sync.ts`, which remains their only writer — that split is what lets
  * us take the CLI's source resolution (GitHub/GitLab/git/archive/local paths,
@@ -100,9 +102,9 @@ export function stagingDirFor(cacheKey: string): string {
   return path.join(KADY_SKILLS_CACHE_DIR, cacheKey);
 }
 
-/** `<staging>/.pi/skills` — where `-a pi` installs. */
+/** `<staging>/.agents/skills` — where `skills` 1.7.1+ installs `--agent pi`. */
 export function stagedSkillsDir(stagingDir: string): string {
-  return path.join(stagingDir, ".pi", "skills");
+  return path.join(stagingDir, ".agents", "skills");
 }
 
 /** Built from a string so no raw ESC byte has to live in this source file. */
@@ -150,7 +152,7 @@ function buildAddArgs(options: FetchSkillsOptions): string[] {
   const names = options.names?.length ? options.names : ["*"];
   const args = ["add", source];
   for (const name of names) args.push("--skill", name);
-  // `-a pi` writes `.pi/skills/<name>`; `--copy` keeps real trees rather than
+  // `--agent pi` writes `.agents/skills/<name>` (skills 1.7.1+); `--copy` keeps real trees rather than
   // symlinks so our directory hashes describe actual content; `-y` suppresses
   // every prompt (the CLI is otherwise interactive).
   args.push("--agent", "pi", "--copy", "--yes");

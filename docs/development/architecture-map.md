@@ -246,8 +246,8 @@ is a product behavior change and is reviewed separately.
 2. Every origin is fetched through the bundled `skills` CLI
    (`server/src/agent/skills-fetch.ts`), which downloads into a
    disposable staging cache (`KADY_SKILLS_CACHE_DIR`, default
-   `~/.kady/skills-cache`) shaped as `.pi/skills/<name>/` because
-   `-a pi --copy` targets exactly our layout.
+   `~/.kady/skills-cache`) shaped as `.agents/skills/<name>/` because
+   skills 1.7.1+ installs `--agent pi` there. Live skills stay in `.pi/skills`.
 3. The CLI is a **fetcher only**; its stdout is never parsed
    (truth = the staged tree + `skills-lock.json`).
 4. `skills-sync.ts` remains the sole writer of live skill dirs, so
@@ -274,7 +274,7 @@ is a product behavior change and is reviewed separately.
 
 ### E. Subagent delegation
 
-1. The lead calls the `subagent` tool from **pi-subagents** 0.74 using
+1. The lead calls the `subagent` tool from **pi-subagents** 0.78 using
    `workflow: true` plus one JavaScript workflow block in the issuing message,
    or a workflow path. `workflowScript` remains an internal carrier.
 2. `workflowCallTargets()` locates the script; `workflowScriptTargets()`

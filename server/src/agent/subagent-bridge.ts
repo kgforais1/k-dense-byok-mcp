@@ -376,8 +376,9 @@ const UNKNOWN_SCRIPT = (): WorkflowScriptTargets => ({ agents: new Set(), models
 /**
  * Script targets for a `subagent` tool call, or undefined when it runs no script.
  *
- * Mirrors how pi-subagents 0.74 resolves the script it will execute: the one
+ * Mirrors how pi-subagents 0.78 resolves the script it will execute: the one
  * ```js workflow block of the assistant message that issued `workflow: true`,
+ * or the reply's single plain ```js block when no workflow fence is present,
  * or a `workflow` file path resolved against the request cwd. A script that
  * cannot be read here — a named workflow resource, a missing file, a reply
  * without exactly one block — reports `dynamic`, which widens billing to
@@ -411,15 +412,18 @@ export function workflowCallTargets(
 }
 
 const WORKFLOW_FENCE = /^```(?:js|javascript) workflow[ \t]*$/;
+const PLAIN_JS_FENCE = /^```(?:js|javascript)[ \t]*$/;
 const OPEN_FENCE = /^(`{3,}|~{3,})/;
 const CLOSE_FENCE = /^(`{3,}|~{3,})[ \t]*$/;
 
 /**
- * The ```js workflow block of the assistant message that issued `toolCallId`,
+ * The workflow script of the assistant message that issued `toolCallId`,
  * or undefined when pi-subagents would refuse to run it. A port of the
  * plugin's `readReplyWorkflowScript` (src/extension/reply-workflow-script.js,
- * not a public export): Pi persists the whole assistant message before its
- * tool calls run, so the message is on the branch when `tool_call` fires.
+ * not a public export): a tagged ```js workflow block wins, and a reply with
+ * no tagged block can use its single plain ```js block. Pi persists the whole
+ * assistant message before its tool calls run, so the message is on the
+ * branch when `tool_call` fires.
  */
 export function replyWorkflowScript(branch: ReadonlyArray<unknown>, toolCallId: string): string | undefined {
   type Block = { type?: string; id?: string; name?: string; text?: unknown; arguments?: Record<string, unknown> };
@@ -432,22 +436,31 @@ export function replyWorkflowScript(branch: ReadonlyArray<unknown>, toolCallId: 
       block.type === "toolCall" && block.name === "subagent" && block.arguments?.workflow === true).length;
     if (replyCalls > 1) return undefined;
     const text = content.flatMap((block) => block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
-    const blocks: string[] = [];
-    let fence: { marker: string; tagged: boolean; start: number } | undefined;
+    const tagged: string[] = [];
+    const plain: string[] = [];
+    let fence: { marker: string; kind: "tagged" | "plain" | undefined; start: number } | undefined;
     const lines = text.split("\n");
     for (let line = 0; line < lines.length; line++) {
       const value = lines[line].replace(/\r$/, "");
       if (!fence) {
         const open = OPEN_FENCE.exec(value);
-        if (open) fence = { marker: open[1], tagged: WORKFLOW_FENCE.test(value), start: line + 1 };
+        if (open) {
+          fence = {
+            marker: open[1],
+            kind: WORKFLOW_FENCE.test(value) ? "tagged" : PLAIN_JS_FENCE.test(value) ? "plain" : undefined,
+            start: line + 1,
+          };
+        }
         continue;
       }
       const close = CLOSE_FENCE.exec(value);
       if (!close || close[1][0] !== fence.marker[0] || close[1].length < fence.marker.length) continue;
-      if (fence.tagged) blocks.push(lines.slice(fence.start, line).join("\n"));
+      if (fence.kind) (fence.kind === "tagged" ? tagged : plain).push(lines.slice(fence.start, line).join("\n"));
       fence = undefined;
     }
-    if (fence?.tagged || blocks.length !== 1 || !blocks[0].trim()) return undefined;
+    const blocks = tagged.length > 0 ? tagged : plain.length === 1 ? plain : [];
+    const unclosed = fence?.kind === "tagged" || (fence?.kind === "plain" && tagged.length === 0);
+    if (unclosed || blocks.length !== 1 || !blocks[0].trim()) return undefined;
     return blocks[0];
   }
   return undefined;

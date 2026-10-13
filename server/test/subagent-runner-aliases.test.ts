@@ -1,8 +1,9 @@
 /**
- * KADY_HOST_CORE_NODE_ALIAS_V1: pi-subagents refuses a background launch when
- * a host alias it lists cannot be resolved, and Pi 1.0 dropped the
- * `@earendil-works/pi-agent-core/node` export it still lists. Without the
- * seam every async `subagent` call failed before a child started.
+ * pi-subagents 0.78 marks `@earendil-works/pi-agent-core/node` optional.
+ * Pi 1.0 dropped that export, and 0.74 treated the missing alias as fatal,
+ * so every background launch failed. 0.78 skips an optional subpath the
+ * installed package does not declare, for every host, and still fails when
+ * a declared alias cannot be resolved.
  */
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,16 +29,15 @@ afterEach(() => {
 });
 
 describe("background runner host aliases", () => {
-  it("resolves every alias the installed Pi still provides under Kady", () => {
-    process.env.KADY_SUBAGENT_HOST_MODULE = "file:///kady-host.mjs";
-    const { aliases, missing } = resolveHostPeerAliases(piPackageRoot);
-    expect(missing).toEqual([]);
-    expect(aliases["@earendil-works/pi-coding-agent"]).toBeTruthy();
-    expect(aliases["@earendil-works/pi-agent-core"]).toBeTruthy();
-  });
-
-  it("leaves upstream behaviour unchanged outside a Kady-hosted process", () => {
-    delete process.env.KADY_SUBAGENT_HOST_MODULE;
-    expect(resolveHostPeerAliases(piPackageRoot).missing).toContain(CORE_NODE);
+  it("resolves every alias the installed Pi still provides", () => {
+    for (const hosted of [true, false]) {
+      if (hosted) process.env.KADY_SUBAGENT_HOST_MODULE = "file:///kady-host.mjs";
+      else delete process.env.KADY_SUBAGENT_HOST_MODULE;
+      const { aliases, missing } = resolveHostPeerAliases(piPackageRoot);
+      expect(missing).toEqual([]);
+      expect(aliases["@earendil-works/pi-coding-agent"]).toBeTruthy();
+      expect(aliases["@earendil-works/pi-agent-core"]).toBeTruthy();
+      expect(aliases).not.toHaveProperty(CORE_NODE);
+    }
   });
 });

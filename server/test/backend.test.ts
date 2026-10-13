@@ -417,11 +417,11 @@ describe("subagent model inheritance", () => {
     expect(requireValue(workflowCallTargets({ workflow: true })).dynamic).toBe(true);
 
     // pi-subagents 0.76+ runs one untagged js block when the reply has no workflow fence.
-    const plain = "Plan:\n```js\n" + script + "\n```\nLaunching.";
+    const plain = `Plan:\n\`\`\`js\n${script}\n\`\`\`\nLaunching.`;
     expect([...requireValue(workflowCallTargets({ workflow: true }, {
       toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", plain) },
     })).agents]).toEqual(["scout"]);
-    expect(unknown(replyBranch("call-1", plain + "\n```js\nreturn 1\n```"))).toBe(true);
+    expect(unknown(replyBranch("call-1", `${plain}\n\`\`\`js\nreturn 1\n\`\`\``))).toBe(true);
 
     // A workflow fence quoted inside another fence is documentation, not the script.
     const quoted = "````md\n```js workflow\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n````\n" + fenced(script);

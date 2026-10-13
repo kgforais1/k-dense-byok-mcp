@@ -89,10 +89,20 @@ export function meteredStream(base, owner, usingOAuth) {
 // the flag and refresh immediately; MCP that connects later is filtered at its
 // own registration. Fail visibly if a Pi upgrade changes this shape rather than
 // silently leaving a restricted child with MCP tools it must not have.
+function childHasNoToolCeiling(tools) {
+  return tools === undefined || tools.length === 0;
+}
+
+/** The pinned Pi fields this seam writes. Null means the SDK shape drifted. */
+function childMcpAllowlistSeam(session) {
+  if (typeof session._allowlistFiltersMcp !== "boolean") return null;
+  if (typeof session._refreshToolRegistry !== "function") return null;
+  return session;
+}
+
 export function restrictChildMcpToAllowlist(session, launch) {
-  const tools = launch.tools;
-  if (tools === undefined || tools.length === 0) return;
-  if (typeof session._allowlistFiltersMcp !== "boolean" || typeof session._refreshToolRegistry !== "function") {
+  if (childHasNoToolCeiling(launch.tools)) return;
+  if (!childMcpAllowlistSeam(session)) {
     throw new Error(
       "Kady child MCP allowlist seam no longer matches the pinned Pi SDK " +
       "(AgentSession._allowlistFiltersMcp/_refreshToolRegistry). Review " +

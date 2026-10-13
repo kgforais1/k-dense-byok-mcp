@@ -136,6 +136,7 @@ export interface VerifierReconcileResult {
   skipped?: "malformed-settings" | "unavailable";
 }
 
+/** Settings exist but cannot be projected, so the file is left untouched. */
 function malformedSettings(): VerifierReconcileResult {
   return { changed: false, routed: [], skipped: "malformed-settings" };
 }
@@ -180,6 +181,7 @@ function userOverrideWins(isOwned: boolean, current: unknown): boolean {
   return !isOwned && current !== undefined;
 }
 
+/** True when this specialist's own frontmatter already names a model. */
 function hasOwnModel(agents: Map<string, AgentFile>, name: string): boolean {
   if (!agents.has(name)) return false;
   return Boolean(requireValue(agents.get(name)).model);
@@ -195,6 +197,7 @@ function desiredModel(name: string, desired: string | undefined, agents: Map<str
   return desired;
 }
 
+/** A non-object override is the user's data and is not rewritten. */
 function malformedEntry(entry: unknown): boolean {
   return entry !== undefined && !isRecord(entry);
 }
@@ -223,6 +226,7 @@ function decideAgent(
   return { kind: "keep" };
 }
 
+/** Skip malformed entries, released ownership, and overrides Kady did not write. */
 function skipAgent(entry: unknown, current: unknown, ownedValue: string | undefined): boolean {
   if (malformedEntry(entry)) return true;
   if (releasedByUser(ownedValue, current)) return true;
@@ -236,26 +240,35 @@ function applyDesired(overrides: Rec, name: string, entry: unknown, current: unk
   return true;
 }
 
-/** Remove Kady's model key, keeping any other keys the override still has. */
-function clearOwned(overrides: Rec, name: string, entry: unknown): void {
-  const { model: _model, ...rest } = isRecord(entry) ? entry : {};
-  if (Object.keys(rest).length > 0) {
-    overrides[name] = rest;
-    return;
-  }
-  delete overrides[name];
+/** Drop one override name without deleting a computed key on the live object. */
+function withoutOverride(overrides: Rec, name: string): Rec {
+  return Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== name));
 }
 
-function applyDecision(overrides: Rec, nextOwned: Record<string, string>, name: string, decision: AgentDecision): boolean {
+/** Remove Kady's model key, keeping any other keys the override still has. */
+function clearOwned(overrides: Rec, name: string, entry: unknown): Rec {
+  const source = isRecord(entry) ? entry : {};
+  const rest = Object.fromEntries(Object.entries(source).filter(([key]) => key !== "model"));
+  if (Object.keys(rest).length > 0) return { ...overrides, [name]: rest };
+  return withoutOverride(overrides, name);
+}
+
+/** Apply one decision. Returns the override map to keep, which may be a new object. */
+function applyDecision(
+  overrides: Rec,
+  nextOwned: Record<string, string>,
+  name: string,
+  decision: AgentDecision,
+): { changed: boolean; overrides: Rec } {
   if (decision.kind === "set") {
     nextOwned[name] = decision.want;
-    return applyDesired(overrides, name, decision.entry, decision.current, decision.want);
+    return {
+      changed: applyDesired(overrides, name, decision.entry, decision.current, decision.want),
+      overrides,
+    };
   }
-  if (decision.kind === "clear") {
-    clearOwned(overrides, name, decision.entry);
-    return true;
-  }
-  return false;
+  if (decision.kind === "clear") return { changed: true, overrides: clearOwned(overrides, name, decision.entry) };
+  return { changed: false, overrides };
 }
 
 /** Project every verifier, plus any name Kady still owns from an older roster. */
@@ -264,15 +277,19 @@ function projectVerifierOverrides(
   owned: Record<string, string>,
   desired: string | undefined,
   agents: Map<string, AgentFile>,
-): { changed: boolean; nextOwned: Record<string, string> } {
+): { changed: boolean; nextOwned: Record<string, string>; overrides: Rec } {
   const nextOwned: Record<string, string> = {};
   let changed = false;
+  let current = overrides;
   for (const name of new Set([...verifierAgentNames(), ...Object.keys(owned)])) {
-    if (applyDecision(overrides, nextOwned, name, decideAgent(name, overrides, owned, desired, agents))) changed = true;
+    const applied = applyDecision(current, nextOwned, name, decideAgent(name, current, owned, desired, agents));
+    current = applied.overrides;
+    if (applied.changed) changed = true;
   }
-  return { changed, nextOwned };
+  return { changed, nextOwned, overrides: current };
 }
 
+/** Write the override block, or remove it when the projection left nothing. */
 function assignOverrides(subagents: Rec, overrides: Rec): void {
   if (Object.keys(overrides).length > 0) subagents.agentOverrides = overrides;
   else delete subagents.agentOverrides;
@@ -285,6 +302,7 @@ function withoutEmptySubagents(settings: Rec, subagents: Rec): Rec {
   return next;
 }
 
+/** Replace the sidecar with the committed ownership, or remove it when nothing is owned. */
 function writeFinalOwnership(paths: ProjectPaths, nextOwned: Record<string, string>): void {
   if (Object.keys(nextOwned).length > 0) atomicJson(sidecarPath(paths), { version: 1, owned: nextOwned });
   else fs.rmSync(sidecarPath(paths), { force: true });
@@ -320,10 +338,12 @@ function codeUnitOrder(left: string, right: string): number {
   return 0;
 }
 
+/** Sort ownership entries by their agent name. */
 function entryOrder(left: [string, string], right: [string, string]): number {
   return codeUnitOrder(left[0], right[0]);
 }
 
+/** True when both maps contain the same agent names and model refs. */
 function sameOwnership(left: Record<string, string>, right: Record<string, string>): boolean {
   return JSON.stringify(Object.entries(left).sort(entryOrder)) === JSON.stringify(Object.entries(right).sort(entryOrder));
 }
@@ -337,11 +357,13 @@ function configuredVerifier(verifierModel: string | undefined): string | undefin
   return normalizeModelRef(verifierModel);
 }
 
+/** An unset model is unavailable. A configured one uses the caller's check. */
 function verifierIsAvailable(configured: string | undefined, isAvailable: (ref: string) => boolean): boolean {
   if (!configured) return false;
   return isAvailable(configured);
 }
 
+/** Build the public result, including the unavailable skip when a model cannot run. */
 function reconcileResult(
   changed: boolean,
   nextOwned: Record<string, string>,
@@ -353,18 +375,7 @@ function reconcileResult(
   return result;
 }
 
-/**
- * Project the verifier model into one project's agent overrides.
- *
- * `verifierModel` undefined (not set) removes every entry Kady owns.
- * `isAvailable` says whether the model can run now (resolves, provider
- * connected); an unavailable model is treated like an unset one, so verifiers
- * fall back to their usual model instead of failing at launch.
- *
- * A project without a settings file has never had a session built; it is
- * left untouched (its first session build reconciles it) unless
- * `createSettings` asks for the file, as listing its specialists does.
- */
+/** The model to project, or nothing when it cannot run right now. */
 function activeVerifier(configured: string | undefined, available: boolean): string | undefined {
   if (!available) return undefined;
   return configured;
@@ -390,7 +401,7 @@ function projectVerifierModel(
     paths,
     settings: loaded.settings,
     subagents: copied.subagents,
-    overrides: copied.overrides,
+    overrides: projected.overrides,
     owned,
     nextOwned: projected.nextOwned,
     changed: projected.changed,
@@ -400,6 +411,18 @@ function projectVerifierModel(
   return reconcileResult(projected.changed, projected.nextOwned, configured, available);
 }
 
+/**
+ * Project the verifier model into one project's agent overrides.
+ *
+ * `verifierModel` undefined (not set) removes every entry Kady owns.
+ * `isAvailable` says whether the model can run now (resolves, provider
+ * connected); an unavailable model is treated like an unset one, so verifiers
+ * fall back to their usual model instead of failing at launch.
+ *
+ * A project without a settings file has never had a session built; it is
+ * left untouched (its first session build reconciles it) unless
+ * `createSettings` asks for the file, as listing its specialists does.
+ */
 export function reconcileVerifierModels(
   paths: ProjectPaths,
   verifierModel: string | undefined,

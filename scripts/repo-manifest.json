@@ -319,7 +319,7 @@
       "category": "release-record",
       "path": ".github/dependabot.yml",
       "name": "Dependabot config",
-      "description": "Dependabot configuration for server/ and web/ packages. Not used for the pinned Pi harness packages, which the project upgrades deliberately."
+      "description": "Dependabot configuration for server/ and web/ npm packages, the server/src/helpers uv lock, and GitHub Actions. Not used for the pinned Pi harness packages, which the project upgrades deliberately."
     }
   ]
 }

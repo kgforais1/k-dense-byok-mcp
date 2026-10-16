@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-10-15 — Weekly dependency audit and vulnerable-actions check
+
+- **Gap:** No workflow audited dependencies, so a new advisory surfaced only as a Dependabot alert, and Dependabot alerts never cover SHA-pinned actions (`astral-sh/setup-uv`). The helper venv's `uv.lock` had no Dependabot entry, so it could get alerts but no security-update PRs.
+- **Added:** `.github/workflows/dependency-audit.yml`. The weekly `audit` job gates `npm audit --omit=dev --audit-level=high` for `server/` and `web/` plus `pip-audit` over the exported helper lock. The `vulnerable-actions` job runs zizmor 1.31.0's `known-vulnerable-actions` audit on PRs and weekly, fails closed without a token and on a zizmor error, and ignores zizmor's other audits. `dependabot.yml` gains a `uv` entry for `server/src/helpers`.
+- **Scope choice:** Production dependencies only. At the time of writing `web/` has eight high advisories, all in dev tooling (`shadcn` and `eslint-config-next` via `fast-glob`/`micromatch`/`braces`). Gating them would keep the job red with no runtime exposure; Dependabot alerts still report them.
+- **Left in place:** The Pi-harness `ignore` rules in `dependabot.yml` (now commented: they also suppress security PRs for those packages, which alerts and this audit still report).
+
 ### 2026-10-13 — Extension harness bump (pi-subagents 0.78, pi-web-access 0.40, skills 1.7.2)
 
 - **Pins:** Stay on Pi 1.1.0. Move pi-subagents 0.74.0 → 0.78.0, pi-web-access 0.35.0 → 0.40.0, and skills 1.7.0 → 1.7.2. Peers still accept Pi ≥ 0.86.1. Pi 1.1.0 already depends on `pi-mcp` and `pi-codemode`; this bump does not move the Pi version line. 0.78 runs on 1.1 and also starts background children on 1.2 again.

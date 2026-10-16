@@ -10,7 +10,10 @@ updates:
           - "minor"
           - "patch"
     # The Pi harness is pinned to exact versions on purpose (see AGENTS.md);
-    # upgrading it is a deliberate act, not a routine dependency bump.
+    # upgrading it is a deliberate act, not a routine dependency bump. These
+    # ignore rules also stop Dependabot opening *security* PRs for them;
+    # Dependabot alerts and the weekly dependency-audit workflow still report
+    # their advisories.
     ignore:
       - dependency-name: "@earendil-works/*"
       - dependency-name: "pi-subagents"
@@ -18,6 +21,17 @@ updates:
       - dependency-name: "skills"
   - package-ecosystem: "npm"
     directory: "/web"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+  # Helper venv for the scientific previews (server/src/helpers/uv.lock).
+  # Needed for Dependabot security-update PRs against that lock.
+  - package-ecosystem: "uv"
+    directory: "/server/src/helpers"
     schedule:
       interval: "weekly"
     groups:

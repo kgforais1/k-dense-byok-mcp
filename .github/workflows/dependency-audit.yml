@@ -65,7 +65,7 @@ jobs:
         run: |
           uv export --project server/src/helpers --frozen --no-dev --no-hashes \
             --format requirements-txt -o "$RUNNER_TEMP/helpers-req.txt"
-          uvx pip-audit==2.10.1 --no-deps --disable-pip -r "$RUNNER_TEMP/helpers-req.txt"
+          uvx --no-build pip-audit==2.10.1 --no-deps --disable-pip -r "$RUNNER_TEMP/helpers-req.txt"
 
   vulnerable-actions:
     name: Known-vulnerable actions (zizmor)
@@ -89,7 +89,7 @@ jobs:
             exit 1
           fi
           set +e
-          uvx --python 3.12 zizmor==1.31.0 --format=json . > "$RUNNER_TEMP/zizmor.json"
+          uvx --no-build --python 3.12 zizmor==1.31.0 --format=json . > "$RUNNER_TEMP/zizmor.json"
           rc=$?
           set -e
           # 0 = no findings, 10-14 = findings by severity; anything else

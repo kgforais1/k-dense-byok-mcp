@@ -415,13 +415,6 @@ describe("subagent model inheritance", () => {
     expect(unknown(replyBranch("call-1", "No block, just prose."))).toBe(true);
     expect(requireValue(workflowCallTargets({ workflow: true })).dynamic).toBe(true);
 
-    // pi-subagents 0.76+ runs one untagged js block when the reply has no workflow fence.
-    const plain = `Plan:\n\`\`\`js\n${script}\n\`\`\`\nLaunching.`;
-    expect([...requireValue(workflowCallTargets({ workflow: true }, {
-      toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", plain) },
-    })).agents]).toEqual(["scout"]);
-    expect(unknown(replyBranch("call-1", `${plain}\n\`\`\`js\nreturn 1\n\`\`\``))).toBe(true);
-
     // A workflow fence quoted inside another fence is documentation, not the script.
     const quoted = "````md\n```js workflow\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n````\n" + fenced(script);
     expect([...requireValue(workflowCallTargets({ workflow: true }, {
@@ -429,14 +422,14 @@ describe("subagent model inheritance", () => {
     })).agents]).toEqual(["scout"]);
 
     // Since 0.76 a reply with no tagged block runs its only plain js block.
-    const plainReply = (text: string) => requireValue(workflowCallTargets({ workflow: "true" }, {
+    const plain = (text: string) => requireValue(workflowCallTargets({ workflow: "true" }, {
       toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", text) },
     }));
-    expect([...plainReply("```js\n" + script + "\n```").agents]).toEqual(["scout"]);
-    expect(plainReply("```js\n" + script + "\n```\n```javascript\nreturn 1\n```").dynamic).toBe(true);
-    expect(plainReply("```js\n" + script).dynamic).toBe(true);
+    expect([...plain("```js\n" + script + "\n```").agents]).toEqual(["scout"]);
+    expect(plain("```js\n" + script + "\n```\n```javascript\nreturn 1\n```").dynamic).toBe(true);
+    expect(plain("```js\n" + script).dynamic).toBe(true);
     // A tagged block still wins over plain example blocks.
-    expect([...plainReply("```js\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n" + fenced(script)).agents]).toEqual(["scout"]);
+    expect([...plain("```js\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n" + fenced(script)).agents]).toEqual(["scout"]);
   });
 
   it("reads the children of pi-subagents' own named workflows from their args", () => {

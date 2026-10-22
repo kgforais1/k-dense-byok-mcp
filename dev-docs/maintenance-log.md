@@ -1,5 +1,13 @@
 # Maintenance Log
 
+### 2026-10-22 — Upstream sync #60 (Pi 1.3.0)
+
+- **Merged:** 1 upstream commit, `6a55f5ce6f4b` (44 files). Pi 1.1.0 → 1.3.0, pi-web-access 0.40.0 → 0.41.0; pi-subagents unchanged at 0.78.0. The fork's skills 1.7.2 pin is kept (upstream 1.7.0).
+- **Conflicts (11):** pins and lockfile (lockfile regenerated with `npm install`); `AGENTS.md` (upstream prose, fork skills pin); the Azure rename the fork had solved separately in PR #56 — upstream's `canonicalProviderId` is now the single rename table, the fork's `normalizeProviderId` is removed and `normalizeModelRef` wraps it; `session-registry.ts` keeps the fork's `persistedModel` (local-only resolve, which already prevents the OpenRouter-vendor fallback upstream's new guard addresses) and gains `pruneStaleOpenRouterCatalog`; `subagent-bridge.ts` keeps the fork's helper split, which already matched upstream's plain-js fallback and `"true"` handling; `chat-tab.tsx` (the fork moved the code, so upstream's one-line comment went to `chat-message-row.tsx`); four test files unioned and ported to `requireValue` and Pi 1.2's `emitBeforeAgentStart({ messageType, prompt })`.
+- **Semantic checks:** a named `review` workflow is no longer `dynamic` (now read from `args`), so that fork assertion was dropped. Fork `before_agent_start` handlers (`subagent-control.ts`, `kady-child-runtime`) only set prompt sections, so also firing on system runs since Pi 1.2 is intended. The 2026-10-13 note that the chat chip collapses only a tagged fence no longer holds: upstream's `workflow-script.ts` now renders the lone plain block too. `test/subagent-mcp-ceiling.test.ts` passes on 1.3.
+- **Verification:** server typecheck, lint, and vitest (156 files / 1906 tests passed, 57 skipped); web typecheck, lint (0 errors), and vitest (136 files / 942 tests); `npm audit --omit=dev --audit-level=high` in `server/` reports 0 vulnerabilities.
+- **Left open:** issue #16 still lists pi-web-access 0.42.0 and anything newer than Pi 1.3.0.
+
 ### 2026-10-15 — Weekly dependency audit and vulnerable-actions check
 
 - **Gap:** No workflow audited dependencies, so a new advisory surfaced only as a Dependabot alert, and Dependabot alerts never cover SHA-pinned actions (`astral-sh/setup-uv`). The helper venv's `uv.lock` had no Dependabot entry, so it could get alerts but no security-update PRs.

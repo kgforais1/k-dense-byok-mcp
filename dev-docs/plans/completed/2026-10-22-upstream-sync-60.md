@@ -1,13 +1,13 @@
 ---
 title: "Upstream sync #60"
-status: proposed
+status: completed
 created: 2026-10-22
 branch: claude/relaxed-mayer-64s1am
 ---
 
 # Upstream sync #60 Implementation Plan
 
-**Status:** Proposed
+**Status:** Completed and merged in PR #61
 
 > Status values: `Proposed` → `Accepted` (when implementation starts) →
 > `Completed and merged in PR #<n>`. The implementing PR sets the
@@ -66,6 +66,15 @@ in fork-only code** (inbound MCP server, headless sessions, verifier models,
 fork `pi-packages`), which the merge will not flag. The full test ladder and
 a targeted check of Pi API usage in fork-only files are the guard.
 
+## Outcome
+
+Resolved as the table above describes, with two deviations. The fork's
+`normalizeProviderId` was removed rather than aliased (`normalizeModelRef`
+now wraps `canonicalProviderId`). `session-registry.ts` kept the fork's
+`persistedModel` instead of upstream's restore guard, because the fork's
+version already restricts `resolveModel` to local providers. See the
+2026-10-22 entry in `dev-docs/maintenance-log.md` for verification evidence.
+
 ## Design decisions
 
 - Merge, never rebase (`CONTRIBUTING.md#keeping-up-with-upstream`); upstream
@@ -95,26 +104,26 @@ D  dev-docs/plans/2026-10-22-upstream-sync-60.md → plans/completed/
 
 ### Phase 1 — Merge and resolve
 
-- [ ] `git fetch upstream main && git merge upstream/main` on this branch.
-- [ ] Resolve the 11 conflicts per the table; regenerate the lockfile with `npm install` in `server/`.
-- [ ] Grep fork-only code for Pi APIs changed in 1.2/1.3 (`@earendil-works/chord`, session/registry/auth APIs) and fix.
+- [x] `git fetch upstream main && git merge upstream/main` on this branch.
+- [x] Resolve the 11 conflicts per the table; regenerate the lockfile with `npm install` in `server/`.
+- [x] Grep fork-only code for Pi APIs changed in 1.2/1.3 (`@earendil-works/chord`, session/registry/auth APIs) and fix.
 
 **Exit criteria:** no conflict markers; `npm run typecheck` and `npm run lint` pass in `server/` and `web/`.
 
 ### Phase 2 — Verify
 
-- [ ] `npm run verify -- all` green (server + web vitest, docs, manifest).
-- [ ] `npm run test:coverage` in both packages still meets floors.
-- [ ] Targeted: `models.test.ts` (Azure legacy refs), `subagent-*.test.ts`, inbound MCP tests, `provider-catalog.test.ts` against live Pi 1.3.
-- [ ] Ratchets in sync (pre-commit/pre-push hooks).
+- [x] `npm run verify -- all` green (server + web vitest, docs, manifest).
+- [x] `npm run test:coverage` in both packages still meets floors.
+- [x] Targeted: `models.test.ts` (Azure legacy refs), `subagent-*.test.ts`, inbound MCP tests, `provider-catalog.test.ts` against live Pi 1.3.
+- [x] Ratchets in sync (pre-commit/pre-push hooks).
 
 **Exit criteria:** all green; any fork test changed is justified in the PR.
 
 ### Phase 3 — Close out
 
-- [ ] Maintenance-log entry (commits merged, conflicts resolved, evidence); CHANGELOG `Unreleased` entry for the Pi 1.3 upgrade.
-- [ ] Update pin versions in AGENTS.md / server/AGENTS.md / architecture map.
-- [ ] Move this plan to `plans/completed/` with final status; PR body `Closes #60`; comment on #16 with what remains.
+- [x] Maintenance-log entry (commits merged, conflicts resolved, evidence); CHANGELOG `Unreleased` entry for the Pi 1.3 upgrade.
+- [x] Update pin versions in AGENTS.md / server/AGENTS.md / architecture map.
+- [x] Move this plan to `plans/completed/` with final status; PR body `Closes #60`; comment on #16 with what remains.
 
 ## Guardrails
 

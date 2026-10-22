@@ -94,9 +94,11 @@ starts backend + frontend together; it is the only supported full-app path.
   each project's `sandbox/.pi/agents/*.md` from `src/agent/subagents.ts`
   (write-if-missing; user edits win). Budget gating and cost ledgering for
   child runs live in `src/agent/subagent-bridge.ts`.
-- Pi 1.1 / pi-subagents 0.78 accepts `workflow: true` with one JavaScript
+- Pi 1.3 / pi-subagents 0.78 accepts `workflow: true` with one JavaScript
   workflow block in the issuing assistant message (a single plain ```js
-  block when no workflow fence is present), or a workflow path.
+  block when no workflow fence is present), a workflow path, or one of the
+  package's named workflows (`parallel`, `review`, `run-ci`), whose children
+  come from `args`.
   `workflowCallTargets()` locates that script and `workflowScriptTargets()`
   extracts literal agent/model targets; computed targets disable model pinning.
   The native child runtime meters actual resolved model calls independently.
@@ -104,7 +106,7 @@ starts backend + frontend together; it is the only supported full-app path.
   The lead uses `excludeTools`, preserving tools registered after connection.
   Inbound MCP remains fork-owned under `src/mcp-server/`; its headless sessions
   omit `interview` and retain that choice through cold opens.
-- Pi 1.1 retains MCP tools under ordinary tool allowlists. The child host in
+- Pi 1.1+ retains MCP tools under ordinary tool allowlists. The child host in
   `src/agent/subagent-host.mjs` restores strict child allowlists using the pinned
   SDK's MCP-filter flag and an immediate registry refresh before extension
   binding. It rejects SDK shape drift. Review this seam and run

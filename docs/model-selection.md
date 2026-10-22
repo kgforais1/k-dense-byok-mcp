@@ -51,7 +51,7 @@ Everything after the provider's first slash is the model ID, including any
 further slashes. `anthropic/<model>` uses the Anthropic credential;
 `openrouter/anthropic/<model>` uses OpenRouter.
 
-Azure uses `azure/<model-id>` with Pi 1.1. Kady recognizes the previous
+Azure uses `azure/<model-id>` since Pi 1.1. Kady recognizes the previous
 `azure-openai-responses/<model-id>` form when resolving its saved defaults,
 restoring sessions and projecting verifier defaults. Existing
 `AZURE_OPENAI_*` environment credentials continue to be used. If you maintain

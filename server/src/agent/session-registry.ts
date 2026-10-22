@@ -32,7 +32,8 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
 import { migrateDisabledMcpServers } from "./mcp.ts";
-import { catalogueEntryFor, defaultModel, isLocalProvider, normalizeProviderId, resolveModel, setupModelRuntime } from "./models.ts";
+import { catalogueEntryFor, defaultModel, isLocalProvider, pruneStaleOpenRouterCatalog, resolveModel, setupModelRuntime } from "./models.ts";
+import { canonicalProviderId } from "./provider-catalog.ts";
 import { seedAgentFiles } from "./agent-files.ts";
 import {
   forgetHeadlessSession,
@@ -107,6 +108,8 @@ if (!(process.env.PATH ?? "").split(path.delimiter).includes(localBin)) {
 patchSubagents();
 process.env.KADY_SUBAGENT_HOST_MODULE = pathToFileURL(path.join(import.meta.dirname, "subagent-host.mjs")).href;
 setHostMeter(handleSubagentMeter);
+// Before the runtime (and any child) restores the saved catalogs.
+pruneStaleOpenRouterCatalog(KADY_PI_AGENT_DIR);
 const modelRuntime = await ModelRuntime.create({
   allowModelNetwork: false,
   authPath: path.join(KADY_PI_AGENT_DIR, "auth.json"),
@@ -542,7 +545,7 @@ export function persistedModel(
   // FORK: a session stored before Pi 1.1 names the renamed Azure provider;
   // resolve it as `azure` so a cold-open restores the model instead of falling
   // back to the project/default model.
-  const provider = normalizeProviderId(inputProvider);
+  const provider = canonicalProviderId(inputProvider);
   // FORK: a stored Fusion alias has no panel configuration to restore.
   if (provider === "openrouter" && modelId === "openrouter/fusion") return undefined;
   if (!isLocalProvider(provider)) {
@@ -743,7 +746,10 @@ async function build(
     // extension registers after connecting (their names are unknown here).
     // Every other tool — built-ins, custom tools below, and the extension
     // tools (`subagent`, `bg_wait`, `subagent_supervisor`, web access,
-    // codemode/tool_search when MCP needs them) — is active by default.
+    // codemode/tool_search when MCP needs them) — is active by default. Since
+    // pi-subagents 0.78 that includes `contact_supervisor`: forks then declare
+    // their parent's exact tool list and reuse its prompt cache; a lead call
+    // just returns an error.
     excludeTools: LEAD_EXCLUDED_TOOLS,
     customTools: [
       ...(includeInterview && interviewTool ? [interviewTool] : []),
@@ -757,8 +763,8 @@ async function build(
   });
   // Pi emits `session_start` only from bindExtensions(); without it the
   // extensions never see a live session: pi-subagents never starts its
-  // supervisor channel (so the `subagent_supervisor` tool in the allowlist
-  // above is never registered), never resets per-session state, and skips
+  // supervisor channel (so the `subagent_supervisor` tool is never
+  // registered), never resets per-session state, and skips
   // `resources_discover`. Headless mode mirrors `pi -p`.
   await session.bindExtensions({
     mode: "print",

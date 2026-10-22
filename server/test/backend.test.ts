@@ -340,8 +340,7 @@ describe("subagent model inheritance", () => {
 
   // Since pi-subagents 0.43 children are declared inside a workflow script,
   // so none of them are reachable by walking the tool input; since 0.74 the
-  // script is a ```js workflow block in the reply that issues `workflow: true`.
-  // Since 0.76 one plain ```js block is enough when that reply has no workflow fence.
+  // script is a fenced block in the reply that issues `workflow: true`.
   const parent = {
     provider: "openai-codex",
     id: "gpt-5.6-sol",
@@ -428,6 +427,29 @@ describe("subagent model inheritance", () => {
     expect([...requireValue(workflowCallTargets({ workflow: true }, {
       toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", quoted) },
     })).agents]).toEqual(["scout"]);
+
+    // Since 0.76 a reply with no tagged block runs its only plain js block.
+    const plainReply = (text: string) => requireValue(workflowCallTargets({ workflow: "true" }, {
+      toolCallId: "call-1", sessionManager: { getBranch: () => replyBranch("call-1", text) },
+    }));
+    expect([...plainReply("```js\n" + script + "\n```").agents]).toEqual(["scout"]);
+    expect(plainReply("```js\n" + script + "\n```\n```javascript\nreturn 1\n```").dynamic).toBe(true);
+    expect(plainReply("```js\n" + script).dynamic).toBe(true);
+    // A tagged block still wins over plain example blocks.
+    expect([...plainReply("```js\nreturn runs.run(\"x\", { agent: \"ghost\" })\n```\n" + fenced(script)).agents]).toEqual(["scout"]);
+  });
+
+  it("reads the children of pi-subagents' own named workflows from their args", () => {
+    const named = (workflow: string, args?: unknown) => requireValue(workflowCallTargets({ workflow, args }));
+    const parallel = named("parallel", { tasks: [{ agent: "scout", task: "a" }, { agent: "reviewer", task: "b" }] });
+    expect([...parallel.agents].sort()).toEqual(["reviewer", "scout"]);
+    expect(parallel.dynamic).toBe(false);
+    expect(named("parallel", { tasks: [{ task: "no agent" }] }).dynamic).toBe(true);
+    expect(named("parallel", {}).dynamic).toBe(true);
+    expect([...named("review", { task: "check" }).agents]).toEqual(["reviewer"]);
+    expect(named("run-ci", { command: "npm test" })).toEqual({ agents: new Set(), models: new Set(), dynamic: false });
+    // A workflow another extension registered is code we cannot read.
+    expect(named("lab-sweep").dynamic).toBe(true);
   });
 
   it("reads a workflow script path relative to the request cwd", () => {
@@ -437,8 +459,6 @@ describe("subagent model inheritance", () => {
     expect([...requireValue(workflowCallTargets({ workflow: "./ci/sweep.js" }, { cwd: dir })).agents]).toEqual(["worker"]);
     expect([...requireValue(workflowCallTargets({ workflow: "./sweep.js", cwd: "ci" }, { cwd: dir })).agents]).toEqual(["worker"]);
     expect(requireValue(workflowCallTargets({ workflow: "./missing.js" }, { cwd: dir })).dynamic).toBe(true);
-    // A named workflow resource is extension code we cannot read.
-    expect(requireValue(workflowCallTargets({ workflow: "review" }, { cwd: dir })).dynamic).toBe(true);
     // Management calls and structured single-child launches run no script.
     expect(workflowCallTargets({ action: "list" })).toBeUndefined();
     expect(workflowCallTargets({ agent: "worker", task: "a" })).toBeUndefined();

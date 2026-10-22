@@ -154,7 +154,7 @@ export const AssistantMessageBody = memo(function AssistantMessageBody({
     if (!activity) continue;
     const args = activity.args as Record<string, unknown> | undefined;
     appendActivity(
-      activity.toolName === "subagent" && args?.workflow === true && replyWorkflowScript
+      activity.toolName === "subagent" && (args?.workflow === true || args?.workflow === "true") && replyWorkflowScript
         ? { ...activity, replyWorkflowScript }
         : activity,
     );

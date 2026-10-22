@@ -1,5 +1,13 @@
 # Maintenance Log
 
+### 2026-10-22 — Same-day advisories for shipped dependencies
+
+- **Trigger:** GitHub's alert count jumped right after the #61 merge. The merge changed none of the flagged versions (both lockfiles and `uv.lock` compared before and after); the push re-ran the dependency graph after a batch of advisories published 2026-10-20–22. Severities came from OSV (`api.osv.dev`), since this session cannot read the repository's alert lists.
+- **Bumped:** web `next` and `eslint-config-next` 16.3.8 → 16.4.2, `dompurify` 3.4.16 → 3.4.17 (with the `package.json` floor raised to `^3.4.17`), and `ip-address` 10.7.3 → 10.7.4. Server `fastify` 5.12.5 → 5.12.7 and `ip-address` → 10.7.4, lockfile only. Helpers `pillow` 12.3.0 → 13.0.0 and `certifi` → 2026.10.19 via `uv lock --upgrade-package`. Each lockfile diff contains only these packages; `eslint-plugin-react-hooks` 7.0.1 → 7.1.1 comes in with `eslint-config-next`.
+- **Lint:** react-hooks 7.1 enables `react-hooks/purity`, which errored on one `Date.now()` in upstream-owned `subagent-fleet-panel.tsx`. It is set to `warn` in the fork-owned rules block of `web/eslint.config.mjs`, alongside the other compiler rules, rather than editing the upstream file. The new plugin also adds warnings (58 → 147), none of them errors.
+- **Not in this change:** `vite` 8.2.2 (six advisories, dev server only) is left to Dependabot #59, because `npm update vite` hits npm 10's `#loadPeerSet` crash. `@vitest/mocker` is blocked on vitest 4.1.12's caret peer, and KaTeX stays tracked in `dev-docs/todo.md`.
+- **Verification:** server typecheck, lint and vitest (157 files: 1955 passed, 8 skipped, now including the scientific-helper suites with Pillow 13: imaging 78/78); web typecheck, lint (0 errors), vitest (136 files / 943 tests) and `next build`; `npm audit --omit=dev` reports 0 vulnerabilities for server, and for web only the 7 known low-severity KaTeX entries; `pip-audit` on the exported helper lock reports none; OSV shows 0 advisories for every bumped version.
+
 ### 2026-10-22 — Upstream sync #60 (Pi 1.3.0)
 
 - **Merged:** 1 upstream commit, `6a55f5ce6f4b` (44 files). Pi 1.1.0 → 1.3.0, pi-web-access 0.40.0 → 0.41.0; pi-subagents unchanged at 0.78.0. The fork's skills 1.7.2 pin is kept (upstream 1.7.0).

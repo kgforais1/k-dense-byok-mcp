@@ -24,6 +24,7 @@ import { trimTrailingSlashes } from "../trim-slashes.ts";
 import path from "node:path";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { getBuiltinModelDataGeneratedAt } from "@earendil-works/pi-ai/providers/all";
 import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_PROVIDER,
@@ -34,7 +35,7 @@ import {
 import { readAppDefaults } from "../app-settings.ts";
 import { isSubscriptionProvider, subscriptionProvider } from "./provider-auth.ts";
 import { customProviderName, isCustomProvider } from "./custom-models.ts";
-import { directProvider, isDirectProvider } from "./provider-catalog.ts";
+import { canonicalProviderId, directProvider, isDirectProvider } from "./provider-catalog.ts";
 import { getContextWindow } from "./local-context.ts";
 
 // OpenRouter's base URL. Overridable via OPENROUTER_BASE_URL so the
@@ -338,6 +339,45 @@ export function registerLocalProviders(modelRuntime: ModelRuntime): void {
   });
 }
 
+/**
+ * Drop a saved OpenRouter model list older than the installed Pi catalog.
+ *
+ * Since Pi 1.2, OpenRouter's entry in `<agentDir>/models-store.json` (written
+ * by a network refresh, per-key since 1.2) replaces the built-in catalog
+ * whatever its age; Pi 1.0 used a saved catalog only when it was newer. Kady
+ * never refreshes catalogs at boot, so a list saved before a Pi upgrade would
+ * keep pricing the lead and every subagent child (they share the file) from
+ * stale data — e.g. without GPT-6 Astra's long-context tier, under-counting
+ * spend against the cap. The file is a cache: removing the entry only defers
+ * per-key filtering to the next network refresh. Returns true when pruned.
+ */
+export function pruneStaleOpenRouterCatalog(
+  agentDir: string,
+  builtinGeneratedAt: number | undefined = getBuiltinModelDataGeneratedAt(),
+): boolean {
+  if (builtinGeneratedAt === undefined) return false;
+  const file = path.join(agentDir, "models-store.json");
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    return false; // missing, or not ours to repair
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Object.hasOwn(data, "openrouter")) return false;
+  const checkedAt = (data.openrouter as { checkedAt?: unknown } | null)?.checkedAt;
+  if (typeof checkedAt === "number" && Number.isFinite(checkedAt) && checkedAt >= builtinGeneratedAt) return false;
+  delete data.openrouter;
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch {
+    fs.rmSync(tmp, { force: true });
+    return false;
+  }
+  return true;
+}
+
 /** Configure app-specific providers and normalize the legacy OpenRouter alias. */
 export async function setupModelRuntime(modelRuntime: ModelRuntime): Promise<void> {
   registerLocalProviders(modelRuntime);
@@ -405,21 +445,15 @@ function environmentDefaultRef(): string {
 }
 
 /**
- * FORK: Pi 1.1 renamed the Azure provider id from `azure-openai-responses` to
- * `azure` (env vars unchanged). Kady resolves refs it reads from app defaults,
- * project settings, session cold-opens and pins through this boundary, so a
- * pre-upgrade ref must still resolve to the same model. This is read-time only:
- * no user auth/config file is rewritten or migrated.
+ * FORK: canonicalize the provider prefix of a saved `<provider>/<model-id>`
+ * ref (Pi renamed `azure-openai-responses` to `azure`; the rename table is
+ * upstream's `canonicalProviderId`), model id intact. Read-time only: no user
+ * auth/config file is rewritten.
  */
-export function normalizeProviderId(providerId: string): string {
-  return providerId === "azure-openai-responses" ? "azure" : providerId;
-}
-
-/** Normalize the provider prefix of a `<provider>/<model-id>` ref, model id intact. */
 export function normalizeModelRef(ref: string): string {
   const slash = ref.indexOf("/");
   const providerId = slash <= 0 ? ref : ref.slice(0, slash);
-  const normalized = normalizeProviderId(providerId);
+  const normalized = canonicalProviderId(providerId);
   if (normalized === providerId) return ref;
   return slash <= 0 ? normalized : `${normalized}${ref.slice(slash)}`;
 }
@@ -438,7 +472,7 @@ function directProviderRef(
 ): { providerId: string; modelId: string } | null {
   const slash = ref.indexOf("/");
   if (slash <= 0) return null;
-  const providerId = normalizeProviderId(ref.slice(0, slash));
+  const providerId = canonicalProviderId(ref.slice(0, slash));
   if (providerId === "openrouter") return null;
   // Custom servers from models.json are first-class Pi providers too.
   if (!isDirectProvider(providerId) && !isSubscriptionProvider(providerId) && !isCustomProvider(providerId)) {

@@ -21,3 +21,10 @@ regexTarget = "match"
 regexes = [
   '''["'](?:existing-key-123|sk-live-1234567890abcd|gxl_test_key_0123456789|gxl_test_key_6789)["']''',
 ]
+
+[[allowlists]]
+description = "Exact synthetic credential literal in upstream 6a55f5c (Pi 1.3 sync) tests; no real credentials"
+regexTarget = "match"
+regexes = [
+  '''["']ceramic-test-key-123["']''',
+]

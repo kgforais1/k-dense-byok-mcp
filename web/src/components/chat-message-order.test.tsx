@@ -63,6 +63,36 @@ describe("AssistantMessageBody", () => {
     ).toBeTruthy();
   });
 
+  it("names a reply script's specialists for a string \"true\" workflow call", () => {
+    const script = 'return runs.run("a", { agent: "scout", task: "survey" })';
+    const message: ChatMessage = {
+      id: "assistant",
+      role: "assistant",
+      content: "",
+      timestamp: 1,
+      activities: [
+        {
+          id: "tool-1",
+          label: "Running subagent",
+          status: "running",
+          timestamp: 2,
+          toolName: "subagent",
+          args: { workflow: "true" },
+        },
+      ],
+      segments: [
+        { type: "text", content: "```js workflow\n" + script + "\n```\n" },
+        { type: "activity", activityId: "tool-1" },
+      ],
+    };
+
+    const { container } = render(
+      <AssistantMessageBody message={message} isStreaming isLast sessionId="session-1" projectId="default" />,
+    );
+
+    expect(container.querySelector('[data-tool-call-id="tool-1"]')?.textContent).toContain("scout");
+  });
+
   it("renders a preamble before a pending interview", () => {
     const message: ChatMessage = {
       id: "assistant",

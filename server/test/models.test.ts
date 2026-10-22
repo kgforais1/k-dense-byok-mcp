@@ -6,10 +6,10 @@ import {
   ModelResolutionError,
   modelReference,
   normalizeModelRef,
-  normalizeProviderId,
   resolveModel,
 } from "../src/agent/models.ts";
 import { getModelRegistry, persistedModel } from "../src/agent/session-registry.ts";
+import { canonicalProviderId } from "../src/agent/provider-catalog.ts";
 import {
   cacheKey,
   recordArchitectural,
@@ -114,8 +114,8 @@ describe("Pi 1.1 Azure provider rename compatibility", () => {
   const azure = { provider: "azure", id: "gpt-5.4", name: "GPT-5.4" };
 
   it("normalizes the legacy provider id with the model id intact", () => {
-    expect(normalizeProviderId("azure-openai-responses")).toBe("azure");
-    expect(normalizeProviderId("azure")).toBe("azure");
+    expect(canonicalProviderId("azure-openai-responses")).toBe("azure");
+    expect(canonicalProviderId("azure")).toBe("azure");
     expect(normalizeModelRef("azure-openai-responses/gpt-5.4")).toBe("azure/gpt-5.4");
     expect(normalizeModelRef("azure/gpt-5.4")).toBe("azure/gpt-5.4");
     expect(normalizeModelRef("openrouter/anthropic/claude-opus-4.8")).toBe(

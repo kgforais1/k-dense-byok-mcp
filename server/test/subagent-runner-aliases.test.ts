@@ -1,9 +1,11 @@
 /**
- * pi-subagents 0.78 marks `@earendil-works/pi-agent-core/node` optional.
- * Pi 1.0 dropped that export, and 0.74 treated the missing alias as fatal,
- * so every background launch failed. 0.78 skips an optional subpath the
- * installed package does not declare, for every host, and still fails when
- * a declared alias cannot be resolved.
+ * pi-subagents refuses a background launch when a host alias it requires
+ * cannot be resolved against the installed Pi. Pi 1.0 dropped
+ * `@earendil-works/pi-agent-core/node` and Pi 1.2 dropped
+ * `@earendil-works/chord`. pi-subagents 0.78 marks `pi-agent-core/node`
+ * optional and skips an optional subpath the installed package does not
+ * declare, for every host, but still fails when a declared alias cannot be
+ * resolved.
  */
 import fs from "node:fs";
 import os from "node:os";

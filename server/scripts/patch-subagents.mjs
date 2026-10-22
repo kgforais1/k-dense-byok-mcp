@@ -60,13 +60,7 @@ function kadyScopedBaseline(cwd, baseline) {
     try { return path.relative(fs.realpathSync.native(baseline.root), fs.realpathSync.native(cwd)) === "" ? baseline : undefined; }
     catch { return undefined; }
 }
-/** HEAD at reviewer launch, for tools that must be registered synchronously. */`, 'KADY_HOST_WATCHDOG_DIFF_SCOPE_V2', `// KADY_HOST_WATCHDOG_DIFF_SCOPE_V2: do not expose an ancestor checkout's diff.
-function kadyScopedBaseline(cwd, baseline) {
-    if (!baseline || !process.env.KADY_SUBAGENT_HOST_MODULE) return baseline;
-    try { return fs.realpathSync(baseline.root) === fs.realpathSync(cwd) ? baseline : undefined; }
-    catch { return undefined; }
-}
-/** HEAD at reviewer launch, for tools that must be registered synchronously. */`],
+/** HEAD at reviewer launch, for tools that must be registered synchronously. */`, 'KADY_HOST_WATCHDOG_DIFF_SCOPE_V2'],
     ['src/watchdog/diff-tool.js', '    return result.ok ? parseBaseline(result.stdout) : undefined;', '    return result.ok ? kadyScopedBaseline(cwd, parseBaseline(result.stdout)) : undefined; // KADY_HOST_WATCHDOG_DIFF_SYNC_V1', 'KADY_HOST_WATCHDOG_DIFF_SYNC_V1'],
     ['src/watchdog/diff-tool.js', '            resolve(error ? undefined : parseBaseline(stdout));', '            resolve(error ? undefined : kadyScopedBaseline(cwd, parseBaseline(stdout))); // KADY_HOST_WATCHDOG_DIFF_ASYNC_V1', 'KADY_HOST_WATCHDOG_DIFF_ASYNC_V1'],
     ['src/runs/background/scheduled-runs.js', 'function sanitizeTarget(params) {', `// KADY_HOST_SCHEDULE_MODEL_V1: schedule targets must retain the host-pinned model.

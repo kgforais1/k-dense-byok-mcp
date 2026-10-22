@@ -40,7 +40,7 @@ it("binds the public RPC/preflight APIs with parent tool ceilings and required c
   expect(contract.tools.requiredExtensionIds).toEqual(expect.arrayContaining(["kady-guard", "kady-modal", "kady-child-runtime", "pi-web-access"]));
   expect(contract.tools.capabilityCeiling.allowedTools).toContain("modal_submit");
   expect(contract.tools.capabilityCeiling.allowedTools).not.toContain("interview");
-  const prompt = await requireValue(session.extensionRunner).emitBeforeAgentStart("Review the analysis", undefined, {
+  const prompt = await requireValue(session.extensionRunner).emitBeforeAgentStart({ messageType: "user", prompt: "Review the analysis" }, {
     cwd: paths.sandbox, selectedTools: session.getActiveToolNames(),
     customPrompt: "Preserve the lab's reporting convention.",
     sections: { lab: "Use SI units." },
@@ -95,7 +95,7 @@ it("loads child MCP and mandatory tools with ambient extensions disabled, and me
     await expect.poll(() => requireValue(captured).getActiveToolNames(), { timeout: 15000 }).toContain("mcp__echo__echo");
     for (const name of ["notebook", "modal_submit", "add_pdf_annotation"]) expect(requireValue(captured).getAllTools().map((t) => t.name)).toContain(name);
     expect(errors).toEqual([]);
-    const prompt = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart("Inspect the data", undefined, {
+    const prompt = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart({ messageType: "user", prompt: "Inspect the data" }, {
       cwd: paths.sandbox, customPrompt: "Keep my custom persona.",
     });
     expect(prompt.systemPromptOptions.customPrompt).toBe("Keep my custom persona.");
@@ -153,7 +153,7 @@ it.each([true, false])("keeps child guidance after Pi prompt filtering (inheritP
     // Start with the actual loader's prompt, respecting noContextFiles rather
     // than manually injecting project context into a context-disabled launch.
     const base = { cwd: paths.sandbox, customPrompt: requireValue(captured).systemPrompt };
-    const first = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart("Check the analysis", undefined, base);
+    const first = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart({ messageType: "user", prompt: "Check the analysis" }, base);
     // Exercise the real upstream rewrite, which overrides the full prompt;
     // setting a structured section alone would silently lose our guidance.
     const rendered = requireValue(first.systemPromptOptions.forceSystemPrompt);
@@ -164,7 +164,7 @@ it.each([true, false])("keeps child guidance after Pi prompt filtering (inheritP
     expect(rendered).toContain("contact_supervisor");
     expect(rendered).toContain("Status is not a scientific");
     expect(rendered).not.toContain("<kady_delegation>");
-    const next = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart("Follow up", undefined, first.systemPromptOptions);
+    const next = await requireValue(requireValue(captured).extensionRunner).emitBeforeAgentStart({ messageType: "user", prompt: "Follow up" }, first.systemPromptOptions);
     expect(requireValue(next.systemPromptOptions.forceSystemPrompt).match(/<kady_specialist>/g)).toHaveLength(1);
     // A new turn starts from the original options, which were not mutated.
     expect(base).not.toHaveProperty("forceSystemPrompt");

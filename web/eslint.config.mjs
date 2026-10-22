@@ -13,6 +13,9 @@ const eslintConfig = defineConfig([
       "react-hooks/refs": "warn",
       "react-hooks/immutability": "warn",
       "react-hooks/static-components": "warn",
+      // eslint-plugin-react-hooks 7.1 (via eslint-config-next 16.4) enables
+      // purity; warn like the other compiler rules above.
+      "react-hooks/purity": "warn",
       // FORK: a file-size cap the frontend previously had none of, pinned at
       // today's worst offender rather than at a number anyone would choose
       // from scratch. It exists to stop new code getting worse, not to claim

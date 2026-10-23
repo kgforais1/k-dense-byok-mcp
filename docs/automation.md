@@ -48,6 +48,27 @@ receipts in the Pi agent directory. The panel lists status and can close a
 mission; the agent can inspect it with `mission.show` to resume work. Goal
 missions with token budgets remind the agent until closed or exhausted.
 
+Missions are stored per project in `missions/projects/<hash>/` inside the Pi
+agent directory: `~/.kady/pi-agent` by default, or `PI_CODING_AGENT_DIR` (or
+else `KADY_PI_AGENT_DIR`) if set. The hash is the SHA-256 of the project's
+sandbox path, and since pi-subagents 0.77 that path is resolved through
+symlinks first. If any part of the sandbox path is a symlink (a symlinked
+`KADY_PROJECTS_ROOT`, a checkout under a symlinked folder, or macOS `/var` →
+`/private/var`), missions created before that upgrade stay on disk but no longer
+appear in the panel, and the agent cannot resume them. To bring them back,
+stop Kady and any other Pi process using the same agent directory, then print
+the old and new hashes for the project:
+
+```sh
+SANDBOX='/path/to/projects/<project-id>/sandbox'
+node -e 'const c=require("crypto"),f=require("fs"),p=process.argv[1];
+const h=s=>c.createHash("sha256").update(s).digest("hex");
+console.log("old:",h(require("path").resolve(p)));console.log("new:",h(f.realpathSync(p)))' "$SANDBOX"
+```
+
+If they differ, create `missions/projects/<new>/` and move every `*.json` file
+from `missions/projects/<old>/` into it. If they match, nothing needs moving.
+
 ## Specialist fleet
 
 Choose a chat to inspect active specialists, models, tokens, elapsed time,

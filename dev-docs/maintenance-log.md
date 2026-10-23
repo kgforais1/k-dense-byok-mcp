@@ -1,5 +1,13 @@
 # Maintenance Log
 
+### 2026-10-22 — vitest 4.1.12 for the `@vitest/mocker` advisories
+
+- **Trigger:** after #63 and the Dependabot vite bump (#59) merged, `main` still had 4 moderate alerts: GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp on `@vitest/mocker` 4.1.11, in both `server/` and `web/`. Both are fixed in 4.1.12, the last 4.x release (there is no 4.1.13; 5.x is a major).
+- **Why it had failed before:** `npm install vitest@4.1.12` crashed npm 10.9.4 in arborist's `#loadPeerSet` (`Cannot read properties of null (reading 'edgesOut')`). vitest 4.1.12 declares its optional peer `@vitest/browser-webdriverio` as `^4.1.11` (every other `@vitest/*` peer is exact), and `@vitest/browser-webdriverio` 4.1.12 was never published, so npm explored the 5.x line and its `vitest@5` peers.
+- **Fix:** an `overrides` entry `"@vitest/browser-webdriverio": "4.1.11"` in both `package.json` files (fork-owned: upstream has no `overrides` in either), then `vitest` and `@vitest/coverage-v8` to `^4.1.12`. The lockfile diffs contain only the vitest family and its own dependency bumps (`chai`, `std-env`, `tinyrainbow`, and in `server/` also `es-module-lexer`, `expect-type`, `obug`, `tinyexec`); npm 10 also drops the `libc` fields Dependabot's newer npm had written on the `@rolldown/binding-linux-*` entries. In `web/`, `@vitest/mocker` now sits under `vitest/node_modules/`. Drop the override once a vitest release pins that peer exactly.
+- **Not in this change:** `braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm, high, dev only via `shadcn` and `eslint-config-next`) has no fixed release; it is the same entry the 2026-10-15 audit scoped out. KaTeX stays tracked in `dev-docs/todo.md`.
+- **Verification:** `npm run verify -- all` (server 157 files: 1955 passed, 8 skipped; web 136 files / 943 tests); `npm run test:coverage` passes its thresholds in both packages; `npm audit` reports 0 vulnerabilities for `server/`, and for `web/` no remaining vitest entries (only the known KaTeX lows and the braces chain).
+
 ### 2026-10-22 — Same-day advisories for shipped dependencies
 
 - **Trigger:** GitHub's alert count jumped right after the #61 merge. The merge changed none of the flagged versions (both lockfiles and `uv.lock` compared before and after); the push re-ran the dependency graph after a batch of advisories published 2026-10-20–22. Severities came from OSV (`api.osv.dev`), since this session cannot read the repository's alert lists.

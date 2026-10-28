@@ -5,23 +5,27 @@
  * pi-subagents resolves the `pi` CLI it spawns for profile model probes
  * through `getPiSpawnCommand`, which prefers `PI_SUBAGENT_PI_BINARY` over
  * the installed package `bin` (the *bundled* CLI with inlined undici).
- * Kady points the seam at the installed *unbundled* `dist/cli.js`, which
- * loads npm-resolved undici through Pi's own dispatcher setup. Ordinary
+ * Kady points the seam at its own POSIX launcher (`scripts/kady-pi.sh`,
+ * which execs the exact backend Node on the installed unbundled
+ * `dist/cli.js`); on Windows the seam points directly at the unbundled
+ * entry (pi-spawn runs `process.execPath + entry` there). Ordinary
  * foreground/background subagent runs never read this variable.
  *
  * Fail-safe contract under test:
  * - An explicit non-blank operator override wins verbatim; nothing else changes.
- * - Otherwise the resolved unbundled entry is ALWAYS configured, even when
- *   missing or non-executable, so a probe attempt fails visibly instead of
- *   silently reverting to the bundle (defects surface in `warnings`).
- * - Unresolvable entry, or (POSIX) no PATH entry realpath-equal to the
- *   verified backend Node, throws: startup must fail clearly rather than
- *   run probes on the bundle or an unverified runtime.
+ * - Otherwise the launcher (POSIX) or unbundled entry (Windows) is ALWAYS
+ *   configured, even when files are missing or non-executable: a probe
+ *   attempt then fails visibly instead of silently reverting to the bundle.
+ * - Unresolvable entries throw: startup fails clearly.
+ * - The launcher never consults PATH for Node (absolute `KADY_NODE_BIN`);
+ *   `process.env` itself is never rewritten except the seam variable (and,
+ *   on POSIX kady-default, the two launcher variables).
  *
  * Offline only: the only spawned processes are `pi --version` (prints and
- * exits; no network, no auth, no session) and a fake `node` used to prove
- * PATH handling. Fake env records are used throughout — the real
- * `process.env` is never mutated. No Pi patching, no prod changes.
+ * exits; no network, no auth, no session), a fixture argv-echo script, and a
+ * fake `node` used to prove PATH independence. Fake env records are used
+ * throughout — the real `process.env` is never mutated. No Pi patching, no
+ * prod changes.
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -29,7 +33,13 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { PI_SUBAGENT_PI_BINARY_ENV, setupKadyPiBinary } from "../src/agent/pi-binary.ts";
+import {
+  KADY_NODE_BIN_ENV,
+  KADY_PI_CLI_ENV,
+  PI_SUBAGENT_PI_BINARY_ENV,
+  kadyPiLauncherPath,
+  setupKadyPiBinary,
+} from "../src/agent/pi-binary.ts";
 import { piCliPath } from "../src/agent/mcp.ts";
 
 // pi-spawn internals, imported by relative path (test-only pin: a Pi layout
@@ -79,25 +89,22 @@ function makeEntry(dirPrefix = "kady-pi-binary-"): { dir: string; entry: string 
   return { dir, entry };
 }
 
+/** Scratch dir acting as a fake service Node installation (POSIX-readable). */
+function makeServiceRoot(dirPrefix = "kady-pi-svc-"): { dir: string; node: string } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), dirPrefix));
+  const node = path.join(dir, "node");
+  fs.writeFileSync(node, "#!/bin/sh\nexit 0\n");
+  return { dir, node };
+}
+
 function rmDir(dir: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-/**
- * Faithful POSIX-style service root: a directory holding an executable
- * `node`, with execPath pointing at it. Lets platform-forced tests run on
- * any host OS without depending on the runner's own binary layout.
- */
-function makeServiceRoot(): { dir: string; node: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady pi svc "));
-  const node = path.join(dir, "node");
-  fs.writeFileSync(node, "#!/bin/sh\nexit 0\n");
-  try {
-    fs.chmodSync(node, 0o755);
-  } catch {
-    /* best effort; realpath checks below need existence, not mode */
-  }
-  return { dir, node };
+function realLauncher(): string {
+  const launcher = kadyPiLauncherPath();
+  expect(fs.statSync(launcher).isFile()).toBe(true);
+  return launcher;
 }
 
 describe("setupKadyPiBinary (real assignment)", () => {
@@ -106,13 +113,20 @@ describe("setupKadyPiBinary (real assignment)", () => {
     const svc = makeServiceRoot();
     try {
       const env: NodeJS.ProcessEnv = { [PI_SUBAGENT_PI_BINARY_ENV]: "  " };
-      const setup = setupKadyPiBinary(env, entry, "linux", svc.node);
+      const setup = setupKadyPiBinary(env, {
+        unbundledEntry: entry,
+        launcherEntry: realLauncher(),
+        platform: "linux",
+        execPath: svc.node,
+      });
       expect(setup.action).toBe("kady-default");
-      expect(setup.value).toBe(entry);
+      expect(setup.value).toBe(realLauncher());
       expect(setup.warnings).toEqual([]);
       // The real assignment — not the old `??=` — so a blank operator value
       // can no longer silently preserve the bundled fallback.
-      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(entry);
+      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(realLauncher());
+      expect(env[KADY_NODE_BIN_ENV]).toBe(svc.node);
+      expect(env[KADY_PI_CLI_ENV]).toBe(entry);
     } finally {
       rmDir(dir);
       rmDir(svc.dir);
@@ -125,61 +139,108 @@ describe("setupKadyPiBinary (real assignment)", () => {
       const env: NodeJS.ProcessEnv = {
         [PI_SUBAGENT_PI_BINARY_ENV]: "/operator/pi ",
         PATH: "/usr/bin:/bin",
+        [KADY_NODE_BIN_ENV]: "/should/not/change",
       };
-      const setup = setupKadyPiBinary(env, entry, "linux", "/opt/node/bin/node");
+      const setup = setupKadyPiBinary(env, {
+        unbundledEntry: entry,
+        launcherEntry: realLauncher(),
+        platform: "linux",
+        execPath: "/opt/node/bin/node",
+      });
       expect(setup).toEqual({
         action: "operator",
         value: "/operator/pi",
-        pathPrepended: false,
         warnings: [],
       });
       expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe("/operator/pi ");
       expect(env.PATH).toBe("/usr/bin:/bin");
+      expect(env[KADY_NODE_BIN_ENV]).toBe("/should/not/change");
+      expect(KADY_PI_CLI_ENV in env).toBe(false);
     } finally {
       rmDir(dir);
     }
   });
 
   it("throws on an unresolvable entry without touching env", () => {
-    for (const bad of [null, undefined, ""]) {
-      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
-      expect(() => setupKadyPiBinary(env, bad, "linux", process.execPath)).toThrow(
-        /could not resolve the installed unbundled Pi CLI/,
-      );
-      expect(PI_SUBAGENT_PI_BINARY_ENV in env).toBe(false);
-      expect(env.PATH).toBe("/usr/bin");
-    }
-  });
-
-  it("configures a missing entry anyway, with a precise warning", () => {
     const svc = makeServiceRoot();
-    const missing = path.join(svc.dir, "absent-cli.js");
     try {
-      const env: NodeJS.ProcessEnv = {};
-      const setup = setupKadyPiBinary(env, missing, "linux", svc.node);
-      // Always configured: a probe attempt fails visibly (spawn error) instead
-      // of reverting to the known-vulnerable bundle.
-      expect(setup.action).toBe("kady-default");
-      expect(setup.value).toBe(missing);
-      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(missing);
-      expect(setup.warnings).toHaveLength(1);
-      expect(setup.warnings[0]).toContain("does not exist");
+      for (const bad of [null, undefined, ""]) {
+        const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+        expect(() =>
+          setupKadyPiBinary(env, {
+            unbundledEntry: bad,
+            launcherEntry: realLauncher(),
+            platform: "linux",
+            execPath: svc.node,
+          }),
+        ).toThrow(/could not resolve the installed unbundled Pi CLI/);
+        expect(PI_SUBAGENT_PI_BINARY_ENV in env).toBe(false);
+        expect(env.PATH).toBe("/usr/bin");
+      }
     } finally {
       rmDir(svc.dir);
     }
   });
 
-  it.runIf(process.platform !== "win32")("configures a non-executable entry on POSIX anyway, with a precise warning", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
+  it("throws on an unresolvable launcher on POSIX without touching env", () => {
     const svc = makeServiceRoot();
+    const { entry, dir } = makeEntry();
+    try {
+      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
+      expect(() =>
+        setupKadyPiBinary(env, { unbundledEntry: entry, launcherEntry: null, platform: "linux", execPath: svc.node }),
+      ).toThrow(/could not resolve the Kady Pi launcher/);
+      expect(PI_SUBAGENT_PI_BINARY_ENV in env).toBe(false);
+    } finally {
+      rmDir(dir);
+      rmDir(svc.dir);
+    }
+  });
+
+  it("configures a missing CLI anyway, with a precise warning", () => {
+    const svc = makeServiceRoot();
+    const missingDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
+    try {
+      const missing = path.join(missingDir, "absent-cli.js");
+      const env: NodeJS.ProcessEnv = {};
+      const setup = setupKadyPiBinary(env, {
+        unbundledEntry: missing,
+        launcherEntry: realLauncher(),
+        platform: "linux",
+        execPath: svc.node,
+      });
+      // Always configured: a probe attempt fails visibly (spawn error) instead
+      // of reverting to the known-vulnerable bundle.
+      expect(setup.action).toBe("kady-default");
+      expect(setup.value).toBe(realLauncher());
+      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(realLauncher());
+      expect(env[KADY_PI_CLI_ENV]).toBe(missing);
+      expect(setup.warnings).toHaveLength(1);
+      expect(setup.warnings[0]).toContain("does not exist");
+    } finally {
+      rmDir(missingDir);
+      rmDir(svc.dir);
+    }
+  });
+
+  it("configures a non-executable launcher on POSIX anyway, with a precise warning", () => {
+    const svc = makeServiceRoot();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
     try {
       const entry = path.join(dir, "cli.js");
       fs.writeFileSync(entry, "");
-      fs.chmodSync(entry, 0o644);
+      const launcherCopy = path.join(dir, "kady-pi-copy.sh");
+      fs.writeFileSync(launcherCopy, "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(launcherCopy, 0o644);
       const env: NodeJS.ProcessEnv = {};
-      const setup = setupKadyPiBinary(env, entry, "linux", svc.node);
+      const setup = setupKadyPiBinary(env, {
+        unbundledEntry: entry,
+        launcherEntry: launcherCopy,
+        platform: "linux",
+        execPath: svc.node,
+      });
       expect(setup.action).toBe("kady-default");
-      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(entry);
+      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(launcherCopy);
       expect(setup.warnings).toHaveLength(1);
       expect(setup.warnings[0]).toContain("not executable");
     } finally {
@@ -188,137 +249,66 @@ describe("setupKadyPiBinary (real assignment)", () => {
     }
   });
 
-  it("accepts the same non-executable entry on Windows without warnings", () => {
+  it("accepts the same non-executable launcher on Windows without warnings", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
     try {
       const entry = path.join(dir, "cli.js");
       fs.writeFileSync(entry, "");
-      try {
-        fs.chmodSync(entry, 0o644);
-      } catch {
-        /* mode is irrelevant on win32 */
-      }
       const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
-      const setup = setupKadyPiBinary(env, entry, "win32", "C:\\node\\node.exe");
+      const setup = setupKadyPiBinary(env, {
+        unbundledEntry: entry,
+        launcherEntry: "C:\\kady\\kady-pi.sh",
+        platform: "win32",
+        execPath: "C:\\node\\node.exe",
+      });
       expect(setup).toEqual({
         action: "kady-default",
         value: entry,
-        pathPrepended: false,
         warnings: [],
       });
-    } finally {
-      rmDir(dir);
-    }
-  });
-
-  it("throws when no PATH entry realpath-matches the verified backend Node", () => {
-    const { entry, dir } = makeEntry();
-    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-othernode-"));
-    try {
-      // nodeDir/node resolves to a DIFFERENT binary than execPath: the shebang
-      // would run an unverified runtime, so setup must refuse.
-      const otherNode = path.join(otherDir, "node");
-      fs.writeFileSync(otherNode, "#!/bin/sh\nexit 0\n");
-      fs.chmodSync(otherNode, 0o755);
-      const realLink = path.join(otherDir, "realnode");
-      try {
-        fs.symlinkSync(process.execPath, realLink);
-      } catch {
-        return; // symlink-restricted filesystem; nothing to prove here.
-      }
-      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
-      expect(() => setupKadyPiBinary(env, entry, "linux", realLink)).toThrow(
-        /no PATH entry resolves to the verified backend Node/,
-      );
-      // Nothing configured: startup fails instead of aiming the shebang at
-      // an unverified binary.
-      expect(PI_SUBAGENT_PI_BINARY_ENV in env).toBe(false);
-      expect(env.PATH).toBe("/usr/bin");
-    } finally {
-      rmDir(dir);
-      rmDir(otherDir);
-    }
-  });
-
-  it("accepts node layouts that realpath to the verified binary", () => {
-    const { entry, dir } = makeEntry();
-    // nvm-style layout: both names in the dir resolve to the backend binary.
-    const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-linknode-"));
-    try {
-      const realLink = path.join(linkDir, "realnode");
-      const nodeLink = path.join(linkDir, "node");
-      try {
-        fs.symlinkSync(process.execPath, realLink);
-        fs.symlinkSync(process.execPath, nodeLink);
-      } catch {
-        return; // symlink-restricted filesystem; nothing to prove here.
-      }
-      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin" };
-      const setup = setupKadyPiBinary(env, entry, "linux", realLink);
-      expect(setup.action).toBe("kady-default");
-      expect(setup.pathPrepended).toBe(true);
-      expect(env.PATH?.split(path.delimiter)[0]).toBe(linkDir);
       expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe(entry);
+      expect(KADY_NODE_BIN_ENV in env).toBe(false);
+      expect(KADY_PI_CLI_ENV in env).toBe(false);
     } finally {
       rmDir(dir);
-      rmDir(linkDir);
     }
   });
 
-  it("prepends exactly once without duplicating or dropping entries", () => {
+  it("leaves PATH byte-for-byte alone", () => {
     const svc = makeServiceRoot();
     const { entry, dir } = makeEntry();
     try {
-      const before = `/usr/bin${path.delimiter}${svc.dir}${path.delimiter}/bin`;
+      const before = `/usr/bin${path.delimiter}/bin${path.delimiter}`;
       const env: NodeJS.ProcessEnv = { PATH: before };
-      const setup = setupKadyPiBinary(env, entry, "linux", svc.node);
+      const setup = setupKadyPiBinary(env, {
+        unbundledEntry: entry,
+        launcherEntry: realLauncher(),
+        platform: "linux",
+        execPath: svc.node,
+      });
       expect(setup.action).toBe("kady-default");
-      expect(setup.pathPrepended).toBe(true);
-      expect(env.PATH).toBe(`${svc.dir}${path.delimiter}/usr/bin${path.delimiter}/bin`);
+      expect(env.PATH).toBe(before);
     } finally {
-      rmDir(svc.dir);
       rmDir(dir);
+      rmDir(svc.dir);
     }
   });
 
-  it("preserves meaningful empty PATH segments and handles an absent PATH", () => {
+  it("leaves an absent PATH absent", () => {
     const svc = makeServiceRoot();
     const { entry, dir } = makeEntry();
     try {
-      // Empty segments spell the current directory on POSIX: keep them, move
-      // only exact duplicates of the service directory.
-      const before = ["", "/usr/bin", "", svc.dir, "/bin", ""].join(path.delimiter);
-      const env: NodeJS.ProcessEnv = { PATH: before };
-      const setup = setupKadyPiBinary(env, entry, "linux", svc.node);
-      expect(setup.action).toBe("kady-default");
-      expect(env.PATH).toBe([svc.dir, "", "/usr/bin", "", "/bin", ""].join(path.delimiter));
-      // Absent PATH becomes exactly the service directory; an explicitly
-      // empty PATH keeps its one (meaningful, current-directory) segment.
-      const absentEnv: NodeJS.ProcessEnv = {};
-      const absent = setupKadyPiBinary(absentEnv, entry, "linux", svc.node);
-      expect(absent.action).toBe("kady-default");
-      expect(absentEnv.PATH).toBe(svc.dir);
-      const emptyEnv: NodeJS.ProcessEnv = { PATH: "" };
-      const empty = setupKadyPiBinary(emptyEnv, entry, "linux", svc.node);
-      expect(empty.action).toBe("kady-default");
-      expect(emptyEnv.PATH).toBe(svc.dir + path.delimiter);
+      const env: NodeJS.ProcessEnv = {};
+      setupKadyPiBinary(env, {
+        unbundledEntry: entry,
+        launcherEntry: realLauncher(),
+        platform: "linux",
+        execPath: svc.node,
+      });
+      expect("PATH" in env).toBe(false);
     } finally {
+      rmDir(dir);
       rmDir(svc.dir);
-      rmDir(dir);
-    }
-  });
-
-  it("skips the PATH change on Windows", () => {
-    const { entry, dir } = makeEntry();
-    try {
-      const winEnv: NodeJS.ProcessEnv = { PATH: "C:\\Windows;C:\\bin" };
-      const win = setupKadyPiBinary(winEnv, entry, "win32", "C:\\node\\node.exe");
-      expect(win.action).toBe("kady-default");
-      expect(win.value).toBe(entry);
-      expect(win.pathPrepended).toBe(false);
-      expect(winEnv.PATH).toBe("C:\\Windows;C:\\bin");
-    } finally {
-      rmDir(dir);
     }
   });
 });
@@ -418,23 +408,213 @@ describe("unbundled CLI client identity", () => {
   });
 });
 
-describe("real unbundled CLI execution (offline, --version only)", () => {
+describe("Kady launcher execution (offline, --version only)", () => {
   const posixOnly = process.platform === "win32" ? "shebang execution is POSIX-only" : false;
 
-  it("POSIX spec runs and reports the installed Pi version, never the bundle", { skip: posixOnly }, () => {
+  it("end-to-end: setup output drives a non-bundled spawn", { skip: posixOnly }, () => {
+    const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-linksvc "));
     const cli = piCliPath();
-    const spec = getPiSpawnCommand([], {
-      platform: "linux",
-      env: { [PI_SUBAGENT_PI_BINARY_ENV]: cli } as NodeJS.ProcessEnv,
-    });
-    expect(spec.command).toBe(cli);
-    expect(spec.command).not.toContain("bundle");
-    const result = spawnSync(spec.command, [...spec.args, "--version"], {
+    try {
+      // Service root where `node` resolves to the verified backend binary.
+      const realLink = path.join(linkDir, "realnode");
+      const nodeLink = path.join(linkDir, "node");
+      try {
+        fs.symlinkSync(process.execPath, realLink);
+        fs.symlinkSync(process.execPath, nodeLink);
+      } catch {
+        // Symlink-restricted filesystem; nothing to prove here.
+        return;
+      }
+      const setupEnv: NodeJS.ProcessEnv = {};
+      const setup = setupKadyPiBinary(setupEnv, {
+        unbundledEntry: cli,
+        launcherEntry: realLauncher(),
+        platform: "linux",
+        execPath: realLink,
+      });
+      expect(setup.action).toBe("kady-default");
+      expect(setup.value).toBe(realLauncher());
+      expect(setup.warnings).toEqual([]);
+      expect(setupEnv[PI_SUBAGENT_PI_BINARY_ENV]).toBe(realLauncher());
+      // The actual spawn shape pi-subagents will use for probes.
+      const spec = getPiSpawnCommand([], {
+        platform: "linux",
+        env: { [PI_SUBAGENT_PI_BINARY_ENV]: setup.value } as NodeJS.ProcessEnv,
+      });
+      expect(spec.command).toBe(realLauncher());
+      expect(spec.command).not.toContain("bundle");
+      const result = spawnSync(spec.command, [...spec.args, "--version"], {
+        env: { ...process.env, [KADY_NODE_BIN_ENV]: process.execPath, [KADY_PI_CLI_ENV]: cli },
+        encoding: "utf-8",
+        timeout: 30000,
+      });
+      expect(result.status).toBe(0);
+      expect((result.stdout || "").trim()).toBe(PI_VERSION);
+    } finally {
+      fs.rmSync(linkDir, { recursive: true, force: true });
+    }
+  });
+
+  it("real unbundled --version through the launcher is the installed Pi", { skip: posixOnly }, () => {
+    const cli = piCliPath();
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      KADY_NODE_BIN: process.execPath,
+      KADY_PI_CLI: cli,
+    };
+    const result = spawnSync(realLauncher(), ["--version"], {
+      env,
       encoding: "utf-8",
       timeout: 30000,
     });
     expect(result.status).toBe(0);
     expect((result.stdout || "").trim()).toBe(PI_VERSION);
+  });
+
+  it("ignores a hostile PATH entirely (fake node first)", { skip: posixOnly }, () => {
+    const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady guard fakenode "));
+    try {
+      const fake = path.join(fakeDir, "node");
+      fs.writeFileSync(fake, "#!/bin/sh\necho FAKE-NODE >&2\nexit 99\n");
+      fs.chmodSync(fake, 0o755);
+      const cli = piCliPath();
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        PATH: `${fakeDir}${path.delimiter}/usr/bin:/bin`,
+        KADY_NODE_BIN: process.execPath,
+        KADY_PI_CLI: cli,
+      };
+      // Sensitivity control: bare `node` resolves to the fake.
+      const direct = spawnSync("node", ["--version"], { env, encoding: "utf-8", timeout: 30000 });
+      expect(direct.status).not.toBe(0);
+      // The launcher never consults PATH for Node.
+      const result = spawnSync(realLauncher(), ["--version"], {
+        env,
+        encoding: "utf-8",
+        timeout: 30000,
+      });
+      expect(result.status).toBe(0);
+      expect((result.stdout || "").trim()).toBe(PI_VERSION);
+      expect(result.stderr || "").not.toContain("FAKE-NODE");
+    } finally {
+      fs.rmSync(fakeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("forwards exact argv, including spaces and metacharacters", { skip: posixOnly }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-argv "));
+    try {
+      const echoArgv = path.join(dir, "echo-argv.mjs");
+      fs.writeFileSync(
+        echoArgv,
+        "console.log(JSON.stringify(process.argv.slice(2)));\n",
+      );
+      const wanted = ["hello world", "a&b", "--flag=x", "semi;colon", "$dollar"];
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        KADY_NODE_BIN: process.execPath,
+        KADY_PI_CLI: echoArgv,
+      };
+      const result = spawnSync(realLauncher(), wanted, { env, encoding: "utf-8", timeout: 30000 });
+      expect(result.status).toBe(0);
+      expect(JSON.parse((result.stdout || "").trim())).toEqual(wanted);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runs through a path containing spaces", { skip: posixOnly }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady guard spaced "));
+    try {
+      const linkLauncher = path.join(dir, "kady-pi.sh");
+      const linkCli = path.join(dir, "cli.js");
+      try {
+        fs.symlinkSync(realLauncher(), linkLauncher);
+        fs.symlinkSync(piCliPath(), linkCli);
+      } catch {
+        // Symlink-restricted filesystems: the spaced-string parity above
+        // still pins argument handling; nothing to execute here.
+        return;
+      }
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        KADY_NODE_BIN: process.execPath,
+        KADY_PI_CLI: linkCli,
+      };
+      const result = spawnSync(linkLauncher, ["--version"], {
+        env,
+        encoding: "utf-8",
+        timeout: 30000,
+      });
+      expect(result.status).toBe(0);
+      expect((result.stdout || "").trim()).toBe(PI_VERSION);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("missing KADY_NODE_BIN fails loudly without touching the bundle", { skip: posixOnly }, () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, KADY_PI_CLI: piCliPath() };
+    delete env[KADY_NODE_BIN_ENV];
+    const result = spawnSync(realLauncher(), ["--version"], {
+      env,
+      encoding: "utf-8",
+      timeout: 30000,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr || "").toMatch(/KADY_NODE_BIN/);
+  });
+
+  it("missing KADY_PI_CLI fails loudly without touching the bundle", { skip: posixOnly }, () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, KADY_NODE_BIN: process.execPath };
+    delete env[KADY_PI_CLI_ENV];
+    const result = spawnSync(realLauncher(), ["--version"], {
+      env,
+      encoding: "utf-8",
+      timeout: 30000,
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr || "").toMatch(/KADY_PI_CLI/);
+  });
+
+  it("a missing CLI file fails visibly through the launcher", { skip: posixOnly }, () => {
+    const missingDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
+    try {
+      const missing = path.join(missingDir, "absent-cli.js");
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        KADY_NODE_BIN: process.execPath,
+        KADY_PI_CLI: missing,
+      };
+      const result = spawnSync(realLauncher(), ["--version"], {
+        env,
+        encoding: "utf-8",
+        timeout: 30000,
+      });
+      expect(result.status).not.toBe(0);
+      // Node reports the missing file; nothing about the bundle appears.
+      expect(`${result.stdout || ""}${result.stderr || ""}`).not.toContain("bundle");
+    } finally {
+      rmDir(missingDir);
+    }
+  });
+
+  it("a non-executable launcher copy fails visibly", { skip: posixOnly }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
+    try {
+      const copy = path.join(dir, "kady-pi-copy.sh");
+      fs.writeFileSync(copy, fs.readFileSync(realLauncher(), "utf-8"));
+      fs.chmodSync(copy, 0o644);
+      const result = spawnSync(copy, ["--version"], {
+        env: { ...process.env, KADY_NODE_BIN: process.execPath, KADY_PI_CLI: piCliPath() },
+        encoding: "utf-8",
+        timeout: 30000,
+      });
+      // EACCES at exec: loud, immediate, and nothing else ran.
+      expect(result.error !== undefined || result.status !== 0).toBe(true);
+    } finally {
+      rmDir(dir);
+    }
   });
 
   it("Windows-branch spec (execPath + entry) runs the same binary", () => {
@@ -452,165 +632,31 @@ describe("real unbundled CLI execution (offline, --version only)", () => {
     expect(result.status).toBe(0);
     expect((result.stdout || "").trim()).toBe(PI_VERSION);
   });
+});
 
-  it("end-to-end: setup output drives a non-bundled spawn", { skip: posixOnly }, () => {
-    const svc = makeServiceRoot();
+describe("missing-entry spawn fails without invoking the bundle", () => {
+  it("a missing CLI entry fails spawn without invoking the bundle", () => {
+    const missingDir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
     try {
-      const setup = setupKadyPiBinary({}, piCliPath(), "linux", svc.node);
-      expect(setup.action).toBe("kady-default");
-      expect(setup.warnings).toEqual([]);
-      const env: NodeJS.ProcessEnv = { ...process.env, [PI_SUBAGENT_PI_BINARY_ENV]: setup.value };
-      const spec = getPiSpawnCommand([], {
-        platform: "linux",
-        env: { [PI_SUBAGENT_PI_BINARY_ENV]: setup.value } as NodeJS.ProcessEnv,
-      });
-      expect(spec.command).toBe(setup.value);
-      expect(spec.command).not.toContain("bundle");
-      const result = spawnSync(spec.command, [...spec.args, "--version"], {
-        env,
-        encoding: "utf-8",
-        timeout: 30000,
-      });
-      expect(result.status).toBe(0);
-      expect((result.stdout || "").trim()).toBe(PI_VERSION);
-    } finally {
-      rmDir(svc.dir);
-    }
-  });
-
-  it("a missing CLI entry fails spawn visibly without invoking the bundle", () => {
-    const missing = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-")),
-      "absent-cli.js",
-    );
-    const dir = path.dirname(missing);
-    try {
-      // The seam points at the (missing) unbundled path: the spawn itself
-      // must fail — never silently fall through to the bundled CLI.
+      const missing = path.join(missingDir, "absent-cli.js");
       const spec = getPiSpawnCommand([], {
         platform: process.platform,
         execPath: process.execPath,
         env: { [PI_SUBAGENT_PI_BINARY_ENV]: missing } as NodeJS.ProcessEnv,
       });
-      expect([spec.command, ...spec.args].join(" ")).not.toContain("bundle");
+      if (process.platform === "win32") {
+        expect(spec.command).toBe(process.execPath);
+      } else {
+        expect(spec.command).toBe(missing);
+      }
       const result = spawnSync(spec.command, [...spec.args, "--version"], {
         encoding: "utf-8",
         timeout: 30000,
       });
       expect(result.error !== undefined || result.status !== 0).toBe(true);
+      expect([spec.command, ...spec.args].join(" ")).not.toContain("bundle");
     } finally {
-      rmDir(dir);
-    }
-  });
-
-  it.runIf(process.platform !== "win32")("runs through a path containing spaces", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady guard bin "));
-    try {
-      const link = path.join(dir, "cli.js");
-      try {
-        fs.symlinkSync(piCliPath(), link);
-      } catch {
-        // Symlink-restricted filesystems: the spaced-string parity above
-        // still pins argument handling; nothing to execute here.
-        return;
-      }
-      const spec = getPiSpawnCommand([], {
-        platform: "linux",
-        env: { [PI_SUBAGENT_PI_BINARY_ENV]: link } as NodeJS.ProcessEnv,
-      });
-      const result = spawnSync(spec.command, [...spec.args, "--version"], {
-        encoding: "utf-8",
-        timeout: 30000,
-      });
-      expect(result.status).toBe(0);
-      expect((result.stdout || "").trim()).toBe(PI_VERSION);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("hostile-PATH probe execution (POSIX)", () => {
-  const posixOnly = process.platform === "win32" ? "shebang PATH resolution is POSIX-only" : false;
-
-  function hostileEnv(nodeDir: string, fakeDir: string): NodeJS.ProcessEnv {
-    // Intentionally conflicting PATH: a fake `node` that fails comes first,
-    // exactly what a hostile or stale PATH entry would do to the shebang.
-    return {
-      ...process.env,
-      PATH: `${fakeDir}${path.delimiter}${nodeDir}${path.delimiter}/usr/bin`,
-    };
-  }
-
-  function makeFakeNode(): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady guard fakenode "));
-    const bin = path.join(dir, "node");
-    fs.writeFileSync(bin, "#!/bin/sh\necho FAKE-NODE >&2\nexit 99\n");
-    fs.chmodSync(bin, 0o755);
-    return dir;
-  }
-
-  function rmFakeNode(dir: string): void {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-
-  it("shebang resolution without the fix picks the fake node", { skip: posixOnly }, () => {
-    const fakeDir = makeFakeNode();
-    try {
-      // Sensitivity control: with the fake first and no setup, `env node`
-      // resolution (what the shebang does) finds the fake.
-      const probe = spawnSync("node", ["--version"], {
-        env: hostileEnv("/nonexistent-node-dir", fakeDir),
-        encoding: "utf-8",
-        timeout: 30000,
-      });
-      expect(probe.status).not.toBe(0);
-    } finally {
-      rmFakeNode(fakeDir);
-    }
-  });
-
-  it("setup prepends the verified service Node dir so the probe survives the hostile PATH", { skip: posixOnly }, () => {
-    const serviceNodeDir = path.dirname(process.execPath);
-    const fakeDir = makeFakeNode();
-    try {
-      const cli = piCliPath();
-      const env: NodeJS.ProcessEnv = hostileEnv(serviceNodeDir, fakeDir);
-      const setup = setupKadyPiBinary(env, cli, "linux", process.execPath);
-      expect(setup.action).toBe("kady-default");
-      expect(setup.pathPrepended).toBe(true);
-      expect(env.PATH?.split(path.delimiter)[0]).toBe(serviceNodeDir);
-      // The actual spawn shape pi-subagents will use for probes.
-      const spec = getPiSpawnCommand([], {
-        platform: "linux",
-        env: { ...env, [PI_SUBAGENT_PI_BINARY_ENV]: cli } as NodeJS.ProcessEnv,
-      });
-      const result = spawnSync(spec.command, [...spec.args, "--version"], {
-        env,
-        encoding: "utf-8",
-        timeout: 30000,
-      });
-      expect(result.status).toBe(0);
-      expect((result.stdout || "").trim()).toBe(PI_VERSION);
-      expect(result.stderr || "").not.toContain("FAKE-NODE");
-    } finally {
-      rmFakeNode(fakeDir);
-    }
-  });
-
-  it("an operator override is preserved verbatim under the same hostile PATH", { skip: posixOnly }, () => {
-    const serviceNodeDir = path.dirname(process.execPath);
-    const fakeDir = makeFakeNode();
-    try {
-      const env = hostileEnv(serviceNodeDir, fakeDir);
-      env[PI_SUBAGENT_PI_BINARY_ENV] = "/operator/pi";
-      const setup = setupKadyPiBinary(env, piCliPath(), "linux", process.execPath);
-      expect(setup.action).toBe("operator");
-      expect(env[PI_SUBAGENT_PI_BINARY_ENV]).toBe("/operator/pi");
-      // Untouched PATH still leads with the fake: the operator owns this.
-      expect(env.PATH?.split(path.delimiter)[0]).toBe(fakeDir);
-    } finally {
-      rmFakeNode(fakeDir);
+      rmDir(missingDir);
     }
   });
 });

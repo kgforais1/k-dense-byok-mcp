@@ -32,7 +32,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { KADY_PI_AGENT_DIR } from "../config.ts";
 import type { ProjectPaths } from "../projects.ts";
 import { migrateDisabledMcpServers, piCliPath } from "./mcp.ts";
-import { setupKadyPiBinary } from "./pi-binary.ts";
+import { kadyPiLauncherPath, setupKadyPiBinary } from "./pi-binary.ts";
 import { catalogueEntryFor, defaultModel, isLocalProvider, pruneStaleOpenRouterCatalog, resolveModel, setupModelRuntime } from "./models.ts";
 import { canonicalProviderId } from "./provider-catalog.ts";
 import { seedAgentFiles } from "./agent-files.ts";
@@ -111,14 +111,16 @@ process.env.KADY_SUBAGENT_HOST_MODULE = pathToFileURL(path.join(import.meta.dirn
 // Route pi-subagents' Pi-binary seam (profile model probes) at the installed
 // *unbundled* CLI instead of the bundled one with its inlined undici copy.
 // An explicit non-blank operator PI_SUBAGENT_PI_BINARY always wins and skips
-// every check below. Anything else that cannot be made safe throws here:
+// every check below. Anything else that cannot be resolved throws here:
 // startup must fail clearly rather than silently run probes on the bundled
-// CLI or an unverified runtime. Precise but non-fatal defects (missing or
-// non-executable entry file, which make probes fail visibly at probe time)
-// are logged loudly.
+// CLI. Precise but non-fatal defects (missing launcher/CLI files, which make
+// probes fail visibly at probe time) are logged loudly.
 let piBinaryWarnings: string[];
 try {
-  piBinaryWarnings = setupKadyPiBinary(process.env, piCliPath()).warnings;
+  piBinaryWarnings = setupKadyPiBinary(process.env, {
+    unbundledEntry: piCliPath(),
+    launcherEntry: kadyPiLauncherPath(),
+  }).warnings;
 } catch (err) {
   throw new Error(
     `Kady cannot establish a safe Pi CLI for profile probes: ${err instanceof Error ? err.message : err}`,

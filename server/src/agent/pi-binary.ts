@@ -18,37 +18,46 @@
  *   visibly (spawn error → probe `error` status) instead of silently
  *   executing the known-vulnerable bundle. The precise defect is reported
  *   in `warnings`.
- * - When the entry path cannot even be resolved, or when (POSIX) no PATH
- *   entry can aim the entry's `env node` shebang at the verified backend
- *   Node, setup throws: startup must fail clearly rather than run probes
- *   on an unverified runtime. The error names the explicit-override escape
- *   hatch.
+ * - When the unbundled entry cannot even be resolved (or, on POSIX, the
+ *   launcher entry cannot be resolved), setup throws: startup must fail
+ *   clearly rather than run probes on an unverified runtime. The error
+ *   names the explicit-override escape hatch.
  *
  * Platform notes (`getPiSpawnCommand` semantics, verified against the
  * installed pi-subagents):
  * - Windows, JS entry: spawned as `process.execPath + [entry, ...args]` —
- *   always the running (policy-checked) Node. Nothing to do.
- * - POSIX: the entry is executed directly, so its `#!/usr/bin/env node`
- *   shebang resolves `node` through PATH. For the Kady default (only), the
- *   service's own Node directory is moved to the PATH front — every other
- *   entry (including `.bin` and meaningful empty segments, which spell the
- *   current directory on POSIX) is preserved in order, never duplicated,
- *   never dropped; only exact duplicates of the service directory are
- *   removed. An absent or empty PATH becomes exactly the service directory.
+ *   always the running (policy-checked) Node. Nothing to do, so on Windows
+ *   the seam points directly at the unbundled entry.
+ * - POSIX: the entry is executed directly. Pointing the seam at a shell
+ *   script would still resolve its interpreter through PATH, so Kady ships
+ *   its own tiny launcher (`scripts/kady-pi.sh`, no Pi code in it) and the
+ *   seam points there instead. The launcher `exec`s the exact backend
+ *   `process.execPath` and the unbundled CLI from explicitly populated
+ *   environment variables (`KADY_NODE_BIN`, `KADY_PI_CLI`) — no PATH lookup
+ *   anywhere on the path, no shell interpolation (`"$@"` preserves quoting
+ *   and spacing), and `exec` means signals and the exit status belong to the
+ *   real CLI with no intermediary to forward through.
  *
- * Tradeoff of the PATH move: it applies process-wide, so every backend
- * child spawn (agent `bash`, npm scripts, tool helpers) resolves `node` to
- * the guarded backend binary instead of the PATH lottery. That is the
- * point — one verified runtime everywhere — at the cost that an operator
- * PATH customization naming a different `node` no longer wins inside
- * backend children (absolute paths still work; an explicit
- * PI_SUBAGENT_PI_BINARY also skips the move entirely).
+ * Tradeoffs, recorded not signed off: `KADY_NODE_BIN`/`KADY_PI_CLI` live in
+ * the backend process environment alongside everything child processes
+ * already inherit, so they grant no new capability to anything that can
+ * already write the backend's env. An unresolvable launcher falls back to
+ * throwing, not to the bundled CLI. A missing/unexecutable entry at probe
+ * time degrades to a loud, visible probe error. `process.env` itself is
+ * never rewritten except for the seam variable (and, on POSIX
+ * kady-default, the two launcher variables) — notably PATH is left
+ * byte-for-byte alone.
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Env var pi-subagents reads in `getPiSpawnCommand`. */
 export const PI_SUBAGENT_PI_BINARY_ENV = "PI_SUBAGENT_PI_BINARY";
+/** Env var naming the exact Node binary the Kady launcher must exec. */
+export const KADY_NODE_BIN_ENV = "KADY_NODE_BIN";
+/** Env var naming the unbundled Pi CLI entry the Kady launcher must run. */
+export const KADY_PI_CLI_ENV = "KADY_PI_CLI";
 
 function isFile(entry: string): boolean {
   try {
@@ -70,6 +79,18 @@ function isLaunchable(entry: string, platform: NodeJS.Platform): boolean {
   }
 }
 
+/** Absolute path of the Kady-owned POSIX launcher script. */
+export function kadyPiLauncherPath(): string {
+  return path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+    "scripts",
+    "kady-pi.sh",
+  );
+}
+
 export type PiBinarySetupAction = "operator" | "kady-default";
 
 export interface PiBinarySetup {
@@ -77,10 +98,17 @@ export interface PiBinarySetup {
   action: PiBinarySetupAction;
   /** The value now in `env[PI_SUBAGENT_PI_BINARY_ENV]`. */
   value: string;
-  /** True when the service Node directory was moved to the front of PATH. */
-  pathPrepended: boolean;
-  /** Precise, actionable defects (missing/non-executable entry). Never silent. */
+  /** Precise, actionable defects (missing/non-executable entry or launcher). Never silent. */
   warnings: string[];
+}
+
+export interface KadyPiBinaryInputs {
+  /** Resolved unbundled `dist/cli.js` (null when unresolvable). */
+  unbundledEntry: string | null | undefined;
+  /** Resolved Kady launcher script (null when unresolvable; unused on Windows). */
+  launcherEntry: string | null | undefined;
+  platform?: NodeJS.Platform;
+  execPath?: string;
 }
 
 /**
@@ -88,21 +116,22 @@ export interface PiBinarySetup {
  * `process.env`). Testable without touching the real environment; the
  * wiring in session-registry passes `process.env`.
  *
- * Throws (fail startup clearly) when the entry cannot be resolved at all,
- * or when on POSIX no PATH entry can aim the shebang at the verified
- * backend Node. Never leaves the seam unset for the plugin default.
+ * Throws (fail startup clearly) when the unbundled entry cannot be resolved
+ * at all, or — on POSIX only — when the launcher entry cannot be resolved.
+ * Never leaves the seam unset for the plugin default.
  */
 export function setupKadyPiBinary(
   env: NodeJS.ProcessEnv,
-  unbundledEntry: string | null | undefined,
-  platform: NodeJS.Platform = process.platform,
-  execPath: string = process.execPath,
+  inputs: KadyPiBinaryInputs,
 ): PiBinarySetup {
+  const platform = inputs.platform ?? process.platform;
+  const execPath = inputs.execPath ?? process.execPath;
   const existing = env[PI_SUBAGENT_PI_BINARY_ENV]?.trim();
   if (existing) {
-    // Explicit user-controlled exception: verbatim, PATH untouched.
-    return { action: "operator", value: existing, pathPrepended: false, warnings: [] };
+    // Explicit user-controlled exception: verbatim, nothing else touched.
+    return { action: "operator", value: existing, warnings: [] };
   }
+  const unbundledEntry = inputs.unbundledEntry;
   if (typeof unbundledEntry !== "string" || unbundledEntry.length === 0) {
     throw new Error(
       "could not resolve the installed unbundled Pi CLI; refusing to fall back to the " +
@@ -110,25 +139,38 @@ export function setupKadyPiBinary(
     );
   }
   if (platform !== "win32") {
-    // Verified before mutating anything: only a PATH entry resolving to the
-    // exact backend binary may aim the entry's `env node` shebang.
-    const nodeDir = path.dirname(execPath);
-    let verified = false;
-    try {
-      verified = fs.realpathSync(path.join(nodeDir, "node")) === fs.realpathSync(execPath);
-    } catch {
-      verified = false;
-    }
-    if (!verified) {
+    const launcherEntry = inputs.launcherEntry;
+    if (typeof launcherEntry !== "string" || launcherEntry.length === 0) {
       throw new Error(
-        `no PATH entry resolves to the verified backend Node (${execPath}); refusing to run ` +
-          "profile probes on an unverified runtime. Set PI_SUBAGENT_PI_BINARY explicitly to a " +
-          "Pi CLI entry to proceed.",
+        "could not resolve the Kady Pi launcher script; refusing to fall back to the " +
+          "bundled CLI. Set PI_SUBAGENT_PI_BINARY explicitly to a Pi CLI entry to proceed.",
       );
     }
+    // Always configured — even missing or non-executable — so a probe attempt
+    // fails visibly instead of reverting to the bundle.
+    env[PI_SUBAGENT_PI_BINARY_ENV] = launcherEntry;
+    env[KADY_NODE_BIN_ENV] = execPath;
+    env[KADY_PI_CLI_ENV] = unbundledEntry;
+    const warnings: string[] = [];
+    if (!isFile(launcherEntry)) {
+      warnings.push(
+        `PI_SUBAGENT_PI_BINARY is set to ${launcherEntry}, but that launcher file does not exist; ` +
+          "profile model probes will fail visibly instead of using the bundled CLI.",
+      );
+    } else if (!isLaunchable(launcherEntry, platform)) {
+      warnings.push(
+        `PI_SUBAGENT_PI_BINARY is set to ${launcherEntry}, but that launcher file is not executable; ` +
+          "profile model probes will fail visibly instead of using the bundled CLI.",
+      );
+    }
+    if (!isFile(unbundledEntry)) {
+      warnings.push(
+        `KADY_PI_CLI is set to ${unbundledEntry}, but that file does not exist; ` +
+          "profile model probes will fail visibly instead of using the bundled CLI.",
+      );
+    }
+    return { action: "kady-default", value: launcherEntry, warnings };
   }
-  // Always configure the resolved path — even missing or non-executable — so
-  // a probe attempt fails visibly instead of reverting to the bundle.
   env[PI_SUBAGENT_PI_BINARY_ENV] = unbundledEntry;
   const warnings: string[] = [];
   if (!isFile(unbundledEntry)) {
@@ -136,22 +178,6 @@ export function setupKadyPiBinary(
       `PI_SUBAGENT_PI_BINARY is set to ${unbundledEntry}, but that file does not exist; ` +
         "profile model probes will fail visibly instead of using the bundled CLI.",
     );
-  } else if (!isLaunchable(unbundledEntry, platform)) {
-    warnings.push(
-      `PI_SUBAGENT_PI_BINARY is set to ${unbundledEntry}, but that file is not executable; ` +
-        "profile model probes will fail visibly instead of using the bundled CLI.",
-    );
   }
-  if (platform === "win32") {
-    return { action: "kady-default", value: unbundledEntry, pathPrepended: false, warnings };
-  }
-  const nodeDir = path.dirname(execPath);
-  // Move only the service directory: drop its exact duplicates, keep every
-  // other segment — including meaningful empty ones (current directory on
-  // POSIX) — in order. An absent PATH becomes exactly the service directory;
-  // an explicitly empty PATH keeps its one empty segment after it.
-  const current = typeof env.PATH === "string" ? env.PATH.split(path.delimiter) : [];
-  const rest = current.filter((segment) => segment !== nodeDir);
-  env.PATH = [nodeDir, ...rest].join(path.delimiter);
-  return { action: "kady-default", value: unbundledEntry, pathPrepended: true, warnings };
+  return { action: "kady-default", value: unbundledEntry, warnings };
 }

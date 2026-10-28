@@ -171,3 +171,52 @@ jobs:
         # paths execute for real with process.execPath (no skips other than
         # POSIX-only signal tests on Windows).
         run: node --test node-policy.test.mjs node-guard.test.mjs
+
+  runtime-policy-reject:
+    name: runtime policy rejects Node 24.22.0 (${{ matrix.os }})
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.22.0
+      # No npm ci here by design: rejection must work with zero installed
+      # dependencies, before any install or service could run.
+      - name: Policy predicate rejects this runtime
+        shell: bash
+        run: |
+          node --input-type=module --eval "
+            import { checkNodeVersion, formatNodeVersionError } from './node-policy.mjs';
+            const r = checkNodeVersion(process.version);
+            if (r.ok || r.reason !== 'below-minimum') {
+              console.error('expected rejection, got ' + JSON.stringify(r));
+              process.exit(1);
+            }
+            console.log('rejected as expected: ' + JSON.stringify(r));
+            console.log(formatNodeVersionError(process.version).split('\n')[0]);
+          "
+      - name: Service guard refuses to start on this runtime
+        shell: bash
+        run: |
+          cd server
+          if node --import ../scripts/node-guard.mjs --eval "process.exit(0)" 2>guard-err.txt; then
+            echo "guard unexpectedly passed on a rejected runtime"
+            exit 1
+          fi
+          grep -q "GHSA-xjj6-f33q-929c" guard-err.txt
+          rm -f guard-err.txt
+      - name: Launcher refuses to start on this runtime
+        shell: bash
+        run: |
+          if node start.mjs --check >launcher-output.txt 2>&1; then
+            echo "launcher unexpectedly passed on a rejected runtime"
+            exit 1
+          fi
+          grep -q "GHSA-xjj6-f33q-929c" launcher-output.txt
+          rm -f launcher-output.txt

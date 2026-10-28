@@ -95,6 +95,8 @@ automation deltas.
   `node --test` policy/guard/seam suites after `npm ci` in both packages.
   The launcher-smoke job additionally runs the offline Homebrew-path shell
   test (`scripts/test-start-sh-missing-node.sh`, POSIX runners only).
+  The `runtime-policy-reject` job asserts exact Node 24.22.0 is rejected by
+  the predicate, guard, and launcher with no `npm ci` and no services.
 - Kady requires a supported Node line (22.23.4–22.x, 24.22.1–24.x or
   26.12.1–26.x, stable only), enforced by the launcher and per-service
   guards; see root `AGENTS.md`. Do not lower the version floor in CI

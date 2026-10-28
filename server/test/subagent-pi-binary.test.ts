@@ -223,7 +223,10 @@ describe("setupKadyPiBinary (real assignment)", () => {
     }
   });
 
-  it("configures a non-executable launcher on POSIX anyway, with a precise warning", () => {
+  // POSIX-only: chmod-based non-executability has no meaning on Windows,
+  // where this file's win32 branch never consults the exec bit (covered by
+  // the Windows test below instead).
+  it.skipIf(process.platform === "win32")("configures a non-executable launcher on POSIX anyway, with a precise warning", () => {
     const svc = makeServiceRoot();
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kady-pi-binary-"));
     try {

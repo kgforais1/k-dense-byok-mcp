@@ -83,16 +83,21 @@ automation deltas.
 
 ## Matrix testing
 
-- Backend: `ubuntu-latest` and `windows-latest` in `workflows/tests.yml`.
+- Backend: `ubuntu-latest` and `windows-latest` in `workflows/tests.yml`,
+  on pinned Node 22.23.4 (never the floating `22` tag, which previously
+  resolved to a cached vulnerable release).
   Backend tests run with `KADY_PROJECTS_ROOT` pointed at a temp directory
   by `server/vitest.config.ts`; do not point that at `projects/` from CI.
-- Frontend: same workflow, `ubuntu-latest` and `windows-latest`. Keep the
+- Frontend: same workflow, `ubuntu-latest` and `windows-latest`, likewise
+  pinned to Node 22.23.4. Keep the
   matrix aligned with the backend unless a change is deliberately
   OS-specific; call out any matrix change in the PR.
 - Runtime policy: the `runtime-policy` job in the same workflow pins the
   supported minimums (Node 22.23.4, 24.22.1 and 26.12.1 on
   `ubuntu-latest`, plus 24.22.1 on `windows-latest`) and runs the root
-  `node --test` policy/guard/seam suites after `npm ci` in both packages.
+  `node --test` policy/guard/seam suites after `npm ci --ignore-scripts`
+  in both packages (lifecycle scripts are unnecessary for those suites —
+  verified identical passes with and without them).
   The launcher-smoke job additionally runs the offline Homebrew-path shell
   test (`scripts/test-start-sh-missing-node.sh`, POSIX runners only).
   The `runtime-policy-reject` job asserts exact Node 24.22.0 is rejected by

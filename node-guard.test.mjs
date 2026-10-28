@@ -20,11 +20,20 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkNodeVersion } from "./node-policy.mjs";
 
 const REPO_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const GUARD = path.join(REPO_ROOT, "scripts", "node-guard.mjs");
+
+/**
+ * `--import` needs a file URL: a bare absolute Windows path parses as an
+ * unknown scheme (`ERR_UNSUPPORTED_ESM_URL_SCHEME`). Relative paths work
+ * too, but only with the right cwd — the absolute file URL is unambiguous.
+ */
+function guardImportArg() {
+  return pathToFileURL(GUARD).href;
+}
 const HOST_NODE = process.execPath;
 const HOST_SUPPORTED = checkNodeVersion(process.version).ok;
 
@@ -138,7 +147,7 @@ function makeFixture() {
 
 function runGuardSync(nodeBin, entryArgs, options) {
   const opts = options || {};
-  return spawnSync(nodeBin, ["--import", GUARD].concat(entryArgs), {
+  return spawnSync(nodeBin, ["--import", guardImportArg()].concat(entryArgs), {
     cwd: opts.cwd || REPO_ROOT,
     env: opts.env || process.env,
     encoding: "utf-8",
@@ -210,6 +219,27 @@ describe("wiring (static, no spawn)", () => {
     }
   });
 
+  it("guard --import argument is a file URL that round-trips", () => {
+    // A bare absolute Windows path parses as an unknown URL scheme
+    // (ERR_UNSUPPORTED_ESM_URL_SCHEME); the file URL form works everywhere.
+    const arg = guardImportArg();
+    assert.ok(arg.startsWith("file://"), "must be a file: URL, got: " + arg);
+    assert.equal(fileURLToPath(arg), GUARD);
+  });
+
+  it("file URLs survive paths containing spaces", () => {
+    const spaced = path.join(REPO_ROOT, "kady guard spaced", "node-guard.mjs");
+    const href = pathToFileURL(spaced).href;
+    assert.ok(href.includes("%20"), "spaces must be percent-encoded: " + href);
+    assert.equal(fileURLToPath(href), spaced);
+  });
+
+  it("documents why a bare Windows absolute path fails as --import", () => {
+    // WHATWG URL parsing treats the drive letter as an (unknown) scheme,
+    // which is exactly the Windows CI failure this file-URL form fixes.
+    assert.equal(new URL("C:\\repo\\scripts\\node-guard.mjs").protocol, "c:");
+  });
+
   it("tsx watch descendants run on the checked binary, not a PATH-selected node", { skip: watchSkipReason(), timeout: 120000 }, async () => {
     // Behavioral proof, offline: run the real wired tsx entry in watch mode
     // with a fake `node` earlier in PATH. The watched child reports its own
@@ -243,7 +273,7 @@ describe("wiring (static, no spawn)", () => {
     const tsxCli = path.join(REPO_ROOT, "server", "node_modules", "tsx", "dist", "cli.mjs");
     const watcher = spawn(
       SUPPORTED_NODE,
-      ["--import", GUARD, tsxCli, "watch", probe],
+      ["--import", guardImportArg(), tsxCli, "watch", probe],
       {
         cwd: fixture,
         env: {
@@ -388,6 +418,22 @@ describe("guard passes through on a supported runtime", () => {
     assert.equal(result.status, 0, "stderr=" + result.stderr);
     assert.ok((result.stdout || "").toLowerCase().includes("next"), "stdout=" + result.stdout);
   });
+
+  it("wired relative guard path works from the package dir, like npm runs it", { skip: skipReason }, () => {
+    // npm executes scripts with the package dir as cwd, so the relative
+    // guard path in package.json resolves without any drive-letter hazard.
+    // This keeps the production wiring (relative form) covered alongside the
+    // absolute file-URL form used above.
+    const parts = wiredScriptParts("server", "start");
+    assert.equal(parts.guard, "../scripts/node-guard.mjs");
+    const result = spawnSync(
+      SUPPORTED_NODE,
+      ["--import", parts.guard, parts.entry, "--version"],
+      { cwd: path.join(REPO_ROOT, "server"), encoding: "utf-8", timeout: 30000 },
+    );
+    assert.equal(result.status, 0, "stderr=" + result.stderr);
+    assert.ok((result.stdout || "").includes("tsx"), "stdout=" + result.stdout);
+  });
 });
 
 describe("signals reach the service exactly once (POSIX)", () => {
@@ -398,7 +444,7 @@ describe("signals reach the service exactly once (POSIX)", () => {
     const fixture = makeFixture();
     const child = spawn(
       SUPPORTED_NODE,
-      ["--import", GUARD, fixture.cli],
+      ["--import", guardImportArg(), fixture.cli],
       {
         cwd: fixture.root,
         env: { ...process.env, KADY_GUARD_FIXTURE_DIR: fixture.root, KADY_GUARD_MODE: "count" },
@@ -428,7 +474,7 @@ describe("signals reach the service exactly once (POSIX)", () => {
     const fixture = makeFixture();
     const child = spawn(
       SUPPORTED_NODE,
-      ["--import", GUARD, fixture.cli],
+      ["--import", guardImportArg(), fixture.cli],
       {
         cwd: fixture.root,
         env: { ...process.env, KADY_GUARD_FIXTURE_DIR: fixture.root, KADY_GUARD_MODE: "count" },

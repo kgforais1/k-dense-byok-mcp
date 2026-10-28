@@ -18,7 +18,7 @@ if ! command -v node &>/dev/null; then
         # the frontend) so the launcher and all services run on the Homebrew
         # Node just installed. Existing PATH entries are preserved after it.
         KEG_PREFIX="$(brew --prefix node@24 2>/dev/null || true)"
-        if [ -z "$KEG_PREFIX" ] || [ ! -x "$KEG_PREFIX/bin/node" ]; then
+        if [[ -z $KEG_PREFIX || ! -x $KEG_PREFIX/bin/node ]]; then
             echo "Homebrew installed node@24, but its 'node' binary was not found where expected." >&2
             echo "Install Node.js on a supported line (22.23.4+, 24.22.1+ or 26.12.1+) manually, then run ./start.sh again." >&2
             exit 1

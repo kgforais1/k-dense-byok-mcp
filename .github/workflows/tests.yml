@@ -32,7 +32,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
           cache-dependency-path: server/package-lock.json
       - name: Install dependencies
@@ -76,7 +76,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install frontend dependencies
@@ -120,7 +120,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # Pinned to a supported version: the floating `22` tag previously
+          # resolved to a cached vulnerable 22.23.3, which the launcher
+          # correctly rejected.
+          node-version: 22.23.4
       - name: Run start.sh --check
         if: runner.os != 'Windows'
         run: ./start.sh --check
@@ -160,12 +163,17 @@ jobs:
           node-version: ${{ matrix.node }}
       # The guard tests exercise the real wired tsx/next entries, so both
       # package trees must be installed (pinned minimums included).
+      # No lifecycle scripts: the policy/guard tests below exercise only the
+      # repo's own guard code plus the real tsx/next entries, all of which
+      # work without install scripts (verified locally with and without them).
+      # The server postinstall (pi-subagents patch) is
+      # irrelevant here since these tests never load the Pi runtime.
       - name: Install server dependencies
         working-directory: server
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Install web dependencies
         working-directory: web
-        run: npm ci
+        run: npm ci --ignore-scripts
       - name: Run runtime policy tests
         # On these pinned minimums the host passes the policy, so accept
         # paths execute for real with process.execPath (no skips other than

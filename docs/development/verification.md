@@ -139,7 +139,7 @@ CI coverage. The mapping is:
 | Local ladder | CI job / step | Runner(s) |
 |---|---|---|
 | `verify fast` | launcher smoke (`start.sh/cmd --check` on pinned Node 22.23.4; manifest/alias checks are local-only) | `ubuntu-latest`, `macos-latest`, `windows-latest` |
-| (no local ladder; root `node --test` suite) | runtime-policy job (pinned minimums 22.23.4, 24.22.1, 26.12.1 on ubuntu; 24.22.1 on windows; `npm ci --ignore-scripts` both packages first) | per-matrix runners |
+| (no local ladder; root `node --test` suite) | runtime-policy job (pinned minimums 22.23.4, 24.22.1, 26.12.1 and latest 22 on ubuntu; 24.22.1 on windows; `npm ci --ignore-scripts` both packages first) | per-matrix runners |
 | (no local ladder; dependency-free `node` checks) | runtime-policy-reject job (exact Node 24.22.0 — verifies the predicate, guard, and launcher all reject; no `npm ci`, no services) | `ubuntu-latest`, `windows-latest` |
 | (no local ladder; `bash scripts/test-start-sh-missing-node.sh`) | launcher-smoke step: offline Homebrew-path shell test (fake brew/node, POSIX only) | `ubuntu-latest`, `macos-latest` |
 | `verify server` | backend job on pinned Node 22.23.4 (`typecheck` + `vitest`) | `ubuntu-latest`, `windows-latest` |

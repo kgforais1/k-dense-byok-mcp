@@ -94,7 +94,8 @@ automation deltas.
   OS-specific; call out any matrix change in the PR.
 - Runtime policy: the `runtime-policy` job in the same workflow pins the
   supported minimums (Node 22.23.4, 24.22.1 and 26.12.1 on
-  `ubuntu-latest`, plus 24.22.1 on `windows-latest`) and runs the root
+  `ubuntu-latest`, plus 24.22.1 on `windows-latest`), and the latest Node 22
+  release on `ubuntu-latest`. It runs the root
   `node --test` policy/guard/seam suites after `npm ci --ignore-scripts`
   in both packages (lifecycle scripts are unnecessary for those suites —
   verified identical passes with and without them).

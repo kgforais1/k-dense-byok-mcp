@@ -62,6 +62,21 @@ function supportedNodeBin() {
 
 const SUPPORTED_NODE = supportedNodeBin();
 
+/** Skip reason for the tsx watch descendant test, or false when runnable. */
+function watchSkipReason() {
+  if (!SUPPORTED_NODE) {
+    return "no supported Node (host rejected and KADY_VERIFY_NODE_BIN unset/invalid)";
+  }
+  try {
+    if (!fs.statSync(path.join(REPO_ROOT, "server", "node_modules", "tsx", "dist", "cli.mjs")).isFile()) {
+      return "server dependencies not installed (tsx missing)";
+    }
+  } catch (err) {
+    return "server dependencies not installed (tsx missing)";
+  }
+  return false;
+}
+
 /**
  * Minimal CLI fixture: no package needed, invoked directly as the `--import`
  * target's entry. Modes via env: `exit` writes a JSON record and exits with
@@ -78,7 +93,6 @@ function makeFixture() {
       "import fs from 'node:fs';",
       "const dir = process.env.KADY_GUARD_FIXTURE_DIR || '';",
       "const mode = process.env.KADY_GUARD_MODE || 'exit';",
-      "if (dir) { try { fs.writeFileSync(dir + '/ready', String(process.pid)); } catch (e) {} }",
       "if (mode === 'count') {",
       "  const countFile = dir + '/count';",
       "  const bump = () => {",
@@ -100,8 +114,12 @@ function makeFixture() {
       "  process.on('SIGTERM', onSignal);",
       "  process.on('SIGINT', onSignal);",
       "  setInterval(() => {}, 10000);",
+      "  // Ready is written only after the handlers are installed: a signal",
+      "  // arriving in between would otherwise be missed under a loaded CI.",
+      "  if (dir) { try { fs.writeFileSync(dir + '/ready', String(process.pid)); } catch (e) {} }",
       "} else {",
       "  const out = process.env.KADY_GUARD_FIXTURE_OUT;",
+      "  if (dir) { try { fs.writeFileSync(dir + '/ready', String(process.pid)); } catch (e) {} }",
       "  if (out) {",
       "    fs.writeFileSync(out, JSON.stringify({",
       "      execPath: process.execPath,",
@@ -192,16 +210,91 @@ describe("wiring (static, no spawn)", () => {
     }
   });
 
-  it("tsx watch descendants respawn through the checked binary", () => {
-    // Evidence pin: tsx's watch `spawnProcess` runs cross-spawn on
-    // process.execPath (not a PATH-resolved `node`), so restarts inherit the
-    // guarded binary. If a tsx upgrade changes this, the test fails loudly
-    // and the descendant story must be re-verified.
-    const cli = fs.readFileSync(
-      path.join(REPO_ROOT, "server", "node_modules", "tsx", "dist", "cli.mjs"),
-      "utf-8",
+  it("tsx watch descendants run on the checked binary, not a PATH-selected node", { skip: watchSkipReason(), timeout: 120000 }, async () => {
+    // Behavioral proof, offline: run the real wired tsx entry in watch mode
+    // with a fake `node` earlier in PATH. The watched child reports its own
+    // process.execPath on start and after a restart; both must be the
+    // checked binary. If tsx ever resolved the child runtime through PATH,
+    // the fake (exit 99) would break the run and no record would appear.
+    const fixture = makeTemp("kady guard watch ");
+    const recDir = makeTemp("kady guard rec ");
+    const probe = path.join(fixture, "probe.ts");
+    const record = path.join(recDir, "record.jsonl");
+    fs.writeFileSync(
+      probe,
+      [
+        "import fs from 'node:fs';",
+        "fs.appendFileSync(process.env.KADY_WATCH_RECORD, JSON.stringify({",
+        "  execPath: process.execPath,",
+        "  version: process.version,",
+        "}) + '\\n');",
+        "process.exit(0);",
+        "",
+      ].join("\n"),
     );
-    assert.ok(cli.includes("process.execPath"), "tsx must respawn through process.execPath");
+    const fakeDir = makeTemp("kady guard fakenode ");
+    if (process.platform === "win32") {
+      fs.writeFileSync(path.join(fakeDir, "node.cmd"), "@echo off\r\necho FAKE-NODE\r\nexit /b 99\r\n");
+    } else {
+      const fake = path.join(fakeDir, "node");
+      fs.writeFileSync(fake, "#!/bin/sh\necho FAKE-NODE >&2\nexit 99\n");
+      fs.chmodSync(fake, 0o755);
+    }
+    const tsxCli = path.join(REPO_ROOT, "server", "node_modules", "tsx", "dist", "cli.mjs");
+    const watcher = spawn(
+      SUPPORTED_NODE,
+      ["--import", GUARD, tsxCli, "watch", probe],
+      {
+        cwd: fixture,
+        env: {
+          ...process.env,
+          PATH: fakeDir + path.delimiter + (process.env.PATH || ""),
+          KADY_WATCH_RECORD: record,
+        },
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    watcher.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf-8");
+    });
+    const readLines = () => {
+      try {
+        return fs.readFileSync(record, "utf-8").split("\n").filter((line) => line.length > 0);
+      } catch (err) {
+        return [];
+      }
+    };
+    const waitForLines = (count, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (readLines().length >= count) return true;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      }
+      return false;
+    };
+    try {
+      assert.ok(waitForLines(1, 45000), "watched child never started: " + stderr);
+      fs.appendFileSync(probe, "\n// restart " + Date.now() + "\n");
+      assert.ok(waitForLines(2, 45000), "watched child never restarted: " + stderr);
+      const lines = readLines();
+      assert.ok(lines.length >= 2);
+      for (const line of lines) {
+        const seen = JSON.parse(line);
+        assert.equal(fs.realpathSync(seen.execPath), fs.realpathSync(SUPPORTED_NODE));
+        assert.equal(checkNodeVersion(seen.version).ok, true);
+      }
+      assert.ok(!stderr.includes("FAKE-NODE"), "a PATH-selected node must never run: " + stderr);
+    } finally {
+      try {
+        if (process.platform === "win32") watcher.kill("SIGKILL");
+        else process.kill(-watcher.pid, "SIGKILL");
+      } catch (err) {
+        /* already gone */
+      }
+      await waitForExit(watcher, 15000).catch(() => undefined);
+    }
   });
 });
 

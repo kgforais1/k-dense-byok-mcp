@@ -7,6 +7,10 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   SUPPORTED_NODE_RANGES,
   checkNodeVersion,
@@ -210,5 +214,105 @@ describe("formatNodeVersionError", () => {
     assert.doesNotThrow(() => formatNodeVersionError(null));
     assert.doesNotThrow(() => formatNodeVersionError(undefined));
     assert.doesNotThrow(() => formatNodeVersionError(42));
+  });
+});
+
+describe("engines metadata parity", () => {
+  const REPO_ROOT = path.dirname(fileURLToPath(import.meta.url));
+  const EXPECTED_ENGINES = ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1 <27";
+
+  function readJson(rel) {
+    return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf-8"));
+  }
+
+  /**
+   * npm's real range evaluator, resolved from the installed server tree
+   * (CI installs server dependencies before running these tests). Throws
+   * when unavailable so a missing install fails loudly instead of silently
+   * skipping the parity check.
+   */
+  function loadSemver() {
+    try {
+      const req = createRequire(path.join(REPO_ROOT, "server", "package.json"));
+      return req("semver");
+    } catch (err) {
+      throw new Error(
+        "semver is unavailable from server/node_modules — run `npm ci` in server/ first: " +
+          (err && err.message ? err.message : err),
+      );
+    }
+  }
+
+  it("declares the same engines range in all package and lockfile roots", () => {
+    const locations = [
+      ["package.json", (pkg) => pkg.engines.node],
+      ["server/package.json", (pkg) => pkg.engines.node],
+      ["web/package.json", (pkg) => pkg.engines.node],
+      ["server/package-lock.json", (pkg) => pkg.packages[""].engines.node],
+      ["web/package-lock.json", (pkg) => pkg.packages[""].engines.node],
+    ];
+    for (const [rel, pick] of locations) {
+      assert.equal(pick(readJson(rel)), EXPECTED_ENGINES, rel);
+    }
+  });
+
+  it("predicate and npm semver agree on explicitly tabled verdicts", () => {
+    const semver = loadSemver();
+    // [input, expected]. Every row verified against semver@7.8.3 from the
+    // server tree: whitespace/`v` are trimmed, malformed never throws and
+    // never satisfies, prereleases are excluded, build metadata is ignored.
+    const cases = [
+      ["22.23.4", true],
+      ["v22.23.4", true],
+      ["24.22.1", true],
+      ["26.12.1", true],
+      ["  24.22.1  ", true],
+      ["22.23.3", false],
+      ["24.22.0", false],
+      ["26.12.0", false],
+      ["22.23.5", true],
+      ["22.24.0", true],
+      ["22.99.99", true],
+      ["24.22.2", true],
+      ["24.99.99", true],
+      ["26.12.2", true],
+      ["26.99.99", true],
+      ["22.22.9", false],
+      ["24.13.0", false],
+      ["26.0.0", false],
+      ["18.20.8", false],
+      ["20.19.0", false],
+      ["21.7.3", false],
+      ["23.0.0", false],
+      ["23.99.99", false],
+      ["25.0.0", false],
+      ["27.0.0", false],
+      ["22.23.4-rc.1", false],
+      ["22.30.0-nightly.1", false],
+      ["24.22.1-pre", false],
+      ["26.12.1-alpha.1+build.5", false],
+      ["22.23.4+build.1", true],
+      ["24.22.1+001", true],
+      ["26.12.1+exp.sha.5114f85", true],
+      ["", false],
+      ["foo", false],
+      ["22", false],
+      ["22.23", false],
+      ["22.23.4.5", false],
+      ["22.04.1", false],
+      ["v", false],
+    ];
+    for (const [input, expected] of cases) {
+      assert.equal(
+        semver.satisfies(input, EXPECTED_ENGINES),
+        expected,
+        "npm verdict for " + JSON.stringify(input),
+      );
+      assert.equal(
+        checkNodeVersion(input).ok,
+        expected,
+        "predicate verdict for " + JSON.stringify(input),
+      );
+    }
   });
 });

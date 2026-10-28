@@ -2,9 +2,9 @@
   "name": "web",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node --import ../scripts/node-guard.mjs ./node_modules/next/dist/bin/next dev",
+    "build": "node --import ../scripts/node-guard.mjs ./node_modules/next/dist/bin/next build",
+    "start": "node --import ../scripts/node-guard.mjs ./node_modules/next/dist/bin/next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",

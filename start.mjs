@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyEnvFile } from "./env-file.mjs";
+import { checkNodeVersion, formatNodeVersionError } from "./node-policy.mjs";
 
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 const isWin = process.platform === "win32";
@@ -67,22 +68,19 @@ const has = (cmd) => capture(cmd, ["--version"]) !== null;
 // ---- Step 1: dependency checks -------------------------------------------
 
 function checkNode() {
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  if (major < 22) {
+  // Enforced before anything else (including dependency installs): each
+  // service entry re-checks its own binary in-process through
+  // scripts/node-guard.mjs (`node --import`), so a PATH disagreement between
+  // launcher, npm and service cannot slip a vulnerable runtime past this gate.
+  if (!checkNodeVersion(process.version).ok) {
     const hint = isWin
-      ? "    Upgrade with 'winget install OpenJS.NodeJS.LTS' or from https://nodejs.org/,"
+      ? "    Upgrade with 'winget install OpenJS.NodeJS.LTS' or from https://nodejs.org/ (pick a supported line above),"
       : process.platform === "darwin"
-        ? "    Upgrade with 'brew install node' or from https://nodejs.org/,"
-        : "    Upgrade via https://nodejs.org/ or your version manager (e.g. 'nvm install 22'),";
-    fail(
-      `  ${sym.err} Node.js v${process.versions.node} is too old — Kady needs Node.js >= 22 to\n` +
-        `    build and install its packages.\n${hint}\n    then start Kady again.`,
-    );
+        ? "    Upgrade with 'brew install node' or from https://nodejs.org/ (pick a supported line above),"
+        : "    Upgrade via https://nodejs.org/ or your version manager (e.g. 'nvm install 24'),";
+    fail(`  ${sym.err} ${formatNodeVersionError(process.version, { hint }) ?? `Unsupported Node.js version (${process.version}).`}`);
   }
   log(`  Node.js ${sym.ok} (v${process.versions.node})`);
-  if (major === 22 && minor < 19) {
-    log(`  ${sym.warn} Pi recommends Node >= 22.19; you have v${process.versions.node}. It usually still works.`);
-  }
 }
 
 const localBin = path.join(os.homedir(), ".local", "bin");

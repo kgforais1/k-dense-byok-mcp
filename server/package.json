@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
-    "prep": "tsx src/prep.ts",
+    "dev": "node --import ../scripts/node-guard.mjs ./node_modules/tsx/dist/cli.mjs watch src/index.ts",
+    "start": "node --import ../scripts/node-guard.mjs ./node_modules/tsx/dist/cli.mjs src/index.ts",
+    "prep": "node --import ../scripts/node-guard.mjs ./node_modules/tsx/dist/cli.mjs src/prep.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",

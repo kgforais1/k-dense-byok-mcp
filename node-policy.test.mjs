@@ -89,7 +89,7 @@ describe("parseNodeVersion", () => {
       "022.23.4",
       "24.999999999999999999999.0",
     ]) {
-      assert.equal(parseNodeVersion(bad), null, "expected null for " + JSON.stringify(String(bad)));
+      assert.equal(parseNodeVersion(bad), null, `expected null for ${JSON.stringify(String(bad))}`);
     }
   });
 });
@@ -208,7 +208,7 @@ describe("formatNodeVersionError", () => {
   it("reports explicit malformed values instead of substituting the running version", () => {
     for (const input of [null, 42, ""]) {
       const message = formatNodeVersionError(input);
-      assert.ok(message && message.includes("could not be parsed"));
+      assert.ok(message?.includes("could not be parsed"));
       assert.ok(message.includes("(unknown)"));
     }
     assert.equal(formatNodeVersionError(), formatNodeVersionError(process.version));
@@ -230,6 +230,7 @@ describe("engines metadata parity", () => {
   const REPO_ROOT = path.dirname(fileURLToPath(import.meta.url));
   const EXPECTED_ENGINES = ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1 <27";
 
+  /** Load package metadata relative to the repository root. */
   function readJson(rel) {
     return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf-8"));
   }
@@ -246,8 +247,7 @@ describe("engines metadata parity", () => {
       return req("semver");
     } catch (err) {
       throw new Error(
-        "semver is unavailable from server/node_modules — run `npm ci` in server/ first: " +
-          (err && err.message ? err.message : err),
+        `semver is unavailable from server/node_modules — run \`npm ci\` in server/ first: ${err?.message || err}`,
       );
     }
   }
@@ -315,12 +315,12 @@ describe("engines metadata parity", () => {
       assert.equal(
         semver.satisfies(input, EXPECTED_ENGINES),
         expected,
-        "npm verdict for " + JSON.stringify(input),
+        `npm verdict for ${JSON.stringify(input)}`,
       );
       assert.equal(
         checkNodeVersion(input).ok,
         expected,
-        "predicate verdict for " + JSON.stringify(input),
+        `predicate verdict for ${JSON.stringify(input)}`,
       );
     }
   });

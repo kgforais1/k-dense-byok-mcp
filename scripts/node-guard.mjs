@@ -21,19 +21,19 @@
  */
 import { checkNodeVersion, formatNodeVersionError } from "../node-policy.mjs";
 
-var verdict = null;
+let verdict = null;
 try {
   verdict = checkNodeVersion(process.version);
-} catch (err) {
+} catch {
   verdict = null;
 }
 if (!verdict || !verdict.ok) {
-  var message = null;
+  let message = null;
   try {
     message = formatNodeVersionError(process.version);
-  } catch (err) {
+  } catch {
     message = null;
   }
-  console.error(message || "Unsupported Node.js version (" + process.version + ").");
+  console.error(message || `Unsupported Node.js version (${process.version}).`);
   process.exit(1);
 }

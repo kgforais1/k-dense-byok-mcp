@@ -38,6 +38,7 @@ const HOST_NODE = process.execPath;
 const HOST_SUPPORTED = checkNodeVersion(process.version).ok;
 
 const TEMP_DIRS = [];
+/** Create a fixture directory and register it for cleanup. */
 function makeTemp(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   TEMP_DIRS.push(dir);
@@ -47,7 +48,7 @@ after(() => {
   for (const dir of TEMP_DIRS) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
-    } catch (err) {
+    } catch {
       /* best-effort cleanup */
     }
   }
@@ -64,7 +65,7 @@ function supportedNodeBin() {
     if (probed.status !== 0) return null;
     if (!checkNodeVersion((probed.stdout || "").trim()).ok) return null;
     return candidate;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
@@ -80,7 +81,7 @@ function watchSkipReason() {
     if (!fs.statSync(path.join(REPO_ROOT, "server", "node_modules", "tsx", "dist", "cli.mjs")).isFile()) {
       return "server dependencies not installed (tsx missing)";
     }
-  } catch (err) {
+  } catch {
     return "server dependencies not installed (tsx missing)";
   }
   return false;
@@ -142,9 +143,10 @@ function makeFixture() {
       "",
     ].join("\n"),
   );
-  return { root: root, cli: cli };
+  return { root, cli };
 }
 
+/** Run an entry with the guard in a child process. */
 function runGuardSync(nodeBin, entryArgs, options) {
   const opts = options || {};
   return spawnSync(nodeBin, ["--import", guardImportArg()].concat(entryArgs), {
@@ -155,12 +157,13 @@ function runGuardSync(nodeBin, entryArgs, options) {
   });
 }
 
+/** Wait for a child process to create its readiness file. */
 function waitForFile(filePath, timeoutMs) {
   const deadline = Date.now() + (timeoutMs || 10000);
   while (Date.now() < deadline) {
     try {
       if (fs.statSync(filePath).isFile()) return true;
-    } catch (err) {
+    } catch {
       /* not yet */
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
@@ -168,6 +171,7 @@ function waitForFile(filePath, timeoutMs) {
   return false;
 }
 
+/** Wait for a child to exit, rejecting if it fails to terminate. */
 function waitForExit(child, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -176,7 +180,7 @@ function waitForExit(child, timeoutMs) {
     if (typeof timer.unref === "function") timer.unref();
     child.on("exit", (code, signal) => {
       clearTimeout(timer);
-      resolve({ code: code, signal: signal });
+      resolve({ code, signal });
     });
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -197,9 +201,9 @@ function wiredScriptParts(pkgDir, scriptName) {
   const tokens = script.split(" ");
   assert.equal(tokens[0], "node");
   assert.equal(tokens[1], "--import");
-  assert.ok(tokens[2].endsWith("scripts/node-guard.mjs"), "guard path: " + tokens[2]);
+  assert.ok(tokens[2].endsWith("scripts/node-guard.mjs"), `guard path: ${tokens[2]}`);
   const entry = path.resolve(REPO_ROOT, pkgDir, tokens[3]);
-  assert.ok(fs.statSync(entry).isFile(), "wired entry must exist: " + entry);
+  assert.ok(fs.statSync(entry).isFile(), `wired entry must exist: ${entry}`);
   return { nodeTok: tokens[0], importFlag: tokens[1], guard: tokens[2], entry: tokens[3], rest: tokens.slice(4) };
 }
 
@@ -289,13 +293,15 @@ describe("wiring (static, no spawn)", () => {
     watcher.stderr.on("data", (chunk) => {
       stderr += chunk.toString("utf-8");
     });
+    /** Read recorded watcher generations, tolerating startup before the file exists. */
     const readLines = () => {
       try {
         return fs.readFileSync(record, "utf-8").split("\n").filter((line) => line.length > 0);
-      } catch (err) {
+      } catch {
         return [];
       }
     };
+    /** Wait until the watched fixture has recorded the requested generations. */
     const waitForLines = (count, timeoutMs) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -305,9 +311,9 @@ describe("wiring (static, no spawn)", () => {
       return false;
     };
     try {
-      assert.ok(waitForLines(1, 45000), "watched child never started: " + stderr);
-      fs.appendFileSync(probe, "\n// restart " + Date.now() + "\n");
-      assert.ok(waitForLines(2, 45000), "watched child never restarted: " + stderr);
+      assert.ok(waitForLines(1, 45000), `watched child never started: ${stderr}`);
+      fs.appendFileSync(probe, `\n// restart ${Date.now()}\n`);
+      assert.ok(waitForLines(2, 45000), `watched child never restarted: ${stderr}`);
       const lines = readLines();
       assert.ok(lines.length >= 2);
       for (const line of lines) {
@@ -315,12 +321,12 @@ describe("wiring (static, no spawn)", () => {
         assert.equal(fs.realpathSync(seen.execPath), fs.realpathSync(SUPPORTED_NODE));
         assert.equal(checkNodeVersion(seen.version).ok, true);
       }
-      assert.ok(!stderr.includes("FAKE-NODE"), "a PATH-selected node must never run: " + stderr);
+      assert.ok(!stderr.includes("FAKE-NODE"), `a PATH-selected node must never run: ${stderr}`);
     } finally {
       try {
         if (process.platform === "win32") watcher.kill("SIGKILL");
         else process.kill(-watcher.pid, "SIGKILL");
-      } catch (err) {
+      } catch {
         /* already gone */
       }
       await waitForExit(watcher, 15000).catch(() => undefined);
@@ -342,7 +348,7 @@ describe("guard rejects before the entry loads", () => {
       assert.notEqual(result.status, 0);
       assert.ok(
         (result.stderr || "").includes("GHSA-xjj6-f33q-929c"),
-        "expected policy error, got: " + result.stderr,
+        `expected policy error, got: ${result.stderr}`,
       );
       assert.equal(fs.existsSync(record), false, "entry must not run on a rejected runtime");
     },
@@ -355,7 +361,7 @@ describe("guard rejects before the entry loads", () => {
       const parts = wiredScriptParts("server", "start");
       const result = runGuardSync(HOST_NODE, [parts.entry, "--version"], { cwd: path.join(REPO_ROOT, "server") });
       assert.notEqual(result.status, 0);
-      assert.ok((result.stderr || "").includes("GHSA-xjj6-f33q-929c"), "stderr=" + result.stderr);
+      assert.ok((result.stderr || "").includes("GHSA-xjj6-f33q-929c"), `stderr=${result.stderr}`);
     },
   );
 });
@@ -372,7 +378,7 @@ describe("guard passes through on a supported runtime", () => {
       cwd: fixture.root,
       env: { ...process.env, KADY_GUARD_FIXTURE_OUT: record, KADY_GUARD_MARKER: "marker-123" },
     });
-    assert.equal(result.status, 0, "stdout=" + result.stdout + " stderr=" + result.stderr);
+    assert.equal(result.status, 0, `stdout=${result.stdout} stderr=${result.stderr}`);
     const seen = JSON.parse(fs.readFileSync(record, "utf-8"));
     assert.deepEqual(seen.argv, ["hello world", "a&b"]);
     assert.equal(seen.marker, "marker-123");
@@ -397,7 +403,7 @@ describe("guard passes through on a supported runtime", () => {
       cwd: fixture.root,
       env: { ...process.env, KADY_GUARD_FIXTURE_OUT: record },
     });
-    assert.equal(result.status, 0, "stderr=" + result.stderr);
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
     assert.ok(fs.existsSync(record));
   });
 
@@ -406,8 +412,8 @@ describe("guard passes through on a supported runtime", () => {
     const result = runGuardSync(SUPPORTED_NODE, [parts.entry, "--version"], {
       cwd: path.join(REPO_ROOT, "server"),
     });
-    assert.equal(result.status, 0, "stderr=" + result.stderr);
-    assert.ok((result.stdout || "").includes("tsx"), "stdout=" + result.stdout);
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    assert.ok((result.stdout || "").includes("tsx"), `stdout=${result.stdout}`);
   });
 
   it("the wired next command runs on a good runtime", { skip: skipReason }, () => {
@@ -415,8 +421,8 @@ describe("guard passes through on a supported runtime", () => {
     const result = runGuardSync(SUPPORTED_NODE, [parts.entry, "--version"], {
       cwd: path.join(REPO_ROOT, "web"),
     });
-    assert.equal(result.status, 0, "stderr=" + result.stderr);
-    assert.ok((result.stdout || "").toLowerCase().includes("next"), "stdout=" + result.stdout);
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    assert.ok((result.stdout || "").toLowerCase().includes("next"), `stdout=${result.stdout}`);
   });
 
   it("wired relative guard path works from the package dir, like npm runs it", { skip: skipReason }, () => {
@@ -464,7 +470,7 @@ describe("signals reach the service exactly once (POSIX)", () => {
     } finally {
       try {
         process.kill(-child.pid, "SIGKILL");
-      } catch (err) {
+      } catch {
         /* already gone */
       }
     }
@@ -495,7 +501,7 @@ describe("signals reach the service exactly once (POSIX)", () => {
     } finally {
       try {
         process.kill(-child.pid, "SIGKILL");
-      } catch (err) {
+      } catch {
         /* already gone */
       }
     }
@@ -512,7 +518,7 @@ describe("launcher wiring", () => {
     });
     assert.notEqual(result.status, 0);
     const combined = (result.stdout || "") + (result.stderr || "");
-    assert.ok(combined.includes("GHSA-xjj6-f33q-929c"), "expected policy error, got: " + combined);
+    assert.ok(combined.includes("GHSA-xjj6-f33q-929c"), `expected policy error, got: ${combined}`);
   });
 
   it("start.mjs checks the runtime before installing dependencies", () => {

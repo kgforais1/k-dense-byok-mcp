@@ -59,6 +59,7 @@ export const KADY_NODE_BIN_ENV = "KADY_NODE_BIN";
 /** Env var naming the unbundled Pi CLI entry the Kady launcher must run. */
 export const KADY_PI_CLI_ENV = "KADY_PI_CLI";
 
+/** Return false for missing paths and non-files. */
 function isFile(entry: string): boolean {
   try {
     return fs.statSync(entry).isFile();

@@ -31,6 +31,7 @@ export const SUPPORTED_NODE_RANGES = [
 export const SUPPORTED_NODE_DESCRIBE =
   "22.23.4 <= 22.x < 23, 24.22.1 <= 24.x < 25, 26.12.1 <= 26.x < 27 (stable releases only, no prereleases)";
 
+/** Return whether an identifier contains only ASCII digits. */
 function isDigits(text) {
   return /^[0-9]+$/.test(text);
 }
@@ -49,10 +50,11 @@ function isValidTagId(text) {
   return text.length > 0 && /^[0-9A-Za-z-]+$/.test(text);
 }
 
+/** Validate prerelease identifiers, including SemVer's leading-zero rule. */
 function isValidPrerelease(text) {
   if (text.length === 0) return false;
-  var parts = text.split(".");
-  for (var i = 0; i < parts.length; i++) {
+  const parts = text.split(".");
+  for (let i = 0; i < parts.length; i++) {
     if (!isValidTagId(parts[i])) return false;
     // Numeric prerelease identifiers must not have leading zeros (SemVer 9).
     if (isDigits(parts[i]) && parts[i] !== "0" && parts[i].charAt(0) === "0") return false;
@@ -60,10 +62,11 @@ function isValidPrerelease(text) {
   return true;
 }
 
+/** Validate build identifiers, where leading zeros are allowed. */
 function isValidBuild(text) {
   if (text.length === 0) return false;
-  var parts = text.split(".");
-  for (var i = 0; i < parts.length; i++) {
+  const parts = text.split(".");
+  for (let i = 0; i < parts.length; i++) {
     // Leading zeros ARE allowed in build metadata (SemVer 10).
     if (!isValidTagId(parts[i])) return false;
   }
@@ -79,21 +82,21 @@ function isValidBuild(text) {
  */
 export function parseNodeVersion(input) {
   if (typeof input !== "string") return null;
-  var text = input.trim();
+  let text = input.trim();
   if (text.length === 0) return null;
   if (text.charAt(0) === "v" || text.charAt(0) === "V") text = text.slice(1);
   if (text.length === 0) return null;
 
-  var build = null;
-  var plus = text.indexOf("+");
+  let build = null;
+  const plus = text.indexOf("+");
   if (plus !== -1) {
     build = text.slice(plus + 1);
     text = text.slice(0, plus);
     if (!isValidBuild(build)) return null;
   }
 
-  var prerelease = null;
-  var dash = text.indexOf("-");
+  let prerelease = null;
+  const dash = text.indexOf("-");
   if (dash !== -1) {
     prerelease = text.slice(dash + 1);
     text = text.slice(0, dash);
@@ -102,25 +105,26 @@ export function parseNodeVersion(input) {
     if (!isValidPrerelease(prerelease)) return null;
   }
 
-  var parts = text.split(".");
+  const parts = text.split(".");
   if (parts.length !== 3) return null;
   if (!isValidNumericId(parts[0]) || !isValidNumericId(parts[1]) || !isValidNumericId(parts[2])) {
     return null;
   }
 
-  if (!parts.every(function (part) { return Number.isSafeInteger(Number(part)); })) return null;
+  if (!parts.every((part) => Number.isSafeInteger(Number(part)))) return null;
 
   return {
     major: Number(parts[0]),
     minor: Number(parts[1]),
     patch: Number(parts[2]),
-    prerelease: prerelease,
-    build: build,
+    prerelease,
+    build,
   };
 }
 
+/** Find the supported floor for a major release, if one is defined. */
 function rangeForMajor(major) {
-  for (var i = 0; i < SUPPORTED_NODE_RANGES.length; i++) {
+  for (let i = 0; i < SUPPORTED_NODE_RANGES.length; i++) {
     if (SUPPORTED_NODE_RANGES[i].major === major) return SUPPORTED_NODE_RANGES[i];
   }
   return null;
@@ -133,10 +137,10 @@ function rangeForMajor(major) {
  * Never throws for any input.
  */
 export function checkNodeVersion(input) {
-  var parsed;
+  let parsed;
   try {
     parsed = parseNodeVersion(input);
-  } catch (err) {
+  } catch {
     parsed = null;
   }
   if (parsed === null) {
@@ -151,7 +155,7 @@ export function checkNodeVersion(input) {
       patch: parsed.patch,
     };
   }
-  var range = rangeForMajor(parsed.major);
+  const range = rangeForMajor(parsed.major);
   if (range === null) {
     return {
       ok: false,
@@ -171,7 +175,7 @@ export function checkNodeVersion(input) {
       major: parsed.major,
       minor: parsed.minor,
       patch: parsed.patch,
-      minimum: range.major + "." + range.minMinor + "." + range.minPatch,
+      minimum: `${range.major}.${range.minMinor}.${range.minPatch}`,
     };
   }
   return {
@@ -190,32 +194,29 @@ export function checkNodeVersion(input) {
  * string in tests. Never throws.
  */
 export function formatNodeVersionError(installed, options) {
-  var input = typeof installed === "undefined" ? process.version : installed;
-  var versionText = typeof input === "string" && input.length > 0 ? input : "(unknown)";
-  var result;
+  const input = typeof installed === "undefined" ? process.version : installed;
+  const versionText = typeof input === "string" && input.length > 0 ? input : "(unknown)";
+  let result;
   try {
     result = checkNodeVersion(input);
-  } catch (err) {
+  } catch {
     result = { ok: false, reason: "malformed" };
   }
   if (result.ok) return null;
 
-  var why =
+  const why =
     result.reason === "malformed"
       ? "could not be parsed as a Node version"
       : result.reason === "prerelease"
         ? "is a prerelease build, which is never a supported runtime"
         : result.reason === "unsupported-major"
           ? "is on an unsupported major line (only 22.x, 24.x and 26.x have verified fixes)"
-          : "predates the verified fix on its line" +
-            (result.minimum ? " (needs >=" + result.minimum + ")" : "");
+          : `predates the verified fix on its line${result.minimum ? ` (needs >=${result.minimum})` : ""}`;
 
-  var extra = options && typeof options.hint === "string" && options.hint.length > 0 ? "\n" + options.hint : "";
+  const extra = options && typeof options.hint === "string" && options.hint.length > 0 ? `\n${options.hint}` : "";
   return (
-    "Node.js " + versionText + " " + why + ".\n" +
-    "Kady needs a Node runtime whose bundled undici contains the GHSA-xjj6-f33q-929c fix: " +
-    SUPPORTED_NODE_DESCRIBE + ".\n" +
-    "Install or select a supported release (https://nodejs.org/ or your version manager, e.g. 'nvm install 24'), then start Kady again." +
-    extra
+    `Node.js ${versionText} ${why}.\n` +
+    `Kady needs a Node runtime whose bundled undici contains the GHSA-xjj6-f33q-929c fix: ${SUPPORTED_NODE_DESCRIBE}.\n` +
+    `Install or select a supported release (https://nodejs.org/ or your version manager, e.g. 'nvm install 24'), then start Kady again.${extra}`
   );
 }

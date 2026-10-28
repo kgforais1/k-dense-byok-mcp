@@ -85,8 +85,8 @@ beforeEach(async () => {
   });
   const originPort = await listen(origin);
 
-  // undici tunnels through a proxy with CONNECT (proxyTunnel defaults to true)
-  // even for http:// targets, so a request handler alone is not enough. Like a
+  // Kady sets proxyTunnel: true, so undici uses CONNECT even for http://
+  // targets and a request handler alone is not enough. Like a
   // real middlebox, this one ignores the requested host and splices the tunnel
   // to the local origin server — which is what proves the traffic went via the
   // proxy rather than resolving the (unresolvable) target host directly.

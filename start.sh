@@ -24,6 +24,7 @@ if ! command -v node &>/dev/null; then
             exit 1
         fi
         export PATH="$KEG_PREFIX/bin:$PATH"
+        echo "For future terminals, add $KEG_PREFIX/bin to your PATH."
     else
         echo "Node.js not found and Homebrew is not available. Install Node.js on a supported line" >&2
         echo "(22.23.4+, 24.22.1+ or 26.12.1+ — see https://nodejs.org/, or via your version manager, e.g. 'nvm install 24'), then run ./start.sh again." >&2

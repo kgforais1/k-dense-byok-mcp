@@ -101,6 +101,7 @@ if [ "$STATUS" -eq 42 ]; then ok "A: launcher execs the keg node (exit 42)"; els
 if grep -q "brew install node@24" "$A/brew.log" 2>/dev/null; then ok "A: brew install node@24 was requested"; else bad "A: no 'brew install node@24' in brew log" "$(cat "$A/brew.log" 2>/dev/null)"; fi
 if grep -q "start.mjs" "$A/node.log" 2>/dev/null; then ok "A: keg node received start.mjs"; else bad "A: keg node did not receive start.mjs" "$(cat "$A/node.log" 2>/dev/null)"; fi
 if grep -q "node resolves as: $A/keg/bin/node" "$A/node.log" 2>/dev/null; then ok "A: keg bin was first on PATH at exec time"; else bad "A: keg bin was not first on PATH" "$(cat "$A/node.log" 2>/dev/null)"; fi
+if grep -Fq "For future terminals, add $A/keg/bin to your PATH." "$OUT"; then ok "A: explains how to retain Node in future terminals"; else bad "A: missing future PATH guidance" "$(cat "$OUT")"; fi
 
 # --- Scenario B: pre-existing node is used untouched, brew never called ---
 B="$TMP/b"; mkdir -p "$B/fakebin"

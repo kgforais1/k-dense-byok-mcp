@@ -35,9 +35,9 @@
     "pi-web-access": "0.41.0",
     "skills": "1.7.2",
     "typebox": "^1.3.7",
-    "undici": "8.11.2",
+    "undici": "8.12.3",
     "yaml": "2.8.3",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/archiver": "^8.0.0",
@@ -50,6 +50,7 @@
     "vitest": "^4.1.12"
   },
   "overrides": {
+    "undici": "$undici",
     "pi-web-access": {
       "@modelcontextprotocol/sdk": "$@modelcontextprotocol/sdk"
     },

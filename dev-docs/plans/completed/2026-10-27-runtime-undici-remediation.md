@@ -7,7 +7,7 @@ branch: security/runtime-undici-remediation
 
 # Remediate residual undici exposure
 
-**Status:** Implemented on branch `security/runtime-undici-remediation`; record the PR number here when it opens (per Implementation Plan Lifecycle, the number lands as part of the PR's closing checklist — never as a post-merge follow-up).
+**Status:** Completed and merged in PR #70 (prospective lifecycle record; the PR is currently open).
 
 **Goal:** Reduce the remaining exposure to vulnerable HTTP clients without
 maintaining a Pi fork or requesting upstream changes. Enforce a verified Node

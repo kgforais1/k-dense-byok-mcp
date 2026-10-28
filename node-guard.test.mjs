@@ -223,14 +223,14 @@ describe("wiring (static, no spawn)", () => {
     // A bare absolute Windows path parses as an unknown URL scheme
     // (ERR_UNSUPPORTED_ESM_URL_SCHEME); the file URL form works everywhere.
     const arg = guardImportArg();
-    assert.ok(arg.startsWith("file://"), "must be a file: URL, got: " + arg);
+    assert.ok(arg.startsWith("file://"), `must be a file: URL, got: ${arg}`);
     assert.equal(fileURLToPath(arg), GUARD);
   });
 
   it("file URLs survive paths containing spaces", () => {
     const spaced = path.join(REPO_ROOT, "kady guard spaced", "node-guard.mjs");
     const href = pathToFileURL(spaced).href;
-    assert.ok(href.includes("%20"), "spaces must be percent-encoded: " + href);
+    assert.ok(href.includes("%20"), `spaces must be percent-encoded: ${href}`);
     assert.equal(fileURLToPath(href), spaced);
   });
 
@@ -431,8 +431,8 @@ describe("guard passes through on a supported runtime", () => {
       ["--import", parts.guard, parts.entry, "--version"],
       { cwd: path.join(REPO_ROOT, "server"), encoding: "utf-8", timeout: 30000 },
     );
-    assert.equal(result.status, 0, "stderr=" + result.stderr);
-    assert.ok((result.stdout || "").includes("tsx"), "stdout=" + result.stdout);
+    assert.equal(result.status, 0, `stderr=${result.stderr}`);
+    assert.ok((result.stdout || "").includes("tsx"), `stdout=${result.stdout}`);
   });
 });
 

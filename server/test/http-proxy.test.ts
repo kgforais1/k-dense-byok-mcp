@@ -5,8 +5,8 @@ import zlib from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as undici from "undici";
 
-// Node's built-in fetch ignores HTTP_PROXY/HTTPS_PROXY (NODE_USE_ENV_PROXY is
-// Node >= 24 only), so before src/http-proxy.ts the backend dialled providers
+// Unless NODE_USE_ENV_PROXY=1 is enabled (Kady does not set it), Node's built-in
+// fetch ignores HTTP_PROXY/HTTPS_PROXY. Before src/http-proxy.ts the backend dialled providers
 // directly while the child `pi` processes running subagents went through the
 // proxy — the split behind issue #26. These tests pin the actual mechanism:
 // a real local proxy must see the request that global fetch makes.

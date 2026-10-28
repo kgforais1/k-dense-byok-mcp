@@ -396,18 +396,14 @@ describe("unbundled CLI client identity", () => {
     );
     const undiciPath = probeRequire.resolve("undici");
     expect(readVersion(path.dirname(undiciPath), "undici")).toBe("8.12.3");
-    // No nested copy may shadow the pinned one anywhere on the Pi path.
-    expect(
-      fs.existsSync(
-        path.join(
-          path.dirname(piCliPath()),
-          "..",
-          "..",
-          "pi-subagents",
-          "node_modules",
-        ),
-      ),
-    ).toBe(false);
+    // The runner resolves from pi-subagents, an unscoped sibling of the
+    // scoped Pi package. Check the nested package and actual resolution.
+    const subagentsDir = path.resolve(PI_PKG_DIR, "..", "..", "pi-subagents");
+    expect(fs.existsSync(path.join(subagentsDir, "node_modules", "undici"))).toBe(false);
+    const runnerRequire = createRequire(
+      path.join(subagentsDir, "src", "runs", "background", "runner-http-dispatcher.js"),
+    );
+    expect(fs.realpathSync(runnerRequire.resolve("undici"))).toBe(fs.realpathSync(undiciPath));
   });
 });
 

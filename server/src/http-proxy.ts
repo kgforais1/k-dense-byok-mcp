@@ -4,8 +4,9 @@ import { required as requireValue } from "./required.ts";
  * Proxy-aware global HTTP dispatcher for the backend process.
  *
  * Node's built-in fetch ignores HTTP_PROXY / HTTPS_PROXY / NO_PROXY unless the
- * process is started with NODE_USE_ENV_PROXY, which only exists on Node >= 24
- * (the launcher supports >= 22.19). Pi's own CLI installs undici's
+ * process is started with NODE_USE_ENV_PROXY=1, an opt-in supported on all
+ * Kady-supported lines (Node 22.21.0+ and 24.0.0+). Kady does not set it.
+ * Pi's own CLI installs undici's
  * EnvHttpProxyAgent at startup, so the child `pi` processes that run subagents
  * already honour those variables — but Kady embeds the SDK for the lead agent
  * and `configureHttpDispatcher` is not part of pi-coding-agent's public

@@ -1,6 +1,7 @@
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
+import zlib from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as undici from "undici";
 
@@ -35,6 +36,10 @@ let proxyUrl: string;
 /** Hosts the proxy was asked to tunnel to, e.g. "example.invalid:80". */
 let tunneled: string[];
 
+/** Payload for the compressed-streaming regression below (kept small). */
+const COMPRESSED_BODY = `kady-compressed-stream:${"0123456789abcdef".repeat(2048)}`;
+const COMPRESSED_GZIP = zlib.gzipSync(COMPRESSED_BODY);
+
 /** Load a fresh copy so the module-level memo doesn't leak between tests. */
 async function loadModule() {
   vi.resetModules();
@@ -55,7 +60,26 @@ beforeEach(async () => {
   }
 
   tunneled = [];
-  origin = http.createServer((_req, res) => {
+  origin = http.createServer((req, res) => {
+    if (req.url === "/compressed") {
+      // Staggered gzip chunks over a CONNECT tunnel: exercises streamed
+      // decompression rather than a single buffered body.
+      res.writeHead(200, { "content-type": "text/plain", "content-encoding": "gzip" });
+      const chunks = 7;
+      const size = Math.ceil(COMPRESSED_GZIP.length / chunks);
+      let i = 0;
+      const timer = setInterval(() => {
+        if (i < chunks) {
+          res.write(COMPRESSED_GZIP.subarray(i * size, (i + 1) * size));
+          i += 1;
+        } else {
+          clearInterval(timer);
+          res.end();
+        }
+      }, 15);
+      res.on("close", () => clearInterval(timer));
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ via: "proxy" }));
   });
@@ -139,6 +163,32 @@ describe("configureHttpProxy", () => {
     // fails DNS on the unresolvable host rather than being served a 200.
     await expect(fetch("http://kady-proxy-test.invalid/v1/models")).rejects.toThrow();
     expect(tunneled).toEqual([]);
+  });
+
+  it("streams a gzip response through the proxy with the body decompressed", async () => {
+    const { configureHttpProxy } = await loadModule();
+    configureHttpProxy({ http_proxy: proxyUrl });
+
+    // `.invalid` never resolves, so reaching the origin proves proxy routing.
+    // Reading via a stream reader (not a single buffered read) proves the
+    // staggered gzip chunks are decompressed on the way through — guarding
+    // the npm-dispatcher/Node-fetch handler mismatch noted in src/http-proxy.ts,
+    // where a foreign dispatcher once yielded compressed bytes as-is.
+    const resp = await fetch("http://kady-proxy-test.invalid/compressed");
+    expect(resp.status).toBe(200);
+    const body = resp.body;
+    expect(body).not.toBeNull();
+    const reader = (body as NonNullable<typeof body>).getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    expect(text).toBe(COMPRESSED_BODY);
+    expect(tunneled).toEqual(["kady-proxy-test.invalid:80"]);
   });
 
   it("memoizes, so a second call cannot re-install the dispatcher", async () => {

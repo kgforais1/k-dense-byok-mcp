@@ -205,6 +205,15 @@ describe("formatNodeVersionError", () => {
     assert.ok((formatNodeVersionError("nope") || "").includes("could not be parsed"));
   });
 
+  it("reports explicit malformed values instead of substituting the running version", () => {
+    for (const input of [null, 42, ""]) {
+      const message = formatNodeVersionError(input);
+      assert.ok(message && message.includes("could not be parsed"));
+      assert.ok(message.includes("(unknown)"));
+    }
+    assert.equal(formatNodeVersionError(), formatNodeVersionError(process.version));
+  });
+
   it("appends a caller hint when provided", () => {
     const message = formatNodeVersionError("22.22.0", { hint: "hint-text-here" });
     assert.ok((message || "").includes("hint-text-here"));

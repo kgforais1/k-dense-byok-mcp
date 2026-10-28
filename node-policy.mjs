@@ -190,11 +190,11 @@ export function checkNodeVersion(input) {
  * string in tests. Never throws.
  */
 export function formatNodeVersionError(installed, options) {
-  var versionText =
-    typeof installed === "string" && installed.length > 0 ? installed : process.version;
+  var input = typeof installed === "undefined" ? process.version : installed;
+  var versionText = typeof input === "string" && input.length > 0 ? input : "(unknown)";
   var result;
   try {
-    result = checkNodeVersion(typeof installed === "string" ? installed : process.version);
+    result = checkNodeVersion(input);
   } catch (err) {
     result = { ok: false, reason: "malformed" };
   }

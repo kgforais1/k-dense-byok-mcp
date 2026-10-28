@@ -89,10 +89,16 @@ automation deltas.
 - Frontend: same workflow, `ubuntu-latest` and `windows-latest`. Keep the
   matrix aligned with the backend unless a change is deliberately
   OS-specific; call out any matrix change in the PR.
-- Node ≥ 22.19 is what the backend targets; lower 22.x usually works but
-  emits an `EBADENGINE` warning. Node < 22 fails to build/install the
-  packages, so the launcher (`start.mjs`) refuses to run on it on every
-  platform. Do not lower the version floor in CI without a plan.
+- Runtime policy: the `runtime-policy` job in the same workflow pins the
+  supported minimums (Node 22.23.4, 24.22.1 and 26.12.1 on
+  `ubuntu-latest`, plus 24.22.1 on `windows-latest`) and runs the root
+  `node --test` policy/guard/seam suites after `npm ci` in both packages.
+  The launcher-smoke job additionally runs the offline Homebrew-path shell
+  test (`scripts/test-start-sh-missing-node.sh`, POSIX runners only).
+- Kady requires a supported Node line (22.23.4–22.x, 24.22.1–24.x or
+  26.12.1–26.x, stable only), enforced by the launcher and per-service
+  guards; see root `AGENTS.md`. Do not lower the version floor in CI
+  without a plan.
 
 ## Release automation
 

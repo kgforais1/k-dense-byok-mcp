@@ -139,6 +139,8 @@ CI coverage. The mapping is:
 | Local ladder | CI job / step | Runner(s) |
 |---|---|---|
 | `verify fast` | launcher smoke (`start.sh/cmd --check`; manifest/alias checks are local-only) | `ubuntu-latest`, `macos-latest`, `windows-latest` |
+| (no local ladder; root `node --test` suite) | runtime-policy job (pinned minimums 22.23.4, 24.22.1, 26.12.1 on ubuntu; 24.22.1 on windows; `npm ci` both packages first) | per-matrix runners |
+| (no local ladder; `bash scripts/test-start-sh-missing-node.sh`) | launcher-smoke step: offline Homebrew-path shell test (fake brew/node, POSIX only) | `ubuntu-latest`, `macos-latest` |
 | `verify server` | backend job (`typecheck` + `vitest`) | `ubuntu-latest`, `windows-latest` |
 | `verify web` | frontend job (`typecheck` + `lint` + `build` + `vitest`; local `web` omits lint/build) | `ubuntu-latest`, `windows-latest` |
 | `verify docs` | *(local only — no CI job yet; the plan's Phase 5 docs job is still pending)* | — |

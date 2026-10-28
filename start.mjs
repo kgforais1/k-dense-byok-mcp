@@ -76,7 +76,7 @@ function checkNode() {
     const hint = isWin
       ? "    Upgrade with 'winget install OpenJS.NodeJS.LTS' or from https://nodejs.org/ (pick a supported line above),"
       : process.platform === "darwin"
-        ? "    Upgrade with 'brew install node' or from https://nodejs.org/ (pick a supported line above),"
+        ? "    Upgrade with 'brew install node@24' or from https://nodejs.org/ (pick a supported line: 22.23.4+, 24.22.1+, 26.12.1+),"
         : "    Upgrade via https://nodejs.org/ or your version manager (e.g. 'nvm install 24'),";
     fail(`  ${sym.err} ${formatNodeVersionError(process.version, { hint }) ?? `Unsupported Node.js version (${process.version}).`}`);
   }

@@ -128,6 +128,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: start.cmd --check
+      # Offline launcher test with a fake brew/node in an isolated PATH:
+      # no network, no installs, no services. POSIX-only (Homebrew path).
+      - name: Test missing-Node Homebrew path
+        if: runner.os != 'Windows'
+        run: bash scripts/test-start-sh-missing-node.sh
 
   runtime-policy:
     name: runtime policy (node ${{ matrix.node }}, ${{ matrix.os }})

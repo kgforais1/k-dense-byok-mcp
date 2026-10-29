@@ -32,7 +32,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
           cache-dependency-path: server/package-lock.json
       - name: Install dependencies
@@ -76,7 +76,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install frontend dependencies
@@ -120,7 +120,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # Pinned to a supported version: the floating `22` tag previously
+          # resolved to a cached vulnerable 22.23.3, which the launcher
+          # correctly rejected.
+          node-version: 22.23.4
       - name: Run start.sh --check
         if: runner.os != 'Windows'
         run: ./start.sh --check
@@ -128,3 +131,104 @@ jobs:
         if: runner.os == 'Windows'
         shell: cmd
         run: start.cmd --check
+      # Offline launcher test with a fake brew/node in an isolated PATH:
+      # no network, no installs, no services. POSIX-only (Homebrew path).
+      - name: Test missing-Node Homebrew path
+        if: runner.os != 'Windows'
+        run: bash scripts/test-start-sh-missing-node.sh
+
+  runtime-policy:
+    name: runtime policy (node ${{ matrix.node }}, ${{ matrix.os }})
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 22.23.4
+          # Also exercise new 22.x releases instead of only the minimum.
+          - os: ubuntu-latest
+            node: '22'
+          - os: ubuntu-latest
+            node: 24.22.1
+          - os: ubuntu-latest
+            node: 26.12.1
+          # Windows coverage on at least one supported line; POSIX-only
+          # signal tests skip there, everything else runs.
+          - os: windows-latest
+            node: 24.22.1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+      # The guard tests exercise the real wired tsx/next entries, so both
+      # package trees must be installed (pinned minimums included).
+      # No lifecycle scripts: the policy/guard tests below exercise only the
+      # repo's own guard code plus the real tsx/next entries, all of which
+      # work without install scripts (verified locally with and without them).
+      # The server postinstall (pi-subagents patch) is
+      # irrelevant here since these tests never load the Pi runtime.
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --ignore-scripts
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --ignore-scripts
+      - name: Run runtime policy tests
+        # On supported runtimes the host passes the policy, so accept
+        # paths execute for real with process.execPath (no skips other than
+        # POSIX-only signal tests on Windows).
+        run: node --test node-policy.test.mjs node-guard.test.mjs
+
+  runtime-policy-reject:
+    name: runtime policy rejects Node 24.22.0 (${{ matrix.os }})
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24.22.0
+      # No npm ci here by design: rejection must work with zero installed
+      # dependencies, before any install or service could run.
+      - name: Policy predicate rejects this runtime
+        shell: bash
+        run: |
+          node --input-type=module --eval "
+            import { checkNodeVersion, formatNodeVersionError } from './node-policy.mjs';
+            const r = checkNodeVersion(process.version);
+            if (r.ok || r.reason !== 'below-minimum') {
+              console.error('expected rejection, got ' + JSON.stringify(r));
+              process.exit(1);
+            }
+            console.log('rejected as expected: ' + JSON.stringify(r));
+            console.log(formatNodeVersionError(process.version).split('\n')[0]);
+          "
+      - name: Service guard refuses to start on this runtime
+        shell: bash
+        run: |
+          cd server
+          if node --import ../scripts/node-guard.mjs --eval "process.exit(0)" 2>guard-err.txt; then
+            echo "guard unexpectedly passed on a rejected runtime"
+            exit 1
+          fi
+          grep -q "GHSA-xjj6-f33q-929c" guard-err.txt
+          rm -f guard-err.txt
+      - name: Launcher refuses to start on this runtime
+        shell: bash
+        run: |
+          if node start.mjs --check >launcher-output.txt 2>&1; then
+            echo "launcher unexpectedly passed on a rejected runtime"
+            exit 1
+          fi
+          grep -q "GHSA-xjj6-f33q-929c" launcher-output.txt
+          rm -f launcher-output.txt

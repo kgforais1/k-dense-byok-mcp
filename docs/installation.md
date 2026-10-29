@@ -5,7 +5,7 @@
 ## Requirements
 
 - macOS, Linux or Windows 10/11; WSL also works.
-- Node.js 22 or newer; **22.19+ recommended**. The macOS/Linux wrapper can install a missing Node through an existing Homebrew installation.
+- Node.js on a supported line: **22.23.4–22.x, 24.22.1–24.x, or 26.12.1–26.x** (stable releases only — prereleases and odd majors such as 23/25 are rejected at startup). Install an explicit major (`nvm install 24`; with Homebrew `brew install node@24` — keg-only, currently 24.22.1 — rather than bare `brew install node`, which tracks latest and may land on an unsupported line; on Windows `winget install OpenJS.NodeJS.LTS`) and confirm with `node --version` or `node start.mjs --check`. If Node is missing, the macOS/Linux wrapper installs `node@24` through an existing Homebrew installation and puts that keg's `bin` directory first on `PATH` for that launch only (launcher, npm, backend, frontend). For later shells, add the keg to your own `PATH` instead, e.g. `export PATH="$(brew --prefix node@24)/bin:$PATH"` in your shell profile — no forced `brew link` needed. The startup guards cover the launcher and the packaged `npm run` scripts; invoking `npx`/`node` directly bypasses them, so run services through the launcher or the documented npm scripts.
 - Git. On Windows, install Git for Windows with Git Bash, which the agent uses for shell commands.
 - Optional: a TeX distribution with `latexmk` for LaTeX compilation.
 

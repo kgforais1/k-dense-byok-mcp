@@ -83,16 +83,30 @@ automation deltas.
 
 ## Matrix testing
 
-- Backend: `ubuntu-latest` and `windows-latest` in `workflows/tests.yml`.
+- Backend: `ubuntu-latest` and `windows-latest` in `workflows/tests.yml`,
+  on pinned Node 22.23.4 (never the floating `22` tag, which previously
+  resolved to a cached vulnerable release).
   Backend tests run with `KADY_PROJECTS_ROOT` pointed at a temp directory
   by `server/vitest.config.ts`; do not point that at `projects/` from CI.
-- Frontend: same workflow, `ubuntu-latest` and `windows-latest`. Keep the
+- Frontend: same workflow, `ubuntu-latest` and `windows-latest`, likewise
+  pinned to Node 22.23.4. Keep the
   matrix aligned with the backend unless a change is deliberately
   OS-specific; call out any matrix change in the PR.
-- Node ≥ 22.19 is what the backend targets; lower 22.x usually works but
-  emits an `EBADENGINE` warning. Node < 22 fails to build/install the
-  packages, so the launcher (`start.mjs`) refuses to run on it on every
-  platform. Do not lower the version floor in CI without a plan.
+- Runtime policy: the `runtime-policy` job in the same workflow pins the
+  supported minimums (Node 22.23.4, 24.22.1 and 26.12.1 on
+  `ubuntu-latest`, plus 24.22.1 on `windows-latest`), and the latest Node 22
+  release on `ubuntu-latest`. It runs the root
+  `node --test` policy/guard/seam suites after `npm ci --ignore-scripts`
+  in both packages (lifecycle scripts are unnecessary for those suites —
+  verified identical passes with and without them).
+  The launcher-smoke job additionally runs the offline Homebrew-path shell
+  test (`scripts/test-start-sh-missing-node.sh`, POSIX runners only).
+  The `runtime-policy-reject` job asserts exact Node 24.22.0 is rejected by
+  the predicate, guard, and launcher with no `npm ci` and no services.
+- Kady requires a supported Node line (22.23.4–22.x, 24.22.1–24.x or
+  26.12.1–26.x, stable only), enforced by the launcher and per-service
+  guards; see root `AGENTS.md`. Do not lower the version floor in CI
+  without a plan.
 
 ## Release automation
 

@@ -2,9 +2,9 @@
   "name": "web",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node --import ../scripts/node-guard.mjs ./node_modules/next/dist/bin/next dev",
+    "build": "node --import ../scripts/node-guard.mjs ./node_modules/next/dist/bin/next build",
+    "start": "node --import ../scripts/node-guard.mjs ./node_modules/next/dist/bin/next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
@@ -12,7 +12,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1 <27"
   },
   "dependencies": {
     "@codemirror/merge": "^6.12.2",

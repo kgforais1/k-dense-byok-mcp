@@ -160,7 +160,7 @@ Kady keeps two complementary records, so you can check what was done instead of 
 You need a compatible computer and at least one model source:
 
 1. A computer running **macOS, Linux, or Windows 10/11**.
-   - On Windows, install [Node.js 22+](https://nodejs.org/) (or `winget install OpenJS.NodeJS.LTS`) and [Git for Windows](https://git-scm.com/download/win) first — Kady's agent runs its shell commands through the Git Bash that Git for Windows provides. (Prefer a Linux environment? [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) works too.)
+   - On Windows, install Node.js on a supported line — 22.23.4+, 24.22.1+, or 26.12.1+ ([nodejs.org](https://nodejs.org/), or `winget install OpenJS.NodeJS.LTS` then verify with `node --version`) — and [Git for Windows](https://git-scm.com/download/win) first — Kady's agent runs its shell commands through the Git Bash that Git for Windows provides. (Prefer a Linux environment? [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) works too.)
 2. One of:
    - an **[OpenRouter](https://openrouter.ai/) API key** for broad pay-as-you-go model access,
    - an **API key for any provider Pi supports** — Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek, [NVIDIA NIM](https://build.nvidia.com/), Azure, Bedrock, Vertex, and [more](./docs/model-selection.md#direct-api-key-providers) — pasted in Settings after launch,

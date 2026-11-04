@@ -51,6 +51,7 @@
   },
   "overrides": {
     "undici": "$undici",
+    "@hono/node-server": "2.1.6",
     "pi-web-access": {
       "@modelcontextprotocol/sdk": "$@modelcontextprotocol/sdk"
     },

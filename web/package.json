@@ -72,6 +72,7 @@
     "vitest": "^4.1.12"
   },
   "overrides": {
+    "@hono/node-server": "2.1.6",
     "@vitest/browser-webdriverio": "4.1.11"
   }
 }

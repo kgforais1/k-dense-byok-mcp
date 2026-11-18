@@ -22,11 +22,11 @@
 > use it if it is useful to you, and expect no support commitment.
 
 [![arXiv](https://img.shields.io/badge/arXiv-2610.00074-b31b1b.svg)](https://arxiv.org/abs/2610.00074)
-[![Version](https://img.shields.io/github/package-json/v/K-Dense-AI/k-dense-byok?filename=server%2Fpackage.json&label=Version&color=blue)](server/package.json)
+[![Version](https://img.shields.io/github/package-json/v/kgforais1/k-dense-byok-mcp?filename=server%2Fpackage.json&label=Version&color=blue)](server/package.json)
 [![Skills](https://img.shields.io/badge/Skills-181-brightgreen.svg)](#what-can-it-do)
 [![Workflows](https://img.shields.io/badge/Workflows-326-blueviolet.svg)](#what-can-it-do)
 [![Databases](https://img.shields.io/badge/Databases-229-orange.svg)](#what-can-it-do)
-[![Tests](https://github.com/K-Dense-AI/k-dense-byok/actions/workflows/tests.yml/badge.svg)](https://github.com/K-Dense-AI/k-dense-byok/actions/workflows/tests.yml)
+[![Tests](https://github.com/kgforais1/k-dense-byok-mcp/actions/workflows/tests.yml/badge.svg)](https://github.com/kgforais1/k-dense-byok-mcp/actions/workflows/tests.yml)
 [![X](https://img.shields.io/badge/Follow_on_X-%40k__dense__ai-000000?logo=x)](https://x.com/k_dense_ai)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-K--Dense_Inc.-0A66C2?logo=linkedin)](https://www.linkedin.com/company/k-dense-inc)
 [![YouTube](https://img.shields.io/badge/YouTube-K--Dense_Inc.-FF0000?logo=youtube)](https://www.youtube.com/@K-Dense-Inc)

@@ -5,6 +5,7 @@
 - **Trigger:** CodeQL `js/polynomial-redos` alert #403 on `server/src/agent/prompt-expansion.ts:102` (`COMMAND_RE`, matched against the user-controlled first line at :114). Independent review confirmed real-but-low-impact: `[ \t]+` vs `(.*)` overlap plus `.` stopping at an interior `\r` makes `/a` + N spaces + `\r` + tail backtrack O(N²) with no match (measured 4/17/70ms at N=2k/4k/8k — ~4× per doubling). Input is the user's own prompt, so self-DoS only.
 - **Fix:** `(.*)` → `(\S.*)?` so the arg group cannot re-match the separator spaces (100k-space hostile input now matches in ~1ms), plus `(rawArgs ?? "").trim()` because the group no longer participates on a bare `/review   ` (destructuring defaults don't apply to `null`). Behavior otherwise identical across the parity spot-checks.
 - **Verification:** new tests (trailing-whitespace args, 100k-space hostile promptness + correct parse); file suite 9/9; `server/` typecheck clean.
+- **Also in this PR:** README `Tests` and `Version` badges repointed from upstream (`K-Dense-AI/k-dense-byok`) to this fork — both render live upstream state (workflow status; upstream `server/package.json` version) that can misrepresent the fork. License/arXiv/static-count/social badges untouched (local, version-independent, or attribution covered by the fork notice); "Star us" left pointing upstream.
 
 ### 2026-11-18 — next 16.4.6 and hono 4.13.19 for fourteen Dependabot alerts
 

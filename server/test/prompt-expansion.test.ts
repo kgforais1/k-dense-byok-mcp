@@ -92,9 +92,9 @@ describe("expandLeadingCommand", () => {
   });
 
   it("keeps args starting with non-space whitespace (reviewer correction)", () => {
-    // (\S.*)? regressed this: NBSP is \s, so "/review x" stopped matching.
+    // (\S.*)? regressed this: NBSP is \s, so "/review\u00a0x" stopped matching.
     // (?![ \t]) only excludes the separator class, like the old (.*) did.
-    for (const [text, args] of [["/review  x", "x"], ["/review \f x", "x"], ["/review 　x", "x"]] as const) {
+    for (const [text, args] of [["/review \u00a0x", "x"], ["/review \f x", "x"], ["/review \u3000x", "x"]] as const) {
       const out = expandLeadingCommand(text, { skills, templates, readFile });
       expect(out).toMatchObject({ kind: "template", name: "review", args });
     }

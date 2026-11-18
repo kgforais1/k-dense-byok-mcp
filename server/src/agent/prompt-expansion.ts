@@ -99,7 +99,7 @@ export function stripFrontmatterBlock(content: string): string {
   return match ? content.slice(match[0].length) : content;
 }
 
-const COMMAND_RE = /^\/(skill:)?([^\s/][^\s]*)(?:[ \t]+(\S.*)?)?$/;
+const COMMAND_RE = /^\/(skill:)?([^\s/][^\s]*)(?:[ \t]+((?![ \t]).*)?)?$/;
 
 /**
  * Expand a leading `/skill:name args` or `/template args`. Only the first line

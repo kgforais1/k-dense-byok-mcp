@@ -91,6 +91,15 @@ describe("expandLeadingCommand", () => {
     if (out.kind === "template") expect(out.args).toBe("");
   });
 
+  it("keeps args starting with non-space whitespace (reviewer correction)", () => {
+    // (\S.*)? regressed this: NBSP is \s, so "/review x" stopped matching.
+    // (?![ \t]) only excludes the separator class, like the old (.*) did.
+    for (const [text, args] of [["/review  x", "x"], ["/review \f x", "x"], ["/review 　x", "x"]] as const) {
+      const out = expandLeadingCommand(text, { skills, templates, readFile });
+      expect(out).toMatchObject({ kind: "template", name: "review", args });
+    }
+  });
+
   it("matches a long-whitespace adversarial first line promptly (CodeQL #403)", () => {
     // Old COMMAND_RE backtracked O(N^2) here: `[ \t]+` vs `(.*)` overlap with
     // `.` stopping at the interior `\r`, so no match after quadratic work.

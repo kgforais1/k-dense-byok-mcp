@@ -84,4 +84,23 @@ describe("expandLeadingCommand", () => {
       text: "/skill:qc-protocol x",
     });
   });
+
+  it("treats trailing whitespace with no args as no args (CodeQL #403 follow-up)", () => {
+    const out = expandLeadingCommand("/review   ", { skills, templates, readFile });
+    expect(out.kind).toBe("template");
+    if (out.kind === "template") expect(out.args).toBe("");
+  });
+
+  it("matches a long-whitespace adversarial first line promptly (CodeQL #403)", () => {
+    // Old COMMAND_RE backtracked O(N^2) here: `[ \t]+` vs `(.*)` overlap with
+    // `.` stopping at the interior `\r`, so no match after quadratic work.
+    const hostile = `/a${" ".repeat(100_000)}\rb`;
+    const start = Date.now();
+    const out = expandLeadingCommand(hostile, { skills, templates, readFile });
+    expect(Date.now() - start).toBeLessThan(5000);
+    expect(out).toEqual({ kind: "none", text: hostile });
+    // Same shape with a real command still parses.
+    const withArgs = expandLeadingCommand(`/qc${" ".repeat(100_000)}a.csv`, { skills, templates, readFile });
+    expect(withArgs).toMatchObject({ kind: "template", name: "qc", args: "a.csv" });
+  });
 });

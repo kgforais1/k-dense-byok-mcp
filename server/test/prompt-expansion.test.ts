@@ -84,4 +84,32 @@ describe("expandLeadingCommand", () => {
       text: "/skill:qc-protocol x",
     });
   });
+
+  it("treats trailing whitespace with no args as no args (CodeQL #403 follow-up)", () => {
+    const out = expandLeadingCommand("/review   ", { skills, templates, readFile });
+    expect(out.kind).toBe("template");
+    if (out.kind === "template") expect(out.args).toBe("");
+  });
+
+  it("keeps args starting with non-space whitespace (reviewer correction)", () => {
+    // (\S.*)? regressed this: NBSP is \s, so "/review\u00a0x" stopped matching.
+    // (?![ \t]) only excludes the separator class, like the old (.*) did.
+    for (const [text, args] of [["/review \u00a0x", "x"], ["/review \f x", "x"], ["/review \u3000x", "x"]] as const) {
+      const out = expandLeadingCommand(text, { skills, templates, readFile });
+      expect(out).toMatchObject({ kind: "template", name: "review", args });
+    }
+  });
+
+  it("matches a long-whitespace adversarial first line promptly (CodeQL #403)", () => {
+    // Old COMMAND_RE backtracked O(N^2) here: `[ \t]+` vs `(.*)` overlap with
+    // `.` stopping at the interior `\r`, so no match after quadratic work.
+    const hostile = `/a${" ".repeat(100_000)}\rb`;
+    const start = Date.now();
+    const out = expandLeadingCommand(hostile, { skills, templates, readFile });
+    expect(Date.now() - start).toBeLessThan(5000);
+    expect(out).toEqual({ kind: "none", text: hostile });
+    // Same shape with a real command still parses.
+    const withArgs = expandLeadingCommand(`/qc${" ".repeat(100_000)}a.csv`, { skills, templates, readFile });
+    expect(withArgs).toMatchObject({ kind: "template", name: "qc", args: "a.csv" });
+  });
 });

@@ -1,5 +1,12 @@
 # Maintenance Log
 
+### 2026-11-18 — fix CodeQL polynomial-redos in the slash-command regex
+
+- **Trigger:** CodeQL `js/polynomial-redos` alert #403 on `server/src/agent/prompt-expansion.ts:102` (`COMMAND_RE`, matched against the user-controlled first line at :114). Independent review confirmed real-but-low-impact: `[ \t]+` vs `(.*)` overlap plus `.` stopping at an interior `\r` makes `/a` + N spaces + `\r` + tail backtrack O(N²) with no match (measured 4/17/70ms at N=2k/4k/8k — ~4× per doubling). Input is the user's own prompt, so self-DoS only.
+- **Fix:** `(.*)` → `((?![ \t]).*)?` so the arg group cannot re-match the separator spaces (100k-space hostile input now matches in ~1ms). The zero-width lookahead — not `\S`, per review — preserves args beginning with non-space whitespace (NBSP/`\f`/U+3000 after a real space, as the old `(.*)` accepted); plus `(rawArgs ?? "").trim()` because the group no longer participates on a bare `/review   ` (destructuring defaults don't apply to `null`). Behavior otherwise identical across the parity spot-checks (sole raw-group diff `""` vs `null` on trailing-spaces-only, normalized by the guard).
+- **Verification:** new tests (trailing-whitespace args, 100k-space hostile promptness + correct parse); file suite 9/9; `server/` typecheck clean.
+- **Also in this PR:** README `Tests` and `Version` badges repointed from upstream (`K-Dense-AI/k-dense-byok`) to this fork — both render live upstream state (workflow status; upstream `server/package.json` version) that can misrepresent the fork. License/arXiv/static-count/social badges untouched (local, version-independent, or attribution covered by the fork notice); "Star us" left pointing upstream.
+
 ### 2026-11-18 — next 16.4.6 and hono 4.13.19 for fourteen Dependabot alerts
 
 - **Trigger:** fourteen new open Dependabot alerts #304–#317, all with patches: five hono advisories (all patched in 4.13.16 — `csrf()` `text/ping` bypass, `mount()` middleware bypass, RegExpRouter wildcard skip, `validator('form')` multipart skip, `css`-helper HTML injection) and two Next.js advisories (patched in 16.4.5 — cache leak / info disclosure across root params in nested `use cache`). Ex-deepmerge alert #299 is withdrawn upstream (API returns 410).
@@ -7,7 +14,6 @@
 - **Reach:** `hono` is transitive-only (via the MCP SDK in both packages; `shadcn` CLI chain in `web/`). Kady calls none of the named functions (`mount`, `validator('form')`, `css`, `csrf`) directly. Next.js is the web frontend framework; the bump is a routine patch-line security backport.
 - **Left open:** minimatch #302/#303 (fix 11.0.1; parents pin exact 10.2.6 / `^10` / eslint `^3` — needs upstream releases, no override), KaTeX #227 (fix 0.18.2; blocked by `@streamdown/math` `^0.16.27` — tracked standing item), CodeQL #403 (`prompt-expansion.ts` polynomial-redos — separate small fix, own PR).
 - **Verification:** `server/` typecheck clean, vitest 158 files / 1983 passed (8 skipped); `web/` `tsc --noEmit` clean, vitest 136 files / 943 passed; `npm run verify -- docs` green; CI `Tests` workflow green on the branch. `web` prod build not run locally — env Node is 24.18.0, below the repo-required 24.22.1 floor (pre-existing, unrelated); CI covers it before merge.
-
 ### 2026-11-04 — Pin `@hono/node-server` to 2.1.6
 
 - **Trigger:** open Dependabot alerts [#300](https://github.com/kgforais1/k-dense-byok-mcp/security/dependabot/300) (`server/package-lock.json`, runtime) and [#301](https://github.com/kgforais1/k-dense-byok-mcp/security/dependabot/301) (`web/package-lock.json`, development) for `@hono/node-server` 1.19.17, [GHSA-rmxm-3fg6-px4f](https://github.com/advisories/GHSA-rmxm-3fg6-px4f).

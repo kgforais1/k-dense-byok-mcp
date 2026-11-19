@@ -99,7 +99,7 @@ export function stripFrontmatterBlock(content: string): string {
   return match ? content.slice(match[0].length) : content;
 }
 
-const COMMAND_RE = /^\/(skill:)?([^\s/][^\s]*)(?:[ \t]+(.*))?$/;
+const COMMAND_RE = /^\/(skill:)?([^\s/][^\s]*)(?:[ \t]+((?![ \t]).*)?)?$/;
 
 /**
  * Expand a leading `/skill:name args` or `/template args`. Only the first line
@@ -113,8 +113,8 @@ export function expandLeadingCommand(text: string, sources: ExpansionSources): E
   const rest = newline === -1 ? "" : text.slice(newline + 1).replace(/^\s*\n/, "");
   const match = firstLine.match(COMMAND_RE);
   if (!match) return { kind: "none", text };
-  const [, skillPrefix, name, rawArgs = ""] = match;
-  const args = rawArgs.trim();
+  const [, skillPrefix, name, rawArgs] = match;
+  const args = (rawArgs ?? "").trim();
   const tail = rest.trim() ? `\n\n${rest.trimEnd()}` : "";
   const readFile = sources.readFile ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
